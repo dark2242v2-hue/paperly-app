@@ -23,7 +23,7 @@ class AiSummarizeRepository {
         private const val PRIMARY_ENDPOINT =
             "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
         private const val FALLBACK_ENDPOINT =
-            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-2.5-flash-lite"
+            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.5-flash-lite"
         private const val MAX_RETRIES_PER_ENDPOINT = 2
         private const val RETRY_DELAY_MS = 2_000L
     }
@@ -32,18 +32,24 @@ class AiSummarizeRepository {
         val statusCode: Int,
         val errorMessage: String
     ) : IllegalStateException(errorMessage) {
+        val shouldFallbackImmediately: Boolean
+            get() = statusCode == 404
+
         val isRateLimitedOrBusy: Boolean
             get() = statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 ||
                 errorMessage.contains("high demand", ignoreCase = true) ||
                 errorMessage.contains("overloaded", ignoreCase = true) ||
                 errorMessage.contains("unavailable", ignoreCase = true) ||
                 errorMessage.contains("server busy", ignoreCase = true)
+
+        val shouldRetryWithFallback: Boolean
+            get() = shouldFallbackImmediately || isRateLimitedOrBusy
     }
 
     suspend fun summarizePdf(payload: PdfAiPayload): String = withTimeout(90_000L) {
         val requestBodyString = buildRequestPayload(payload).toString()
 
-        // 1. Send POST to https://workers.dev with automatic retries on HTTP 429 / 503
+        // 1. Send POST to paperly-ai.dark2242v2.workers.dev?model=gemini-3.8-flash with retries on 429/503
         var lastError: Exception? = null
         for (attempt in 0..MAX_RETRIES_PER_ENDPOINT) {
             try {
@@ -55,7 +61,10 @@ class AiSummarizeRepository {
                 throw e
             } catch (e: ProxyHttpException) {
                 lastError = e
-                if (e.isRateLimitedOrBusy) {
+                if (e.shouldFallbackImmediately) {
+                    Log.w(TAG, "$PRIMARY_ENDPOINT returned HTTP ${e.statusCode}, switching to fallback", e)
+                    break
+                } else if (e.isRateLimitedOrBusy) {
                     Log.w(TAG, "$PRIMARY_ENDPOINT busy (HTTP ${e.statusCode}) on attempt ${attempt + 1}", e)
                     if (attempt < MAX_RETRIES_PER_ENDPOINT) {
                         delay(RETRY_DELAY_MS)
@@ -68,8 +77,8 @@ class AiSummarizeRepository {
             }
         }
 
-        // 2. Automatic fallback to https://workers.dev?model=gemini-3.8-flash-lite on HTTP 429 or 503
-        Log.i(TAG, "Falling back to $FALLBACK_ENDPOINT due to HTTP 429/503")
+        // 2. Automatic fallback to ?model=gemini-3.5-flash-lite on HTTP 429, 404, or 503
+        Log.i(TAG, "Falling back to $FALLBACK_ENDPOINT due to primary failure (${(lastError as? ProxyHttpException)?.statusCode})")
         for (attempt in 0..MAX_RETRIES_PER_ENDPOINT) {
             try {
                 return@withTimeout executeGenerateContent(

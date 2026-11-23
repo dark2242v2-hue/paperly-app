@@ -1,0 +1,390 @@
+package com.example.billing
+
+import android.app.Activity
+import android.content.Context
+import android.util.Log
+import com.android.billingclient.api.AcknowledgePurchaseParams
+import com.android.billingclient.api.BillingClient
+import com.android.billingclient.api.BillingClientStateListener
+import com.android.billingclient.api.BillingFlowParams
+import com.android.billingclient.api.BillingResult
+import com.android.billingclient.api.PendingPurchasesParams
+import com.android.billingclient.api.ProductDetails
+import com.android.billingclient.api.Purchase
+import com.android.billingclient.api.PurchasesUpdatedListener
+import com.android.billingclient.api.QueryProductDetailsParams
+import com.android.billingclient.api.QueryPurchasesParams
+import com.android.billingclient.api.acknowledgePurchase
+import com.android.billingclient.api.queryProductDetails
+import com.android.billingclient.api.queryPurchasesAsync
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+
+private const val TAG = "PaperlyBillingManager"
+
+enum class ProPlanType(val productId: String) {
+    MONTHLY(PaperlyBillingManager.PRODUCT_MONTHLY),
+    YEARLY(PaperlyBillingManager.PRODUCT_YEARLY)
+}
+
+data class SubscriptionPlanUi(
+    val planType: ProPlanType,
+    val productId: String,
+    val formattedPrice: String,
+    val periodLabel: String,
+    val hasFreeTrial: Boolean = false,
+    val isLoadedFromPlay: Boolean = false,
+    val productDetails: ProductDetails? = null,
+    val offerToken: String? = null
+)
+
+data class BillingUiState(
+    val isConnected: Boolean = false,
+    val isLoadingProducts: Boolean = false,
+    val isPurchasing: Boolean = false,
+    val isRestoring: Boolean = false,
+    val monthlyPlan: SubscriptionPlanUi = SubscriptionPlanUi(
+        planType = ProPlanType.MONTHLY,
+        productId = PaperlyBillingManager.PRODUCT_MONTHLY,
+        formattedPrice = "₹79",
+        periodLabel = "month",
+        hasFreeTrial = false
+    ),
+    val yearlyPlan: SubscriptionPlanUi = SubscriptionPlanUi(
+        planType = ProPlanType.YEARLY,
+        productId = PaperlyBillingManager.PRODUCT_YEARLY,
+        formattedPrice = "₹399",
+        periodLabel = "year",
+        hasFreeTrial = true
+    ),
+    val statusMessage: String? = null
+)
+
+class PaperlyBillingManager(
+    context: Context,
+    private val onEntitlementUpdated: suspend (isActive: Boolean, productId: String?) -> Unit,
+    private val onUserMessage: (String) -> Unit
+) {
+
+    companion object {
+        const val PRODUCT_MONTHLY = "paperly_pro_monthly"
+        const val PRODUCT_YEARLY = "paperly_pro_yearly"
+        private val SUBSCRIPTION_IDS = listOf(PRODUCT_MONTHLY, PRODUCT_YEARLY)
+    }
+
+    private val appContext = context.applicationContext
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    private val _uiState = MutableStateFlow(BillingUiState())
+    val uiState: StateFlow<BillingUiState> = _uiState.asStateFlow()
+
+    private val purchasesUpdatedListener = PurchasesUpdatedListener { billingResult, purchases ->
+        when (billingResult.responseCode) {
+            BillingClient.BillingResponseCode.OK -> {
+                scope.launch {
+                    val activeId = handlePurchasedList(purchases.orEmpty())
+                    _uiState.update { it.copy(isPurchasing = false, statusMessage = null) }
+                    if (activeId != null) {
+                        onEntitlementUpdated(true, activeId)
+                        onUserMessage("Paperly Pro activated — Ad-Free workspace unlocked!")
+                    }
+                }
+            }
+            BillingClient.BillingResponseCode.USER_CANCELED -> {
+                _uiState.update { it.copy(isPurchasing = false, statusMessage = null) }
+            }
+            BillingClient.BillingResponseCode.ITEM_ALREADY_OWNED -> {
+                scope.launch {
+                    _uiState.update { it.copy(isPurchasing = false, statusMessage = null) }
+                    refreshActiveSubscriptions(userInitiatedRestore = true)
+                }
+            }
+            else -> {
+                Log.w(TAG, "Purchase update error: ${billingResult.responseCode} ${billingResult.debugMessage}")
+                _uiState.update {
+                    it.copy(
+                        isPurchasing = false,
+                        statusMessage = "Purchase could not be completed (${billingResult.debugMessage.ifBlank { "error ${billingResult.responseCode}" }})."
+                    )
+                }
+            }
+        }
+    }
+
+    private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
+        .setListener(purchasesUpdatedListener)
+        .enablePendingPurchases(
+            PendingPurchasesParams.newBuilder()
+                .enableOneTimeProducts()
+                .enablePrepaidPlans()
+                .build()
+        )
+        .build()
+
+    fun initialize() {
+        scope.launch {
+            if (ensureConnected()) {
+                queryProductDetails()
+                refreshActiveSubscriptions(userInitiatedRestore = false)
+            }
+        }
+    }
+
+    fun clearStatusMessage() {
+        _uiState.update { it.copy(statusMessage = null) }
+    }
+
+    suspend fun refreshOnResume() {
+        if (ensureConnected()) {
+            if (!_uiState.value.monthlyPlan.isLoadedFromPlay || !_uiState.value.yearlyPlan.isLoadedFromPlay) {
+                queryProductDetails()
+            }
+            refreshActiveSubscriptions(userInitiatedRestore = false)
+        }
+    }
+
+    fun restorePurchases() {
+        scope.launch {
+            _uiState.update { it.copy(isRestoring = true, statusMessage = null) }
+            if (!ensureConnected()) {
+                _uiState.update {
+                    it.copy(
+                        isRestoring = false,
+                        statusMessage = "Google Play Store is unavailable right now. Please check your connection."
+                    )
+                }
+                onUserMessage("Google Play Billing is unavailable on this device.")
+                return@launch
+            }
+            queryProductDetails()
+            val restored = refreshActiveSubscriptions(userInitiatedRestore = true)
+            _uiState.update { it.copy(isRestoring = false) }
+            if (restored) {
+                onUserMessage("Paperly Pro subscription restored!")
+            } else {
+                onUserMessage("No active Paperly Pro subscription found.")
+            }
+        }
+    }
+
+    fun launchSubscriptionPurchase(activity: Activity?, planType: ProPlanType) {
+        if (activity == null) {
+            _uiState.update { it.copy(statusMessage = "Unable to open Google Play checkout from this screen.") }
+            return
+        }
+
+        scope.launch {
+            _uiState.update { it.copy(isPurchasing = true, statusMessage = null) }
+            if (!ensureConnected()) {
+                _uiState.update {
+                    it.copy(
+                        isPurchasing = false,
+                        statusMessage = "Could not connect to Google Play Store. Please try again."
+                    )
+                }
+                return@launch
+            }
+
+            if (!_uiState.value.monthlyPlan.isLoadedFromPlay && !_uiState.value.yearlyPlan.isLoadedFromPlay) {
+                queryProductDetails()
+            }
+
+            val selectedPlan = when (planType) {
+                ProPlanType.MONTHLY -> _uiState.value.monthlyPlan
+                ProPlanType.YEARLY -> _uiState.value.yearlyPlan
+            }
+
+            val productDetails = selectedPlan.productDetails
+            val offerToken = selectedPlan.offerToken
+            if (productDetails == null || offerToken.isNullOrBlank()) {
+                _uiState.update {
+                    it.copy(
+                        isPurchasing = false,
+                        statusMessage = "Subscription offer not yet loaded from Google Play (${selectedPlan.productId})."
+                    )
+                }
+                return@launch
+            }
+
+            val productDetailsParams = BillingFlowParams.ProductDetailsParams.newBuilder()
+                .setProductDetails(productDetails)
+                .setOfferToken(offerToken)
+                .build()
+
+            val billingFlowParams = BillingFlowParams.newBuilder()
+                .setProductDetailsParamsList(listOf(productDetailsParams))
+                .build()
+
+            val launchResult = billingClient.launchBillingFlow(activity, billingFlowParams)
+            if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                _uiState.update {
+                    it.copy(
+                        isPurchasing = false,
+                        statusMessage = "Unable to start Google Play checkout (${launchResult.debugMessage})."
+                    )
+                }
+            }
+        }
+    }
+
+    fun destroy() {
+        runCatching { billingClient.endConnection() }
+        scope.cancel()
+    }
+
+    private suspend fun ensureConnected(): Boolean {
+        if (billingClient.isReady) {
+            _uiState.update { it.copy(isConnected = true) }
+            return true
+        }
+        return suspendCancellableCoroutine { cont ->
+            billingClient.startConnection(object : BillingClientStateListener {
+                override fun onBillingSetupFinished(billingResult: BillingResult) {
+                    val ready = billingResult.responseCode == BillingClient.BillingResponseCode.OK
+                    _uiState.update { it.copy(isConnected = ready) }
+                    if (cont.isActive) cont.resume(ready)
+                }
+
+                override fun onBillingServiceDisconnected() {
+                    _uiState.update { it.copy(isConnected = false) }
+                    if (cont.isActive) cont.resume(false)
+                }
+            })
+        }
+    }
+
+    private suspend fun queryProductDetails() {
+        _uiState.update { it.copy(isLoadingProducts = true) }
+        val productList = SUBSCRIPTION_IDS.map { productId ->
+            QueryProductDetailsParams.Product.newBuilder()
+                .setProductId(productId)
+                .setProductType(BillingClient.ProductType.SUBS)
+                .build()
+        }
+        val params = QueryProductDetailsParams.newBuilder()
+            .setProductList(productList)
+            .build()
+
+        val result = withContext(Dispatchers.IO) {
+            billingClient.queryProductDetails(params)
+        }
+
+        if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+            val detailsList = result.productDetailsList.orEmpty()
+            val monthlyDetails = detailsList.firstOrNull { it.productId == PRODUCT_MONTHLY }
+            val yearlyDetails = detailsList.firstOrNull { it.productId == PRODUCT_YEARLY }
+
+            _uiState.update { current ->
+                current.copy(
+                    isLoadingProducts = false,
+                    monthlyPlan = parseMonthlyPlan(monthlyDetails, current.monthlyPlan),
+                    yearlyPlan = parseYearlyPlan(yearlyDetails, current.yearlyPlan)
+                )
+            }
+        } else {
+            Log.w(TAG, "queryProductDetails failed: ${result.billingResult.debugMessage}")
+            _uiState.update { it.copy(isLoadingProducts = false) }
+        }
+    }
+
+    private fun parseMonthlyPlan(
+        details: ProductDetails?,
+        fallback: SubscriptionPlanUi
+    ): SubscriptionPlanUi {
+        if (details == null) return fallback
+        val offer = details.subscriptionOfferDetails?.firstOrNull() ?: return fallback
+        val paidPhase = offer.pricingPhases.pricingPhaseList.lastOrNull { it.priceAmountMicros > 0L }
+            ?: offer.pricingPhases.pricingPhaseList.firstOrNull()
+        return fallback.copy(
+            formattedPrice = paidPhase?.formattedPrice ?: fallback.formattedPrice,
+            isLoadedFromPlay = true,
+            productDetails = details,
+            offerToken = offer.offerToken
+        )
+    }
+
+    private fun parseYearlyPlan(
+        details: ProductDetails?,
+        fallback: SubscriptionPlanUi
+    ): SubscriptionPlanUi {
+        if (details == null) return fallback
+        val offers = details.subscriptionOfferDetails.orEmpty()
+        if (offers.isEmpty()) return fallback
+
+        // Detect an eligible free trial offer phase (priceAmountMicros == 0L)
+        val freeTrialOffer = offers.firstOrNull { offer ->
+            offer.pricingPhases.pricingPhaseList.any { phase -> phase.priceAmountMicros == 0L }
+        }
+        val chosenOffer = freeTrialOffer ?: offers.first()
+        val hasTrial = freeTrialOffer != null
+        val recurringPaidPhase = chosenOffer.pricingPhases.pricingPhaseList.lastOrNull {
+            it.priceAmountMicros > 0L
+        } ?: chosenOffer.pricingPhases.pricingPhaseList.lastOrNull()
+
+        return fallback.copy(
+            formattedPrice = recurringPaidPhase?.formattedPrice ?: fallback.formattedPrice,
+            hasFreeTrial = hasTrial,
+            isLoadedFromPlay = true,
+            productDetails = details,
+            offerToken = chosenOffer.offerToken
+        )
+    }
+
+    private suspend fun refreshActiveSubscriptions(userInitiatedRestore: Boolean): Boolean {
+        val params = QueryPurchasesParams.newBuilder()
+            .setProductType(BillingClient.ProductType.SUBS)
+            .build()
+
+        val result = withContext(Dispatchers.IO) {
+            billingClient.queryPurchasesAsync(params)
+        }
+
+        if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) {
+            Log.w(TAG, "queryPurchasesAsync failed: ${result.billingResult.debugMessage}")
+            return false
+        }
+
+        val activeProductId = handlePurchasedList(result.purchasesList)
+        val hasActiveSub = activeProductId != null
+        onEntitlementUpdated(hasActiveSub, activeProductId)
+
+        if (userInitiatedRestore && !hasActiveSub) {
+            Log.i(TAG, "No active subscription found during restore.")
+        }
+        return hasActiveSub
+    }
+
+    private suspend fun handlePurchasedList(purchases: List<Purchase>): String? {
+        var activeProductId: String? = null
+        for (purchase in purchases) {
+            if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
+                val matchingId = purchase.products.firstOrNull { it in SUBSCRIPTION_IDS }
+                if (matchingId != null) {
+                    if (!purchase.isAcknowledged) {
+                        val ackParams = AcknowledgePurchaseParams.newBuilder()
+                            .setPurchaseToken(purchase.purchaseToken)
+                            .build()
+                        val ackResult = withContext(Dispatchers.IO) {
+                            billingClient.acknowledgePurchase(ackParams)
+                        }
+                        if (ackResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                            Log.w(TAG, "Failed to acknowledge purchase: ${ackResult.debugMessage}")
+                        }
+                    }
+                    activeProductId = matchingId
+                }
+            }
+        }
+        return activeProductId
+    }
+}

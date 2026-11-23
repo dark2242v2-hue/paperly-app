@@ -7,7 +7,11 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.ads.PaperlyAdManager
+import com.example.billing.BillingUiState
+import com.example.billing.PaperlyBillingManager
+import com.example.billing.ProPlanType
 import com.example.data.ai.AiSummarizeRepository
 import com.example.data.local.PaperlyDatabase
 import com.example.data.local.PdfRecordEntity
@@ -70,8 +74,21 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     val pdfEngine = PdfEngine(application)
     val adManager = PaperlyAdManager(application)
 
+    val billingManager: PaperlyBillingManager = PaperlyBillingManager(
+        context = application,
+        onEntitlementUpdated = { isActive, productId ->
+            prefsRepository.setPlayProActive(isActive, productId)
+        },
+        onUserMessage = { msg ->
+            _snackbarMessage.value = msg
+        }
+    )
+
+    val billingState: StateFlow<BillingUiState> = billingManager.uiState
+
     init {
         adManager.initialize(preloadRewarded = true)
+        billingManager.initialize()
     }
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
@@ -80,14 +97,24 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     val isDarkMode: StateFlow<Boolean> = prefsRepository.isDarkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    val isPro: StateFlow<Boolean> = prefsRepository.isPro
+    val debugProOverride: StateFlow<Boolean> = prefsRepository.debugProOverride
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+
+    val activePlanProductId: StateFlow<String?> = prefsRepository.activePlanProductId
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
+
+    val isPro: StateFlow<Boolean> = combine(
+        prefsRepository.playProActive,
+        prefsRepository.debugProOverride
+    ) { playActive, debugOverride ->
+        playActive || (BuildConfig.DEBUG && debugOverride)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val defaultCompression: StateFlow<CompressionLevel> = prefsRepository.defaultCompression
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompressionLevel.BALANCED)
 
     val isRewardUnlockedForSession: StateFlow<Boolean> = combine(
-        prefsRepository.isPro,
+        isPro,
         prefsRepository.aiUnlockedUntilMillis
     ) { pro, unlockedUntil ->
         pro || unlockedUntil > System.currentTimeMillis()
@@ -116,15 +143,29 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun setProEnabled(enabled: Boolean) {
+    fun subscribeToPlan(activity: Activity?, planType: ProPlanType) {
+        billingManager.launchSubscriptionPurchase(activity, planType)
+    }
+
+    fun restorePurchases() {
+        billingManager.restorePurchases()
+    }
+
+    fun refreshBillingOnResume() {
         viewModelScope.launch {
-            prefsRepository.setPro(enabled)
-            _showProSheet.value = false
+            billingManager.refreshOnResume()
+        }
+    }
+
+    fun setDebugProOverride(enabled: Boolean) {
+        if (!BuildConfig.DEBUG) return
+        viewModelScope.launch {
+            prefsRepository.setDebugProOverride(enabled)
             _snackbarMessage.value = if (enabled) {
-                "Paperly Pro activated — Ads removed"
+                "Debug Pro Override enabled — Ads hidden"
             } else {
                 adManager.preloadRewardedAd()
-                "Switched to Paperly Free plan"
+                "Debug Pro Override disabled — Free tier active"
             }
         }
     }
@@ -137,10 +178,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun openProSheet() {
+        billingManager.clearStatusMessage()
         _showProSheet.value = true
     }
 
     fun dismissProSheet() {
+        billingManager.clearStatusMessage()
         _showProSheet.value = false
     }
 
@@ -226,15 +269,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    fun upgradeToProFromGateModal(onUnlocked: (PdfToolType) -> Unit) {
-        val tool = _rewardedGateModal.value.targetTool
-        viewModelScope.launch {
-            prefsRepository.setPro(true)
-            _rewardedGateModal.value = RewardedGateModalState(visible = false)
-            prepareToolWorkspace(tool)
-            _snackbarMessage.value = "Paperly Pro activated — Ad-Free features unlocked"
-            onUnlocked(tool)
-        }
+    fun upgradeToProFromGateModal() {
+        _rewardedGateModal.value = RewardedGateModalState(visible = false)
+        openProSheet()
     }
 
     fun addPickedPdfUris(uris: List<Uri>) {
@@ -531,5 +568,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             recordRepository.clearAll(pdfEngine.pdfsDir, pdfEngine.cacheDir)
             _snackbarMessage.value = "Cleared local Paperly files"
         }
+    }
+
+    override fun onCleared() {
+        billingManager.destroy()
+        super.onCleared()
     }
 }

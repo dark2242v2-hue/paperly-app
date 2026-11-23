@@ -1,11 +1,13 @@
 package com.example.ui.components
 
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.drawable.GradientDrawable
+import android.net.Uri
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button as AndroidButton
@@ -33,8 +35,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
@@ -66,10 +70,12 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -94,6 +100,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -105,6 +112,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
 import com.example.ads.AdUnitIds
 import com.example.ads.PaperlyAdManager
+import com.example.billing.BillingUiState
+import com.example.billing.PaperlyBillingManager
+import com.example.billing.ProPlanType
 import com.example.data.model.PdfToolType
 import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.theme.PaperlyEmerald
@@ -657,18 +667,27 @@ fun RewardedUnlockModal(
 fun PaperlyProSheet(
     visible: Boolean,
     isPro: Boolean,
-    onTogglePro: (Boolean) -> Unit,
+    activePlanProductId: String?,
+    billingState: BillingUiState,
+    onSubscribe: (ProPlanType) -> Unit,
+    onRestorePurchases: () -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!visible) return
 
+    val context = LocalContext.current
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var selectedPlan by remember { mutableStateOf(ProPlanType.YEARLY) }
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
+        sheetState = sheetState,
         containerColor = MaterialTheme.colorScheme.surface
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 24.dp, vertical = 12.dp)
                 .padding(bottom = 20.dp),
@@ -682,13 +701,16 @@ fun PaperlyProSheet(
                     modifier = Modifier
                         .size(44.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(PaperlyIndigo.copy(alpha = 0.12f)),
+                        .background(
+                            if (isPro) PaperlyEmerald.copy(alpha = 0.14f)
+                            else PaperlyIndigo.copy(alpha = 0.12f)
+                        ),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = Icons.Filled.WorkspacePremium,
                         contentDescription = "Paperly Pro",
-                        tint = PaperlyIndigo
+                        tint = if (isPro) PaperlyEmerald else PaperlyIndigo
                     )
                 }
                 Column {
@@ -698,7 +720,7 @@ fun PaperlyProSheet(
                         color = MaterialTheme.colorScheme.onSurface
                     )
                     Text(
-                        text = if (isPro) "Active • Ad-free experience enabled" else "Clean, ad-free PDF studio",
+                        text = if (isPro) "Active • Ad-free experience enabled" else "Ad-free PDF studio & unlimited AI",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -706,9 +728,9 @@ fun PaperlyProSheet(
             }
 
             listOf(
-                "Zero banner or native sponsored ads",
-                "Unlimited instant Gemini AI PDF summaries",
-                "Priority local batch processing"
+                "Zero banner, native, or rewarded video ads",
+                "Unlimited instant AI Summarize & Scan to PDF",
+                "100% private on-device PDF processing"
             ).forEach { perk ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -728,17 +750,273 @@ fun PaperlyProSheet(
                 }
             }
 
-            Button(
-                onClick = { onTogglePro(!isPro) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp)
-                    .testTag("pro_sheet_action_button"),
-                shape = RoundedCornerShape(14.dp)
-            ) {
+            if (isPro) {
+                val activePlanLabel = when (activePlanProductId) {
+                    PaperlyBillingManager.PRODUCT_MONTHLY -> "Paperly Pro Monthly (${billingState.monthlyPlan.formattedPrice} / month)"
+                    PaperlyBillingManager.PRODUCT_YEARLY -> "Paperly Pro Yearly (${billingState.yearlyPlan.formattedPrice} / year)"
+                    else -> "Paperly Pro Active"
+                }
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = PaperlyEmerald.copy(alpha = 0.10f),
+                    border = BorderStroke(1.dp, PaperlyEmerald.copy(alpha = 0.35f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = activePlanLabel,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = "Managed through your Google Play account.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        val url = "https://play.google.com/store/account/subscriptions?package=${context.packageName}"
+                        runCatching {
+                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("manage_subscription_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        text = "Manage Subscription in Google Play",
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+
+                Button(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("pro_sheet_done_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text("Done", style = MaterialTheme.typography.labelLarge)
+                }
+            } else {
+                // Yearly Plan (selected by default with Best Value • 3-Day Free Trial badge)
+                SubscriptionPlanCard(
+                    title = "Yearly",
+                    priceText = "${billingState.yearlyPlan.formattedPrice} / year",
+                    subtitle = if (billingState.yearlyPlan.hasFreeTrial) {
+                        "3 days free, then ${billingState.yearlyPlan.formattedPrice}/year"
+                    } else {
+                        "Billed annually • Save vs monthly"
+                    },
+                    badgeText = if (billingState.yearlyPlan.hasFreeTrial) {
+                        "Best Value • 3-Day Free Trial"
+                    } else {
+                        "Best Value"
+                    },
+                    selected = selectedPlan == ProPlanType.YEARLY,
+                    onClick = { selectedPlan = ProPlanType.YEARLY },
+                    modifier = Modifier.testTag("pro_plan_yearly")
+                )
+
+                // Monthly Plan
+                SubscriptionPlanCard(
+                    title = "Monthly",
+                    priceText = "${billingState.monthlyPlan.formattedPrice} / month",
+                    subtitle = "Standard monthly billing • Cancel anytime",
+                    badgeText = null,
+                    selected = selectedPlan == ProPlanType.MONTHLY,
+                    onClick = { selectedPlan = ProPlanType.MONTHLY },
+                    modifier = Modifier.testTag("pro_plan_monthly")
+                )
+
+                billingState.statusMessage?.let { status ->
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
+                        Text(
+                            text = status,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+
+                val isYearlyTrial = selectedPlan == ProPlanType.YEARLY && billingState.yearlyPlan.hasFreeTrial
+                val ctaLabel = when {
+                    isYearlyTrial -> "Start 3-Day Free Trial"
+                    selectedPlan == ProPlanType.YEARLY -> "Continue Yearly • ${billingState.yearlyPlan.formattedPrice}/year"
+                    else -> "Continue Monthly • ${billingState.monthlyPlan.formattedPrice}/month"
+                }
+                val ctaSubtext = when {
+                    isYearlyTrial -> "Then ${billingState.yearlyPlan.formattedPrice}/year • Cancel anytime"
+                    selectedPlan == ProPlanType.YEARLY -> "Billed ${billingState.yearlyPlan.formattedPrice}/year via Google Play • Cancel anytime"
+                    else -> "Billed ${billingState.monthlyPlan.formattedPrice}/month via Google Play • Cancel anytime"
+                }
+
+                Button(
+                    onClick = { onSubscribe(selectedPlan) },
+                    enabled = !billingState.isPurchasing && !billingState.isRestoring,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(54.dp)
+                        .testTag("pro_sheet_action_button"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    if (billingState.isPurchasing) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = "Opening Google Play…",
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    } else {
+                        Text(
+                            text = ctaLabel,
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    }
+                }
+
                 Text(
-                    text = if (isPro) "Switch back to Free (with Ads)" else "Activate Paperly Pro (Ad-Free)",
-                    style = MaterialTheme.typography.labelLarge
+                    text = ctaSubtext,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        onClick = onRestorePurchases,
+                        enabled = !billingState.isRestoring && !billingState.isPurchasing,
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("pro_sheet_restore_button")
+                    ) {
+                        Text(if (billingState.isRestoring) "Restoring…" else "Restore Purchases")
+                    }
+
+                    TextButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .height(48.dp)
+                            .testTag("pro_sheet_close_button")
+                    ) {
+                        Text(
+                            text = "Not now",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubscriptionPlanCard(
+    title: String,
+    priceText: String,
+    subtitle: String,
+    badgeText: String?,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            if (badgeText != null) {
+                Surface(
+                    shape = CircleShape,
+                    color = PaperlyIndigo
+                ) {
+                    Text(
+                        text = badgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    RadioButton(
+                        selected = selected,
+                        onClick = onClick
+                    )
+                    Column {
+                        Text(
+                            text = title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Text(
+                    text = priceText,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }

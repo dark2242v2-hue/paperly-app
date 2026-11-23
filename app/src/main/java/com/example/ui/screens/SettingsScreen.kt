@@ -17,9 +17,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.AlertDialog
@@ -43,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.BuildConfig
 import com.example.data.model.CompressionLevel
 import com.example.ui.theme.PaperlyEmerald
 
@@ -50,10 +53,14 @@ import com.example.ui.theme.PaperlyEmerald
 fun SettingsScreen(
     isDarkMode: Boolean,
     isPro: Boolean,
+    isRestoringPurchases: Boolean,
+    debugProOverride: Boolean,
     defaultCompression: CompressionLevel,
     savedFileCount: Int,
     onToggleDarkMode: () -> Unit,
     onOpenProSheet: () -> Unit,
+    onRestorePurchases: () -> Unit,
+    onToggleDebugPro: (Boolean) -> Unit,
     onSelectCompression: (CompressionLevel) -> Unit,
     onClearAllFiles: () -> Unit,
     modifier: Modifier = Modifier
@@ -144,9 +151,104 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
-                                text = if (isPro) "Ad-free workspace & unlimited Gemini AI active" else "Remove banner & sponsored cards, unlock unlimited AI",
+                                text = if (isPro) "Ad-free workspace & unlimited AI active" else "3-day free trial • Ad-free & unlimited AI",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            // Restore Purchases (Google Play Billing)
+            item {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Restore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Column {
+                                Text("Google Play Subscription", style = MaterialTheme.typography.titleSmall)
+                                Text(
+                                    text = "Already subscribed on this Google account? Restore Pro access anytime.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        OutlinedButton(
+                            onClick = onRestorePurchases,
+                            enabled = !isRestoringPurchases,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp)
+                                .testTag("settings_restore_purchases_button"),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Restore,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.size(8.dp))
+                            Text(if (isRestoringPurchases) "Restoring Purchases…" else "Restore Purchases")
+                        }
+                    }
+                }
+            }
+
+            // Hidden Debug-Only Pro Override (excluded from Release builds)
+            if (BuildConfig.DEBUG) {
+                item {
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.BugReport,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary
+                                )
+                                Column {
+                                    Text("Debug Pro Override", style = MaterialTheme.typography.titleSmall)
+                                    Text(
+                                        text = "Debug builds only — toggle Pro state without billing",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Switch(
+                                checked = debugProOverride,
+                                onCheckedChange = onToggleDebugPro,
+                                modifier = Modifier.testTag("settings_debug_pro_switch")
                             )
                         }
                     }

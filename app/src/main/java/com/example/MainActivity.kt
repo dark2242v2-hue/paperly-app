@@ -15,6 +15,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -22,6 +23,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -87,6 +91,9 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
 
     val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val isPro by viewModel.isPro.collectAsStateWithLifecycle()
+    val debugProOverride by viewModel.debugProOverride.collectAsStateWithLifecycle()
+    val activePlanProductId by viewModel.activePlanProductId.collectAsStateWithLifecycle()
+    val billingState by viewModel.billingState.collectAsStateWithLifecycle()
     val defaultCompression by viewModel.defaultCompression.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
@@ -96,7 +103,20 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
 
     val activity = LocalContext.current.findActivity()
+    val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshBillingOnResume()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     LaunchedEffect(snackbarMessage) {
         val msg = snackbarMessage
@@ -196,10 +216,14 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                     SettingsScreen(
                         isDarkMode = isDarkMode,
                         isPro = isPro,
+                        isRestoringPurchases = billingState.isRestoring,
+                        debugProOverride = debugProOverride,
                         defaultCompression = defaultCompression,
                         savedFileCount = recentRecords.size,
                         onToggleDarkMode = viewModel::toggleDarkMode,
                         onOpenProSheet = viewModel::openProSheet,
+                        onRestorePurchases = viewModel::restorePurchases,
+                        onToggleDebugPro = viewModel::setDebugProOverride,
                         onSelectCompression = viewModel::setDefaultCompression,
                         onClearAllFiles = viewModel::clearAllLocalFiles
                     )
@@ -264,18 +288,19 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                 navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
             }
         },
-        onUpgradePro = {
-            viewModel.upgradeToProFromGateModal { unlockedTool ->
-                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
-            }
-        },
+        onUpgradePro = viewModel::upgradeToProFromGateModal,
         onDismiss = viewModel::dismissRewardedGateModal
     )
 
     PaperlyProSheet(
         visible = showProSheet,
         isPro = isPro,
-        onTogglePro = viewModel::setProEnabled,
+        activePlanProductId = activePlanProductId,
+        billingState = billingState,
+        onSubscribe = { planType ->
+            viewModel.subscribeToPlan(activity, planType)
+        },
+        onRestorePurchases = viewModel::restorePurchases,
         onDismiss = viewModel::dismissProSheet
     )
 }
