@@ -50,7 +50,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -453,12 +453,12 @@ fun ToolWorkspaceScreen(
                                         clipboard.setPrimaryClip(ClipData.newPlainText("Paperly AI Summary", summaryText))
                                         viewModel.postMessage("Summary copied to clipboard")
                                     },
-                                    onShareSummary = { summaryText ->
-                                        val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_TEXT, summaryText)
-                                        }
-                                        context.startActivity(Intent.createChooser(intent, "Share AI Summary"))
+                                    onExportPdf = { fileName, summaryText ->
+                                        viewModel.exportSummaryAsPdf(
+                                            sourceFileName = fileName,
+                                            summaryText = summaryText,
+                                            onSuccess = onProcessingComplete
+                                        )
                                     }
                                 )
                             }
@@ -1044,7 +1044,7 @@ private fun AiSummarizeWorkspaceSection(
     aiState: AiSummaryUiState,
     onSummarizeClick: () -> Unit,
     onCopySummary: (String) -> Unit,
-    onShareSummary: (String) -> Unit
+    onExportPdf: (String, String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Button(
@@ -1060,8 +1060,8 @@ private fun AiSummarizeWorkspaceSection(
             Spacer(modifier = Modifier.width(8.dp))
             Text(
                 text = when (aiState) {
-                    is AiSummaryUiState.Extracting -> "Reading PDF content..."
-                    is AiSummaryUiState.Loading -> "Connecting to Gemini..."
+                    is AiSummaryUiState.Extracting -> "Extracting PDF text..."
+                    is AiSummaryUiState.Loading -> "Summarizing with Gemini..."
                     is AiSummaryUiState.Streaming -> "Summarizing..."
                     else -> "Summarize with Gemini AI"
                 },
@@ -1088,14 +1088,14 @@ private fun AiSummarizeWorkspaceSection(
                         Column {
                             Text(
                                 text = if (aiState is AiSummaryUiState.Extracting) {
-                                    "Extracting PDF pages locally..."
+                                    "Extracting PDF text on-device..."
                                 } else {
-                                    "Generating executive summary..."
+                                    "Generating bullet-point summary..."
                                 },
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                text = "Streaming response from Gemini 3.8 Flash",
+                                text = "Sending request to Gemini REST API",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -1116,6 +1116,12 @@ private fun AiSummarizeWorkspaceSection(
                     else -> ""
                 }
                 val isDone = aiState is AiSummaryUiState.Success
+                val cleanedLines = remember(summaryText) {
+                    summaryText.replace("**", "")
+                        .lines()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                }
 
                 Card(
                     modifier = Modifier
@@ -1135,6 +1141,7 @@ private fun AiSummarizeWorkspaceSection(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
+                                modifier = Modifier.weight(1f),
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
@@ -1163,13 +1170,51 @@ private fun AiSummarizeWorkspaceSection(
 
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
-                        Text(
-                            text = summaryText,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            cleanedLines.forEach { line ->
+                                val isHeading = (line.endsWith(":") && !line.startsWith("•") && !line.startsWith("-")) ||
+                                    line.startsWith("#")
+                                val isBullet = line.startsWith("•") || line.startsWith("- ") || line.startsWith("* ")
+                                when {
+                                    isHeading -> {
+                                        Text(
+                                            text = line.trimStart('#', ' '),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(top = 4.dp)
+                                        )
+                                    }
+                                    isBullet -> {
+                                        val bulletBody = line.removePrefix("•").removePrefix("-").removePrefix("*").trim()
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Text(
+                                                text = "•",
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = bulletBody,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        Text(
+                                            text = line,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                    }
+                                }
+                            }
+                        }
 
                         if (isDone) {
+                            Spacer(modifier = Modifier.height(4.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(10.dp)
@@ -1178,25 +1223,25 @@ private fun AiSummarizeWorkspaceSection(
                                     onClick = { onCopySummary(summaryText) },
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(48.dp)
+                                        .height(50.dp)
                                         .testTag("copy_ai_summary_button"),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Copy")
+                                    Text("Copy Summary", maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
-                                OutlinedButton(
-                                    onClick = { onShareSummary(summaryText) },
+                                Button(
+                                    onClick = { onExportPdf(fileName, summaryText) },
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(48.dp)
-                                        .testTag("share_ai_summary_button"),
+                                        .height(50.dp)
+                                        .testTag("export_summary_pdf_button"),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Share")
+                                    Text("Export as PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
                                 }
                             }
                         }

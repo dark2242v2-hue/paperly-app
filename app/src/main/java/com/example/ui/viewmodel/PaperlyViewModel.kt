@@ -432,24 +432,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val payload = pdfEngine.extractAiPayload(file)
                 _aiSummaryState.value = AiSummaryUiState.Loading
-                var finalSummary = ""
-                aiRepository.summarizePdfStream(payload).collect { partial ->
-                    finalSummary = partial
-                    _aiSummaryState.value = AiSummaryUiState.Streaming(
-                        text = partial,
-                        fileName = payload.displayName,
-                        pageCount = payload.pageCount
-                    )
-                }
-                if (finalSummary.isNotBlank()) {
-                    _aiSummaryState.value = AiSummaryUiState.Success(
-                        text = finalSummary,
-                        fileName = payload.displayName,
-                        pageCount = payload.pageCount
-                    )
-                } else {
-                    _aiSummaryState.value = AiSummaryUiState.Error("Gemini returned an empty summary.")
-                }
+                val summary = aiRepository.summarizePdf(payload)
+                _aiSummaryState.value = AiSummaryUiState.Success(
+                    text = summary,
+                    fileName = payload.displayName,
+                    pageCount = payload.pageCount
+                )
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "AI summary timed out", e)
                 _aiSummaryState.value = AiSummaryUiState.Error(
@@ -462,6 +450,25 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 _aiSummaryState.value = AiSummaryUiState.Error(
                     e.localizedMessage ?: "Failed to generate AI summary."
                 )
+            }
+        }
+    }
+
+    fun exportSummaryAsPdf(
+        sourceFileName: String,
+        summaryText: String,
+        onSuccess: (Long) -> Unit
+    ) {
+        viewModelScope.launch {
+            try {
+                val record = pdfEngine.exportSummaryToPdf(sourceFileName, summaryText)
+                val id = recordRepository.insert(record)
+                onSuccess(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to export summary PDF", e)
+                _snackbarMessage.value = e.localizedMessage ?: "Could not export summary as PDF."
             }
         }
     }

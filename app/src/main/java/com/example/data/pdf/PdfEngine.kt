@@ -9,11 +9,16 @@ import android.graphics.ColorMatrix
 import android.graphics.ColorMatrixColorFilter
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Typeface
+import android.graphics.pdf.PdfDocument
 import android.graphics.pdf.PdfRenderer
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.ParcelFileDescriptor
 import android.provider.OpenableColumns
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextPaint
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.CompressionLevel
 import com.example.data.model.PdfAiPayload
@@ -423,6 +428,119 @@ class PdfEngine(private val context: Context) {
             pageCount = file.pageCount,
             extractedText = extracted,
             fallbackBitmaps = fallbackBitmaps
+        )
+    }
+
+    suspend fun exportSummaryToPdf(
+        sourceFileName: String,
+        summaryText: String
+    ): PdfRecordEntity = withContext(Dispatchers.IO) {
+        val baseStem = sourceFileName.removeSuffix(".pdf").removeSuffix(".PDF")
+        val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName("${baseStem}_summary")))
+
+        val pageWidth = 595
+        val pageHeight = 842
+        val marginH = 44f
+        val marginTop = 52f
+        val marginBottom = 48f
+        val contentWidth = (pageWidth - marginH * 2).toInt()
+
+        val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#4F46E5")
+            textSize = 11f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        val headingPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#0F172A")
+            textSize = 16f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
+        }
+        val bodyPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#1E293B")
+            textSize = 11.5f
+            typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL)
+        }
+        val footerPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.parseColor("#64748B")
+            textSize = 9.5f
+        }
+        val dividerPaint = Paint().apply {
+            color = Color.parseColor("#E2E8F0")
+            strokeWidth = 1f
+        }
+
+        val normalizedBody = summaryText.replace("**", "").trim()
+        val bodyLayout = StaticLayout.Builder
+            .obtain(normalizedBody, 0, normalizedBody.length, bodyPaint, contentWidth)
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+            .setLineSpacing(4f, 1.25f)
+            .setIncludePad(true)
+            .build()
+
+        val pdfDocument = PdfDocument()
+        try {
+            var lineIndex = 0
+            var pageNum = 1
+
+            while (lineIndex < bodyLayout.lineCount || pageNum == 1) {
+                val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNum).create()
+                val page = pdfDocument.startPage(pageInfo)
+                val canvas = page.canvas
+                canvas.drawColor(Color.WHITE)
+
+                var cursorY = marginTop
+                if (pageNum == 1) {
+                    canvas.drawText("PAPERLY AI SUMMARY", marginH, cursorY, titlePaint)
+                    cursorY += 22f
+                    val titleLayout = StaticLayout.Builder
+                        .obtain(sourceFileName, 0, sourceFileName.length, headingPaint, contentWidth)
+                        .setAlignment(Layout.Alignment.ALIGN_NORMAL)
+                        .build()
+                    canvas.save()
+                    canvas.translate(marginH, cursorY)
+                    titleLayout.draw(canvas)
+                    canvas.restore()
+                    cursorY += titleLayout.height + 12f
+                    canvas.drawLine(marginH, cursorY, pageWidth - marginH, cursorY, dividerPaint)
+                    cursorY += 18f
+                }
+
+                val maxBodyY = pageHeight - marginBottom - 16f
+                while (lineIndex < bodyLayout.lineCount) {
+                    val lineTop = bodyLayout.getLineTop(lineIndex)
+                    val lineBottom = bodyLayout.getLineBottom(lineIndex)
+                    val lineHeight = (lineBottom - lineTop).toFloat()
+                    if (cursorY + lineHeight > maxBodyY) break
+
+                    val baseline = cursorY + (bodyLayout.getLineBaseline(lineIndex) - lineTop)
+                    val lineStart = bodyLayout.getLineStart(lineIndex)
+                    val lineEnd = bodyLayout.getLineEnd(lineIndex)
+                    val lineStr = normalizedBody.substring(lineStart, lineEnd).trimEnd('\n')
+                    canvas.drawText(lineStr, marginH, baseline, bodyPaint)
+                    cursorY += lineHeight
+                    lineIndex++
+                }
+
+                canvas.drawText("Page $pageNum • Generated by Paperly", marginH, pageHeight - 24f, footerPaint)
+                pdfDocument.finishPage(page)
+                pageNum++
+                if (lineIndex >= bodyLayout.lineCount) break
+            }
+
+            FileOutputStream(outFile).use { fos ->
+                pdfDocument.writeTo(fos)
+            }
+        } finally {
+            pdfDocument.close()
+        }
+
+        PdfRecordEntity(
+            displayName = outFile.name,
+            filePath = outFile.absolutePath,
+            pageCount = countPages(outFile),
+            sizeBytes = outFile.length(),
+            originalSizeBytes = null,
+            operationTag = "Summary"
         )
     }
 

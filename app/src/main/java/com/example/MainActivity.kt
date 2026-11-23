@@ -30,7 +30,6 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
-import com.example.core.configureAppCheck
 import com.example.data.model.PdfToolType
 import com.example.ui.components.AiUnlockGateModal
 import com.example.ui.components.PaperlyBottomBarWithBanner
@@ -49,9 +48,6 @@ import com.example.ui.viewmodel.PaperlyViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Configure Firebase App Check with launch intent before any UI or ViewModels
-        configureAppCheck(this, intent)
 
         enableEdgeToEdge()
 
