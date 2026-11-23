@@ -1,0 +1,6 @@
+{
+  "name": "Paperly",
+  "description": "Modern, minimalist PDF utility app with local merge, split, compress, scan, sign, and AI summarize.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
