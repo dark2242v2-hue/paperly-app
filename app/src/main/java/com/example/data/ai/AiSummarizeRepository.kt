@@ -20,8 +20,9 @@ private const val TAG = "AiSummarizeRepository"
 class AiSummarizeRepository {
 
     companion object {
-        private const val PRIMARY_ENDPOINT = "https://workers.dev"
-        private const val FALLBACK_ENDPOINT = "https://workers.dev"
+        private const val WORKER_HOST = "paperly-ai.dark2242v2.workers.dev"
+        private const val PRIMARY_ENDPOINT = "https://$WORKER_HOST?model=gemini-3.8-flash"
+        private const val FALLBACK_ENDPOINT = "https://$WORKER_HOST?model=gemini-3.8-flash"
         private const val MAX_RETRIES_PER_ENDPOINT = 2
         private const val RETRY_DELAY_MS = 2_000L
     }
@@ -171,6 +172,8 @@ class AiSummarizeRepository {
             readTimeout = 30_000
             doOutput = true
             setRequestProperty("Content-Type", "application/json; charset=UTF-8")
+            setRequestProperty("User-Agent", "PaperlyAndroidApp/1.0")
+            setRequestProperty("Accept", "application/json")
         }
 
         try {
@@ -198,12 +201,15 @@ class AiSummarizeRepository {
                     null
                 }
                 val message = apiError?.takeIf { it.isNotBlank() }
-                    ?: "Server busy, please try again"
+                    ?: "Server busy, please try again (HTTP $statusCode)"
                 throw ProxyHttpException(statusCode, message)
             }
 
             if (!trimmedResponse.startsWith("{")) {
-                throw ProxyHttpException(statusCode, "Server busy, please try again")
+                throw ProxyHttpException(
+                    statusCode,
+                    "Unexpected non-JSON response from server (HTTP $statusCode)"
+                )
             }
 
             val json = JSONObject(trimmedResponse)
