@@ -62,17 +62,25 @@ jobs:
           fi
 
       - name: Prepare release keystore
+        id: prepare_release_keystore
         if: steps.check_release_secrets.outputs.ready == 'true'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          PLAY_APP_SIGNING_SHA256: ${{ secrets.PLAY_APP_SIGNING_SHA256 }}
         run: |
           printf '%s' "$KEYSTORE_BASE64" | tr -d '\r\n ' | base64 -d > my-upload-key.jks
           if [ "$KEY_ALIAS" != "upload" ]; then
             keytool -changealias -alias "$KEY_ALIAS" -destalias "upload" -keystore my-upload-key.jks -storepass "$KEYSTORE_PASSWORD" -keypass "$KEY_PASSWORD"
           fi
+          UPLOAD_SHA256=$(keytool -list -v -keystore my-upload-key.jks -alias upload -storepass "$KEYSTORE_PASSWORD" | grep -m1 "SHA256:" | awk '{print $2}')
+          COMBINED_SHA256="$UPLOAD_SHA256"
+          if [ -n "$PLAY_APP_SIGNING_SHA256" ]; then
+            COMBINED_SHA256="${UPLOAD_SHA256},${PLAY_APP_SIGNING_SHA256}"
+          fi
+          echo "cert_sha256=$COMBINED_SHA256" >> "$GITHUB_OUTPUT"
 
       - name: Build Signed Release AAB
         if: steps.check_release_secrets.outputs.ready == 'true'
@@ -80,6 +88,7 @@ jobs:
           KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
           STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          RELEASE_CERT_SHA256: ${{ steps.prepare_release_keystore.outputs.cert_sha256 }}
         run: gradle bundleRelease
 
       - name: Upload Paperly Release AAB artifact

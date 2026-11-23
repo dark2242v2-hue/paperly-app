@@ -23,6 +23,7 @@ import com.example.data.model.PdfToolType
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.SignaturePlacement
 import com.example.data.pdf.PdfEngine
+import com.example.security.SecurityGuard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
@@ -86,9 +87,19 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     val billingState: StateFlow<BillingUiState> = billingManager.uiState
 
+    private val isAppIntegrityTrusted: Boolean by lazy {
+        SecurityGuard.isAppTrusted(application)
+    }
+
     init {
         adManager.initialize(preloadRewarded = true)
-        billingManager.initialize()
+        if (isAppIntegrityTrusted) {
+            billingManager.initialize()
+        } else {
+            viewModelScope.launch {
+                prefsRepository.setPlayProActive(false, null)
+            }
+        }
     }
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
@@ -107,7 +118,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         prefsRepository.playProActive,
         prefsRepository.debugProOverride
     ) { playActive, debugOverride ->
-        playActive || (BuildConfig.DEBUG && debugOverride)
+        isAppIntegrityTrusted && (playActive || (BuildConfig.DEBUG && debugOverride))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val defaultCompression: StateFlow<CompressionLevel> = prefsRepository.defaultCompression
@@ -214,6 +225,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun openRewardedGateOrProceed(tool: PdfToolType, onNavigateToWorkspace: () -> Unit) {
+        if (tool == PdfToolType.AI_SUMMARIZE && !isAppIntegrityTrusted) {
+            _snackbarMessage.value = "AI Summarize requires the official Google Play release of Paperly."
+            return
+        }
         if (isRewardUnlockedForSession.value) {
             prepareToolWorkspace(tool)
             onNavigateToWorkspace()
@@ -487,6 +502,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun summarizeSelectedPdf() {
+        if (!isAppIntegrityTrusted) {
+            _aiSummaryState.value = AiSummaryUiState.Error(
+                "AI Summarize is unavailable in unverified builds. Please install Paperly from Google Play."
+            )
+            return
+        }
         val file = _workspace.value.selectedPdfs.firstOrNull()
         if (file == null) {
             _aiSummaryState.value = AiSummaryUiState.Error("Please select a PDF file first.")

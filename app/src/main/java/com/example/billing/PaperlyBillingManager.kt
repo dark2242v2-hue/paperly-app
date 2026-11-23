@@ -17,6 +17,7 @@ import com.android.billingclient.api.QueryPurchasesParams
 import com.android.billingclient.api.acknowledgePurchase
 import com.android.billingclient.api.queryProductDetails
 import com.android.billingclient.api.queryPurchasesAsync
+import com.example.security.SecurityGuard
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -92,11 +93,18 @@ class PaperlyBillingManager(
         when (billingResult.responseCode) {
             BillingClient.BillingResponseCode.OK -> {
                 scope.launch {
-                    val activeId = handlePurchasedList(purchases.orEmpty())
-                    _uiState.update { it.copy(isPurchasing = false, statusMessage = null) }
-                    if (activeId != null) {
-                        onEntitlementUpdated(true, activeId)
+                    val outcome = handlePurchasedList(purchases.orEmpty())
+                    _uiState.update {
+                        it.copy(
+                            isPurchasing = false,
+                            statusMessage = outcome.failureMessage
+                        )
+                    }
+                    if (outcome.activeProductId != null) {
+                        onEntitlementUpdated(true, outcome.activeProductId)
                         onUserMessage("Paperly Pro activated — Ad-Free workspace unlocked!")
+                    } else if (outcome.hasPendingPurchase) {
+                        onUserMessage("Purchase pending payment confirmation. Pro will unlock once completed.")
                     }
                 }
             }
@@ -340,7 +348,18 @@ class PaperlyBillingManager(
         )
     }
 
+    private data class PurchaseVerificationOutcome(
+        val activeProductId: String? = null,
+        val hasPendingPurchase: Boolean = false,
+        val failureMessage: String? = null
+    )
+
     private suspend fun refreshActiveSubscriptions(userInitiatedRestore: Boolean): Boolean {
+        if (!SecurityGuard.isAppTrusted(appContext)) {
+            onEntitlementUpdated(false, null)
+            return false
+        }
+
         val params = QueryPurchasesParams.newBuilder()
             .setProductType(BillingClient.ProductType.SUBS)
             .build()
@@ -354,37 +373,71 @@ class PaperlyBillingManager(
             return false
         }
 
-        val activeProductId = handlePurchasedList(result.purchasesList)
-        val hasActiveSub = activeProductId != null
-        onEntitlementUpdated(hasActiveSub, activeProductId)
+        val outcome = handlePurchasedList(result.purchasesList)
+        val hasActiveSub = outcome.activeProductId != null
+        onEntitlementUpdated(hasActiveSub, outcome.activeProductId)
 
-        if (userInitiatedRestore && !hasActiveSub) {
-            Log.i(TAG, "No active subscription found during restore.")
+        if (userInitiatedRestore && outcome.failureMessage != null) {
+            _uiState.update { it.copy(statusMessage = outcome.failureMessage) }
+        } else if (userInitiatedRestore && !hasActiveSub) {
+            Log.i(TAG, "No active verified & acknowledged subscription found during restore.")
         }
         return hasActiveSub
     }
 
-    private suspend fun handlePurchasedList(purchases: List<Purchase>): String? {
+    private suspend fun handlePurchasedList(purchases: List<Purchase>): PurchaseVerificationOutcome {
+        if (!SecurityGuard.isAppTrusted(appContext)) {
+            return PurchaseVerificationOutcome(
+                activeProductId = null,
+                failureMessage = "Pro verification requires the official Google Play release."
+            )
+        }
+
         var activeProductId: String? = null
+        var hasPending = false
+        var lastError: String? = null
+
         for (purchase in purchases) {
-            if (purchase.purchaseState == Purchase.PurchaseState.PURCHASED) {
-                val matchingId = purchase.products.firstOrNull { it in SUBSCRIPTION_IDS }
-                if (matchingId != null) {
-                    if (!purchase.isAcknowledged) {
+            val matchingId = purchase.products.firstOrNull { it in SUBSCRIPTION_IDS } ?: continue
+
+            when (purchase.purchaseState) {
+                Purchase.PurchaseState.PURCHASED -> {
+                    val acknowledged = if (purchase.isAcknowledged) {
+                        true
+                    } else {
                         val ackParams = AcknowledgePurchaseParams.newBuilder()
                             .setPurchaseToken(purchase.purchaseToken)
                             .build()
                         val ackResult = withContext(Dispatchers.IO) {
                             billingClient.acknowledgePurchase(ackParams)
                         }
-                        if (ackResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                        if (ackResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                            true
+                        } else {
                             Log.w(TAG, "Failed to acknowledge purchase: ${ackResult.debugMessage}")
+                            lastError = "Subscription could not be acknowledged yet. Please tap Restore Purchases."
+                            false
                         }
                     }
-                    activeProductId = matchingId
+
+                    // Strict Play Billing check: unlock ONLY when PURCHASED AND acknowledged
+                    if (acknowledged) {
+                        activeProductId = matchingId
+                    }
+                }
+                Purchase.PurchaseState.PENDING -> {
+                    hasPending = true
+                }
+                else -> {
+                    // UNSPECIFIED_STATE or invalid purchase state — do not unlock
                 }
             }
         }
-        return activeProductId
+
+        return PurchaseVerificationOutcome(
+            activeProductId = activeProductId,
+            hasPendingPurchase = hasPending,
+            failureMessage = if (activeProductId == null) lastError else null
+        )
     }
 }
