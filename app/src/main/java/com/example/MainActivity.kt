@@ -40,7 +40,6 @@ import com.example.data.model.PdfToolType
 import com.example.ui.components.PaperlyBottomBarWithBanner
 import com.example.ui.components.PaperlyProSheet
 import com.example.ui.components.PaperlyTopBar
-import com.example.ui.components.RewardedUnlockModal
 import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.screens.DownloadReadyScreen
 import com.example.ui.screens.FilesScreen
@@ -95,11 +94,11 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
     val activePlanProductId by viewModel.activePlanProductId.collectAsStateWithLifecycle()
     val billingState by viewModel.billingState.collectAsStateWithLifecycle()
     val defaultCompression by viewModel.defaultCompression.collectAsStateWithLifecycle()
+    val completedCorePdfOps by viewModel.completedCorePdfOps.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val aiSummaryState by viewModel.aiSummaryState.collectAsStateWithLifecycle()
-    val rewardedGateModal by viewModel.rewardedGateModal.collectAsStateWithLifecycle()
-    val showProSheet by viewModel.showProSheet.collectAsStateWithLifecycle()
+    val proSheetState by viewModel.proSheetState.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
 
     val activity = LocalContext.current.findActivity()
@@ -123,6 +122,15 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
         if (msg != null) {
             snackbarHostState.showSnackbar(msg)
             viewModel.consumeSnackbar()
+        }
+    }
+
+    LaunchedEffect(isPro) {
+        val pendingTool = proSheetState.triggeredByTool
+        if (isPro && proSheetState.visible && pendingTool != null) {
+            viewModel.dismissProSheet()
+            viewModel.prepareToolWorkspace(pendingTool)
+            navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
         }
     }
 
@@ -256,7 +264,9 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                         recordId = recordId,
                         isPro = isPro,
                         isDarkMode = isDarkMode,
+                        showAhaTrialBanner = !isPro && completedCorePdfOps >= 2,
                         viewModel = viewModel,
+                        onUpgradeProClick = viewModel::openProSheet,
                         onPreviewPdf = { id ->
                             navController.navigate(PaperlyRoutes.pdfViewer(id))
                         },
@@ -281,24 +291,18 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
         }
     }
 
-    RewardedUnlockModal(
-        state = rewardedGateModal,
-        onWatchVideo = {
-            viewModel.watchRewardedVideoToUnlock(activity) { unlockedTool ->
-                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
-            }
-        },
-        onUpgradePro = viewModel::upgradeToProFromGateModal,
-        onDismiss = viewModel::dismissRewardedGateModal
-    )
-
     PaperlyProSheet(
-        visible = showProSheet,
+        state = proSheetState,
         isPro = isPro,
         activePlanProductId = activePlanProductId,
         billingState = billingState,
         onSubscribe = { planType ->
             viewModel.subscribeToPlan(activity, planType)
+        },
+        onWatchRewardedVideo = {
+            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool ->
+                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
+            }
         },
         onRestorePurchases = viewModel::restorePurchases,
         onDismiss = viewModel::dismissProSheet

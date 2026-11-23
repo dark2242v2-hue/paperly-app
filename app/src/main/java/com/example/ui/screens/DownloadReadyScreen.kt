@@ -62,6 +62,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.text.font.FontWeight
 import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
@@ -76,7 +84,9 @@ fun DownloadReadyScreen(
     recordId: Long,
     isPro: Boolean,
     isDarkMode: Boolean,
+    showAhaTrialBanner: Boolean,
     viewModel: PaperlyViewModel,
+    onUpgradeProClick: () -> Unit,
     onPreviewPdf: (Long) -> Unit,
     onDone: () -> Unit
 ) {
@@ -84,6 +94,7 @@ fun DownloadReadyScreen(
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var thumbnail by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
+    var ahaBannerDismissed by rememberSaveable(recordId) { mutableStateOf(false) }
 
     LaunchedEffect(recordId) {
         isLoading = true
@@ -377,10 +388,71 @@ fun DownloadReadyScreen(
                             }
                         }
 
+                        // Trigger 2 (Aha! Moment): Subtle dismissible banner after 2 merges/splits/compressions
+                        if (showAhaTrialBanner && !isPro && !ahaBannerDismissed) {
+                            item {
+                                AnimatedVisibility(
+                                    visible = !ahaBannerDismissed,
+                                    enter = expandVertically(),
+                                    exit = shrinkVertically()
+                                ) {
+                                    Card(
+                                        onClick = onUpgradeProClick,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("download_ready_aha_banner"),
+                                        shape = RoundedCornerShape(16.dp),
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
+                                        ),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                                        )
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(start = 14.dp, top = 10.dp, bottom = 10.dp, end = 4.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.WorkspacePremium,
+                                                contentDescription = null,
+                                                tint = MaterialTheme.colorScheme.primary,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                            Text(
+                                                text = "Enjoying Paperly? Remove ads & unlock AI free for 3 days →",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurface,
+                                                modifier = Modifier.weight(1f)
+                                            )
+                                            IconButton(
+                                                onClick = { ahaBannerDismissed = true },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("aha_banner_dismiss_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Close,
+                                                    contentDescription = "Dismiss",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Safe spacing before Sponsored NativeAd card (hidden when Pro is active)
                         if (!isPro) {
                             item {
-                                Spacer(modifier = Modifier.height(16.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
                                 SponsoredNativeAdCard(
                                     adManager = viewModel.adManager,
                                     isDarkMode = isDarkMode

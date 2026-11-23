@@ -5,6 +5,7 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -25,6 +26,7 @@ class UserPreferencesRepository(private val context: Context) {
         val ACTIVE_PLAN_PRODUCT_ID = stringPreferencesKey("active_plan_product_id")
         val COMPRESSION_LEVEL = stringPreferencesKey("compression_level")
         val AI_UNLOCKED_UNTIL = longPreferencesKey("ai_unlocked_until")
+        val COMPLETED_CORE_PDF_OPS = intPreferencesKey("completed_core_pdf_ops")
     }
 
     val isDarkMode: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
@@ -50,6 +52,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     val aiUnlockedUntilMillis: Flow<Long> = context.paperlyDataStore.data.map { prefs ->
         prefs[Keys.AI_UNLOCKED_UNTIL] ?: 0L
+    }
+
+    val completedCorePdfOps: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
+        prefs[Keys.COMPLETED_CORE_PDF_OPS] ?: 0
     }
 
     suspend fun setDarkMode(enabled: Boolean) {
@@ -78,6 +84,13 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun grantAiSessionUnlock(durationMillis: Long = 30 * 60 * 1000L) {
         context.paperlyDataStore.edit {
             it[Keys.AI_UNLOCKED_UNTIL] = System.currentTimeMillis() + durationMillis
+        }
+    }
+
+    suspend fun incrementCompletedCorePdfOps() {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.COMPLETED_CORE_PDF_OPS] ?: 0
+            it[Keys.COMPLETED_CORE_PDF_OPS] = current + 1
         }
     }
 }

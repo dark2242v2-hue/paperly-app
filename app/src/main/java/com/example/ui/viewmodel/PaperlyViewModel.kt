@@ -59,11 +59,11 @@ data class WorkspaceUiState(
     val processing: ProcessingState = ProcessingState()
 )
 
-data class RewardedGateModalState(
+data class ProSheetUiState(
     val visible: Boolean = false,
-    val targetTool: PdfToolType = PdfToolType.AI_SUMMARIZE,
-    val isLoadingAd: Boolean = false,
-    val errorMessage: String? = null
+    val triggeredByTool: PdfToolType? = null,
+    val isLoadingRewardedAd: Boolean = false,
+    val rewardedError: String? = null
 )
 
 class PaperlyViewModel(application: Application) : AndroidViewModel(application) {
@@ -124,6 +124,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     val defaultCompression: StateFlow<CompressionLevel> = prefsRepository.defaultCompression
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompressionLevel.BALANCED)
 
+    val completedCorePdfOps: StateFlow<Int> = prefsRepository.completedCorePdfOps
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
     val isRewardUnlockedForSession: StateFlow<Boolean> = combine(
         isPro,
         prefsRepository.aiUnlockedUntilMillis
@@ -137,11 +140,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _aiSummaryState = MutableStateFlow<AiSummaryUiState>(AiSummaryUiState.Idle)
     val aiSummaryState: StateFlow<AiSummaryUiState> = _aiSummaryState.asStateFlow()
 
-    private val _rewardedGateModal = MutableStateFlow(RewardedGateModalState())
-    val rewardedGateModal: StateFlow<RewardedGateModalState> = _rewardedGateModal.asStateFlow()
-
-    private val _showProSheet = MutableStateFlow(false)
-    val showProSheet: StateFlow<Boolean> = _showProSheet.asStateFlow()
+    private val _proSheetState = MutableStateFlow(ProSheetUiState())
+    val proSheetState: StateFlow<ProSheetUiState> = _proSheetState.asStateFlow()
 
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
@@ -190,12 +190,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     fun openProSheet() {
         billingManager.clearStatusMessage()
-        _showProSheet.value = true
+        _proSheetState.value = ProSheetUiState(visible = true, triggeredByTool = null)
     }
 
     fun dismissProSheet() {
         billingManager.clearStatusMessage()
-        _showProSheet.value = false
+        _proSheetState.value = ProSheetUiState(visible = false)
     }
 
     fun consumeSnackbar() {
@@ -233,60 +233,54 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             prepareToolWorkspace(tool)
             onNavigateToWorkspace()
         } else {
+            // Trigger 1 (High-Intent Gate): Show the Pro paywall with 'Start 3-Day Free Trial' as primary
+            // and 'Watch a short video to unlock this session free' as a secondary text button below.
             adManager.preloadRewardedAd()
-            _rewardedGateModal.value = RewardedGateModalState(
+            billingManager.clearStatusMessage()
+            _proSheetState.value = ProSheetUiState(
                 visible = true,
-                targetTool = tool
+                triggeredByTool = tool
             )
         }
     }
 
-    fun dismissRewardedGateModal() {
-        _rewardedGateModal.value = RewardedGateModalState(visible = false)
-    }
-
-    fun watchRewardedVideoToUnlock(
+    fun watchRewardedVideoFromProSheet(
         activity: Activity?,
         onUnlocked: (PdfToolType) -> Unit
     ) {
-        val tool = _rewardedGateModal.value.targetTool
+        val tool = _proSheetState.value.triggeredByTool ?: return
         if (activity == null) {
-            _rewardedGateModal.update {
-                it.copy(isLoadingAd = false, errorMessage = "Unable to present video ad right now.")
+            _proSheetState.update {
+                it.copy(isLoadingRewardedAd = false, rewardedError = "Unable to present video ad right now.")
             }
             return
         }
 
-        _rewardedGateModal.update { it.copy(isLoadingAd = true, errorMessage = null) }
+        _proSheetState.update { it.copy(isLoadingRewardedAd = true, rewardedError = null) }
         adManager.showRewardedAd(
             activity = activity,
             onUserEarnedReward = {
                 viewModelScope.launch {
                     prefsRepository.grantAiSessionUnlock()
-                    _rewardedGateModal.value = RewardedGateModalState(visible = false)
+                    _proSheetState.value = ProSheetUiState(visible = false)
                     prepareToolWorkspace(tool)
                     onUnlocked(tool)
                 }
             },
             onDismissedWithoutReward = {
-                _rewardedGateModal.update {
+                _proSheetState.update {
                     it.copy(
-                        isLoadingAd = false,
-                        errorMessage = "Finish watching the short video to unlock for free, or skip anytime."
+                        isLoadingRewardedAd = false,
+                        rewardedError = "Finish watching the short video to unlock this session free."
                     )
                 }
             },
             onLoadFailed = { msg ->
-                _rewardedGateModal.update {
-                    it.copy(isLoadingAd = false, errorMessage = msg)
+                _proSheetState.update {
+                    it.copy(isLoadingRewardedAd = false, rewardedError = msg)
                 }
             }
         )
-    }
-
-    fun upgradeToProFromGateModal() {
-        _rewardedGateModal.value = RewardedGateModalState(visible = false)
-        openProSheet()
     }
 
     fun addPickedPdfUris(uris: List<Uri>) {
@@ -481,6 +475,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 }
 
                 val id = recordRepository.insert(record)
+                if (state.activeTool == PdfToolType.MERGE ||
+                    state.activeTool == PdfToolType.SPLIT ||
+                    state.activeTool == PdfToolType.COMPRESS
+                ) {
+                    prefsRepository.incrementCompletedCorePdfOps()
+                }
                 _workspace.update { it.copy(processing = ProcessingState()) }
                 onSuccess(id)
             } catch (e: CancellationException) {

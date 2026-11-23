@@ -29,7 +29,11 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import java.text.NumberFormat
+import java.util.Currency
+import java.util.Locale
 import kotlin.coroutines.resume
+import kotlin.math.roundToInt
 
 private const val TAG = "PaperlyBillingManager"
 
@@ -43,6 +47,8 @@ data class SubscriptionPlanUi(
     val productId: String,
     val formattedPrice: String,
     val periodLabel: String,
+    val priceAmountMicros: Long,
+    val priceCurrencyCode: String = "INR",
     val hasFreeTrial: Boolean = false,
     val isLoadedFromPlay: Boolean = false,
     val productDetails: ProductDetails? = null,
@@ -59,6 +65,8 @@ data class BillingUiState(
         productId = PaperlyBillingManager.PRODUCT_MONTHLY,
         formattedPrice = "₹79",
         periodLabel = "month",
+        priceAmountMicros = 79_000_000L,
+        priceCurrencyCode = "INR",
         hasFreeTrial = false
     ),
     val yearlyPlan: SubscriptionPlanUi = SubscriptionPlanUi(
@@ -66,8 +74,13 @@ data class BillingUiState(
         productId = PaperlyBillingManager.PRODUCT_YEARLY,
         formattedPrice = "₹399",
         periodLabel = "year",
+        priceAmountMicros = 399_000_000L,
+        priceCurrencyCode = "INR",
         hasFreeTrial = true
     ),
+    val yearlyAnchorFormatted: String = "₹948",
+    val yearlyMonthlyEquivalentFormatted: String = "₹33",
+    val yearlySavingsPercent: Int = 58,
     val statusMessage: String? = null
 )
 
@@ -293,10 +306,16 @@ class PaperlyBillingManager(
             val yearlyDetails = detailsList.firstOrNull { it.productId == PRODUCT_YEARLY }
 
             _uiState.update { current ->
+                val updatedMonthly = parseMonthlyPlan(monthlyDetails, current.monthlyPlan)
+                val updatedYearly = parseYearlyPlan(yearlyDetails, current.yearlyPlan)
+                val anchors = computePricingAnchors(updatedMonthly, updatedYearly)
                 current.copy(
                     isLoadingProducts = false,
-                    monthlyPlan = parseMonthlyPlan(monthlyDetails, current.monthlyPlan),
-                    yearlyPlan = parseYearlyPlan(yearlyDetails, current.yearlyPlan)
+                    monthlyPlan = updatedMonthly,
+                    yearlyPlan = updatedYearly,
+                    yearlyAnchorFormatted = anchors.anchorFormatted,
+                    yearlyMonthlyEquivalentFormatted = anchors.monthlyEquivalentFormatted,
+                    yearlySavingsPercent = anchors.savingsPercent
                 )
             }
         } else {
@@ -315,6 +334,8 @@ class PaperlyBillingManager(
             ?: offer.pricingPhases.pricingPhaseList.firstOrNull()
         return fallback.copy(
             formattedPrice = paidPhase?.formattedPrice ?: fallback.formattedPrice,
+            priceAmountMicros = paidPhase?.priceAmountMicros ?: fallback.priceAmountMicros,
+            priceCurrencyCode = paidPhase?.priceCurrencyCode ?: fallback.priceCurrencyCode,
             isLoadedFromPlay = true,
             productDetails = details,
             offerToken = offer.offerToken
@@ -341,11 +362,67 @@ class PaperlyBillingManager(
 
         return fallback.copy(
             formattedPrice = recurringPaidPhase?.formattedPrice ?: fallback.formattedPrice,
+            priceAmountMicros = recurringPaidPhase?.priceAmountMicros ?: fallback.priceAmountMicros,
+            priceCurrencyCode = recurringPaidPhase?.priceCurrencyCode ?: fallback.priceCurrencyCode,
             hasFreeTrial = hasTrial,
             isLoadedFromPlay = true,
             productDetails = details,
             offerToken = chosenOffer.offerToken
         )
+    }
+
+    private data class PricingAnchors(
+        val anchorFormatted: String,
+        val monthlyEquivalentFormatted: String,
+        val savingsPercent: Int
+    )
+
+    private fun computePricingAnchors(
+        monthly: SubscriptionPlanUi,
+        yearly: SubscriptionPlanUi
+    ): PricingAnchors {
+        val anchorMicros = monthly.priceAmountMicros * 12L
+        val yearlyMicros = yearly.priceAmountMicros
+        if (anchorMicros <= 0L || yearlyMicros <= 0L) {
+            return PricingAnchors("₹948", "₹33", 58)
+        }
+
+        val anchorFormatted = formatMicrosAsCurrency(anchorMicros, monthly.priceCurrencyCode)
+        val rawMonthlyEqMicros = yearlyMicros / 12.0
+        val wholeYearly = (yearlyMicros % 1_000_000L == 0L) && yearlyMicros >= 10_000_000L
+        val monthlyEqMicros = if (wholeYearly) {
+            (rawMonthlyEqMicros / 1_000_000.0).roundToInt().coerceAtLeast(1) * 1_000_000L
+        } else {
+            rawMonthlyEqMicros.roundToInt().toLong()
+        }
+        val monthlyEqFormatted = formatMicrosAsCurrency(monthlyEqMicros, yearly.priceCurrencyCode)
+        val savings = if (anchorMicros > yearlyMicros) {
+            (((anchorMicros - yearlyMicros).toDouble() / anchorMicros.toDouble()) * 100.0)
+                .roundToInt()
+                .coerceIn(1, 95)
+        } else {
+            58
+        }
+        return PricingAnchors(anchorFormatted, monthlyEqFormatted, savings)
+    }
+
+    private fun formatMicrosAsCurrency(micros: Long, currencyCode: String): String {
+        return runCatching {
+            val amount = micros / 1_000_000.0
+            val formatter = NumberFormat.getCurrencyInstance(Locale.getDefault())
+            formatter.currency = Currency.getInstance(currencyCode)
+            if (micros % 1_000_000L == 0L) {
+                formatter.maximumFractionDigits = 0
+                formatter.minimumFractionDigits = 0
+            } else {
+                formatter.maximumFractionDigits = 2
+                formatter.minimumFractionDigits = 2
+            }
+            formatter.format(amount)
+        }.getOrElse {
+            val whole = (micros / 1_000_000L)
+            "₹$whole"
+        }
     }
 
     private data class PurchaseVerificationOutcome(

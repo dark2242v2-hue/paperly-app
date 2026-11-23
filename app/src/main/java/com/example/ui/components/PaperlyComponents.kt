@@ -51,6 +51,7 @@ import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Home
@@ -101,11 +102,10 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -120,7 +120,7 @@ import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.theme.PaperlyViolet
-import com.example.ui.viewmodel.RewardedGateModalState
+import com.example.ui.viewmodel.ProSheetUiState
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
@@ -466,218 +466,29 @@ fun SponsoredNativeAdCard(
     }
 }
 
-@Composable
-fun RewardedUnlockModal(
-    state: RewardedGateModalState,
-    onWatchVideo: () -> Unit,
-    onUpgradePro: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    if (!state.visible) return
-
-    val isScanTool = state.targetTool == PdfToolType.SCAN
-    val modalTitle = if (isScanTool) {
-        stringResource(R.string.scan_modal_title)
-    } else {
-        stringResource(R.string.ai_modal_title)
-    }
-    val modalSubtitle = if (isScanTool) {
-        stringResource(R.string.scan_modal_subtitle)
-    } else {
-        stringResource(R.string.ai_modal_subtitle)
-    }
-    val headerIcon = if (isScanTool) Icons.Filled.DocumentScanner else Icons.Filled.AutoAwesome
-
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(usePlatformDefaultWidth = false)
-    ) {
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp)
-                .testTag("rewarded_unlock_gate_modal"),
-            shape = RoundedCornerShape(24.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
-        ) {
-            Column(
-                modifier = Modifier.padding(22.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(12.dp))
-                                .background(MaterialTheme.colorScheme.primaryContainer),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = headerIcon,
-                                contentDescription = modalTitle,
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
-                        Text(
-                            text = modalTitle,
-                            style = MaterialTheme.typography.titleLarge,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                    }
-
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("rewarded_modal_close_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.ai_modal_skip),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Text(
-                    text = modalSubtitle,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
-                state.errorMessage?.let { err ->
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.errorContainer
-                    ) {
-                        Text(
-                            text = err,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 12.dp, vertical = 10.dp)
-                        )
-                    }
-                }
-
-                Button(
-                    onClick = onWatchVideo,
-                    enabled = !state.isLoadingAd,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp)
-                        .testTag("rewarded_watch_video_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    if (state.isLoadingAd) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(20.dp),
-                            strokeWidth = 2.dp,
-                            color = Color.White
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Text(
-                            text = stringResource(R.string.rewarded_loading_video),
-                            style = MaterialTheme.typography.labelLarge
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.Filled.PlayCircle,
-                            contentDescription = null,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(horizontalAlignment = Alignment.Start) {
-                            Text(
-                                text = stringResource(R.string.ai_modal_watch_video),
-                                style = MaterialTheme.typography.labelLarge
-                            )
-                            Text(
-                                text = stringResource(R.string.ai_modal_watch_video_sub),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White.copy(alpha = 0.85f)
-                            )
-                        }
-                    }
-                }
-
-                OutlinedButton(
-                    onClick = onUpgradePro,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(58.dp)
-                        .testTag("rewarded_upgrade_pro_button"),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.WorkspacePremium,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(modifier = Modifier.width(10.dp))
-                    Column(horizontalAlignment = Alignment.Start) {
-                        Text(
-                            text = stringResource(R.string.ai_modal_upgrade_pro),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.primary
-                        )
-                        Text(
-                            text = stringResource(R.string.ai_modal_upgrade_pro_sub),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                TextButton(
-                    onClick = onDismiss,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(48.dp)
-                        .testTag("rewarded_modal_skip_button")
-                ) {
-                    Text(
-                        text = stringResource(R.string.ai_modal_skip),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PaperlyProSheet(
-    visible: Boolean,
+    state: ProSheetUiState,
     isPro: Boolean,
     activePlanProductId: String?,
     billingState: BillingUiState,
     onSubscribe: (ProPlanType) -> Unit,
+    onWatchRewardedVideo: () -> Unit,
     onRestorePurchases: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    if (!visible) return
+    if (!state.visible) return
 
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    var selectedPlan by remember { mutableStateOf(ProPlanType.YEARLY) }
+    var selectedPlan by remember(state.visible) { mutableStateOf(ProPlanType.YEARLY) }
+
+    val triggeredToolLabel = when (state.triggeredByTool) {
+        PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
+        PdfToolType.SCAN -> "Unlock Scan to PDF"
+        else -> null
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -689,40 +500,66 @@ fun PaperlyProSheet(
                 .fillMaxWidth()
                 .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.navigationBars)
-                .padding(horizontal = 24.dp, vertical = 12.dp)
+                .padding(horizontal = 24.dp, vertical = 10.dp)
                 .padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Box(
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(
+                                if (isPro) PaperlyEmerald.copy(alpha = 0.14f)
+                                else PaperlyIndigo.copy(alpha = 0.12f)
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.WorkspacePremium,
+                            contentDescription = "Paperly Pro",
+                            tint = if (isPro) PaperlyEmerald else PaperlyIndigo
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = triggeredToolLabel ?: "Paperly Pro",
+                            style = MaterialTheme.typography.headlineSmall,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = if (isPro) {
+                                "Active • Ad-free experience enabled"
+                            } else if (triggeredToolLabel != null) {
+                                "Get unlimited ad-free access with Paperly Pro"
+                            } else {
+                                "Ad-free PDF studio & unlimited AI"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onDismiss,
                     modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(
-                            if (isPro) PaperlyEmerald.copy(alpha = 0.14f)
-                            else PaperlyIndigo.copy(alpha = 0.12f)
-                        ),
-                    contentAlignment = Alignment.Center
+                        .minimumInteractiveComponentSize()
+                        .testTag("pro_sheet_top_close_button")
                 ) {
                     Icon(
-                        imageVector = Icons.Filled.WorkspacePremium,
-                        contentDescription = "Paperly Pro",
-                        tint = if (isPro) PaperlyEmerald else PaperlyIndigo
-                    )
-                }
-                Column {
-                    Text(
-                        text = "Paperly Pro",
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (isPro) "Active • Ad-free experience enabled" else "Ad-free PDF studio & unlimited AI",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        imageVector = Icons.Filled.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
@@ -809,37 +646,31 @@ fun PaperlyProSheet(
                     Text("Done", style = MaterialTheme.typography.labelLarge)
                 }
             } else {
-                // Yearly Plan (selected by default with Best Value • 3-Day Free Trial badge)
-                SubscriptionPlanCard(
-                    title = "Yearly",
-                    priceText = "${billingState.yearlyPlan.formattedPrice} / year",
-                    subtitle = if (billingState.yearlyPlan.hasFreeTrial) {
-                        "3 days free, then ${billingState.yearlyPlan.formattedPrice}/year"
+                // Yearly Plan Card (selected by default with SAVE 58% + Best Value, crossed-out anchor price, & Just ₹33/month • 3 days free)
+                YearlySubscriptionPlanCard(
+                    yearlyPrice = "${billingState.yearlyPlan.formattedPrice}/year",
+                    crossedOutAnnualPrice = "${billingState.yearlyAnchorFormatted}/yr",
+                    monthlyEquivalentLine = if (billingState.yearlyPlan.hasFreeTrial) {
+                        "Just ${billingState.yearlyMonthlyEquivalentFormatted}/month • 3 days free"
                     } else {
-                        "Billed annually • Save vs monthly"
+                        "Just ${billingState.yearlyMonthlyEquivalentFormatted}/month • Billed annually"
                     },
-                    badgeText = if (billingState.yearlyPlan.hasFreeTrial) {
-                        "Best Value • 3-Day Free Trial"
-                    } else {
-                        "Best Value"
-                    },
+                    savingsBadgeText = "SAVE ${billingState.yearlySavingsPercent}%",
                     selected = selectedPlan == ProPlanType.YEARLY,
                     onClick = { selectedPlan = ProPlanType.YEARLY },
                     modifier = Modifier.testTag("pro_plan_yearly")
                 )
 
-                // Monthly Plan
-                SubscriptionPlanCard(
-                    title = "Monthly",
-                    priceText = "${billingState.monthlyPlan.formattedPrice} / month",
-                    subtitle = "Standard monthly billing • Cancel anytime",
-                    badgeText = null,
+                // Monthly Plan Card
+                MonthlySubscriptionPlanCard(
+                    priceText = "${billingState.monthlyPlan.formattedPrice}/month",
                     selected = selectedPlan == ProPlanType.MONTHLY,
                     onClick = { selectedPlan = ProPlanType.MONTHLY },
                     modifier = Modifier.testTag("pro_plan_monthly")
                 )
 
-                billingState.statusMessage?.let { status ->
+                val feedbackMessage = state.rewardedError ?: billingState.statusMessage
+                feedbackMessage?.let { status ->
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.secondaryContainer
@@ -861,15 +692,10 @@ fun PaperlyProSheet(
                     selectedPlan == ProPlanType.YEARLY -> "Continue Yearly • ${billingState.yearlyPlan.formattedPrice}/year"
                     else -> "Continue Monthly • ${billingState.monthlyPlan.formattedPrice}/month"
                 }
-                val ctaSubtext = when {
-                    isYearlyTrial -> "Then ${billingState.yearlyPlan.formattedPrice}/year • Cancel anytime"
-                    selectedPlan == ProPlanType.YEARLY -> "Billed ${billingState.yearlyPlan.formattedPrice}/year via Google Play • Cancel anytime"
-                    else -> "Billed ${billingState.monthlyPlan.formattedPrice}/month via Google Play • Cancel anytime"
-                }
 
                 Button(
                     onClick = { onSubscribe(selectedPlan) },
-                    enabled = !billingState.isPurchasing && !billingState.isRestoring,
+                    enabled = !billingState.isPurchasing && !billingState.isRestoring && !state.isLoadingRewardedAd,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(54.dp)
@@ -890,44 +716,108 @@ fun PaperlyProSheet(
                     } else {
                         Text(
                             text = ctaLabel,
-                            style = MaterialTheme.typography.labelLarge
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 }
 
+                // Reassuring trust line directly below 'Start 3-Day Free Trial'
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 4.dp),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.VerifiedUser,
+                        contentDescription = null,
+                        tint = PaperlyEmerald,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "No payment due today • Cancel anytime in 1 tap on Google Play",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+
                 Text(
-                    text = ctaSubtext,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    text = if (isYearlyTrial) {
+                        "Then ${billingState.yearlyPlan.formattedPrice}/year after 3-day free trial"
+                    } else if (selectedPlan == ProPlanType.YEARLY) {
+                        "Billed ${billingState.yearlyPlan.formattedPrice}/year via Google Play"
+                    } else {
+                        "Billed ${billingState.monthlyPlan.formattedPrice}/month via Google Play"
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                // Secondary rewarded option when opened via Trigger 1 (AI Summarize or Scan to PDF)
+                if (state.triggeredByTool != null) {
                     TextButton(
-                        onClick = onRestorePurchases,
-                        enabled = !billingState.isRestoring && !billingState.isPurchasing,
+                        onClick = onWatchRewardedVideo,
+                        enabled = !state.isLoadingRewardedAd && !billingState.isPurchasing,
                         modifier = Modifier
+                            .fillMaxWidth()
                             .height(48.dp)
-                            .testTag("pro_sheet_restore_button")
+                            .testTag("paywall_watch_video_button")
                     ) {
-                        Text(if (billingState.isRestoring) "Restoring…" else "Restore Purchases")
+                        if (state.isLoadingRewardedAd) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Loading short video…")
+                        } else {
+                            Icon(
+                                imageVector = Icons.Filled.PlayCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Watch a short video to unlock this session free",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
                     }
-
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .height(48.dp)
-                            .testTag("pro_sheet_close_button")
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(
-                            text = "Not now",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        TextButton(
+                            onClick = onRestorePurchases,
+                            enabled = !billingState.isRestoring && !billingState.isPurchasing,
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("pro_sheet_restore_button")
+                        ) {
+                            Text(if (billingState.isRestoring) "Restoring…" else "Restore Purchases")
+                        }
+
+                        TextButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("pro_sheet_close_button")
+                        ) {
+                            Text(
+                                text = "Not now",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -936,11 +826,122 @@ fun PaperlyProSheet(
 }
 
 @Composable
-private fun SubscriptionPlanCard(
-    title: String,
+private fun YearlySubscriptionPlanCard(
+    yearlyPrice: String,
+    crossedOutAnnualPrice: String,
+    monthlyEquivalentLine: String,
+    savingsBadgeText: String,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        onClick = onClick,
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+        )
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Surface(
+                    shape = CircleShape,
+                    color = PaperlyIndigo
+                ) {
+                    Text(
+                        text = "Best Value",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF16A34A)
+                ) {
+                    Text(
+                        text = savingsBadgeText,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    RadioButton(
+                        selected = selected,
+                        onClick = onClick
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = "Yearly",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = monthlyEquivalentLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = PaperlyEmerald,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        text = crossedOutAnnualPrice,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textDecoration = TextDecoration.LineThrough
+                    )
+                    Text(
+                        text = yearlyPrice,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonthlySubscriptionPlanCard(
     priceText: String,
-    subtitle: String,
-    badgeText: String?,
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -961,64 +962,44 @@ private fun SubscriptionPlanCard(
             color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
         )
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp)
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            if (badgeText != null) {
-                Surface(
-                    shape = CircleShape,
-                    color = PaperlyIndigo
-                ) {
-                    Text(
-                        text = badgeText,
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
-                    )
-                }
-            }
-
             Row(
-                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                modifier = Modifier.weight(1f)
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    RadioButton(
-                        selected = selected,
-                        onClick = onClick
-                    )
-                    Column {
-                        Text(
-                            text = title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Text(
-                    text = priceText,
-                    style = MaterialTheme.typography.titleSmall,
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold
+                RadioButton(
+                    selected = selected,
+                    onClick = onClick
                 )
+                Column {
+                    Text(
+                        text = "Monthly",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "Standard monthly billing • Cancel anytime",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
+
+            Spacer(modifier = Modifier.width(8.dp))
+
+            Text(
+                text = priceText,
+                style = MaterialTheme.typography.titleSmall,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
