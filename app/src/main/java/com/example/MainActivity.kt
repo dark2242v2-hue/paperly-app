@@ -21,6 +21,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -30,11 +31,12 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.ads.findActivity
 import com.example.data.model.PdfToolType
-import com.example.ui.components.AiUnlockGateModal
 import com.example.ui.components.PaperlyBottomBarWithBanner
 import com.example.ui.components.PaperlyProSheet
 import com.example.ui.components.PaperlyTopBar
+import com.example.ui.components.RewardedUnlockModal
 import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.screens.DownloadReadyScreen
 import com.example.ui.screens.FilesScreen
@@ -89,10 +91,11 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val aiSummaryState by viewModel.aiSummaryState.collectAsStateWithLifecycle()
-    val aiGateModal by viewModel.aiGateModal.collectAsStateWithLifecycle()
+    val rewardedGateModal by viewModel.rewardedGateModal.collectAsStateWithLifecycle()
     val showProSheet by viewModel.showProSheet.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
 
+    val activity = LocalContext.current.findActivity()
     val snackbarHostState = remember { SnackbarHostState() }
 
     LaunchedEffect(snackbarMessage) {
@@ -128,6 +131,7 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                 PaperlyBottomBarWithBanner(
                     currentRoute = currentRoute,
                     isPro = isPro,
+                    showHomeBanner = currentRoute == PaperlyRoutes.HOME,
                     onNavigate = { targetRoute ->
                         navController.navigate(targetRoute) {
                             popUpTo(navController.graph.findStartDestination().id) {
@@ -136,8 +140,7 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                             launchSingleTop = true
                             restoreState = true
                         }
-                    },
-                    onProClick = viewModel::openProSheet
+                    }
                 )
             }
         }
@@ -155,9 +158,9 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                     HomeScreen(
                         recentRecords = recentRecords,
                         onToolSelected = { tool ->
-                            if (tool == PdfToolType.AI_SUMMARIZE) {
-                                viewModel.openAiGateOrProceed {
-                                    navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.AI_SUMMARIZE))
+                            if (tool == PdfToolType.AI_SUMMARIZE || tool == PdfToolType.SCAN) {
+                                viewModel.openRewardedGateOrProceed(tool) {
+                                    navController.navigate(PaperlyRoutes.toolWorkspace(tool))
                                 }
                             } else {
                                 viewModel.prepareToolWorkspace(tool)
@@ -228,14 +231,14 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                     DownloadReadyScreen(
                         recordId = recordId,
                         isPro = isPro,
+                        isDarkMode = isDarkMode,
                         viewModel = viewModel,
                         onPreviewPdf = { id ->
                             navController.navigate(PaperlyRoutes.pdfViewer(id))
                         },
                         onDone = {
                             navController.popBackStack(PaperlyRoutes.HOME, inclusive = false)
-                        },
-                        onOpenProSheet = viewModel::openProSheet
+                        }
                     )
                 }
 
@@ -254,19 +257,19 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
         }
     }
 
-    AiUnlockGateModal(
-        state = aiGateModal,
+    RewardedUnlockModal(
+        state = rewardedGateModal,
         onWatchVideo = {
-            viewModel.startRewardedVideoUnlock {
-                navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.AI_SUMMARIZE))
+            viewModel.watchRewardedVideoToUnlock(activity) { unlockedTool ->
+                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
             }
         },
         onUpgradePro = {
-            viewModel.upgradeToProFromAiModal {
-                navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.AI_SUMMARIZE))
+            viewModel.upgradeToProFromGateModal { unlockedTool ->
+                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
             }
         },
-        onDismiss = viewModel::dismissAiGateModal
+        onDismiss = viewModel::dismissRewardedGateModal
     )
 
     PaperlyProSheet(

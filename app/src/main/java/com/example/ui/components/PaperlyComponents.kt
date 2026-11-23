@@ -5,18 +5,23 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
+import android.graphics.drawable.GradientDrawable
+import android.view.LayoutInflater
+import android.view.View
+import android.widget.Button as AndroidButton
+import android.widget.ImageView
+import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +40,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
@@ -49,11 +55,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
@@ -65,6 +71,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -81,23 +89,33 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.R
+import com.example.ads.AdUnitIds
+import com.example.ads.PaperlyAdManager
+import com.example.data.model.PdfToolType
 import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.theme.PaperlyViolet
-import com.example.ui.viewmodel.AiGateModalState
+import com.example.ui.viewmodel.RewardedGateModalState
+import com.google.android.gms.ads.AdRequest
+import com.google.android.gms.ads.AdSize
+import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.nativead.NativeAd
+import com.google.android.gms.ads.nativead.NativeAdView
 
 @Composable
 fun PaperlyTopBar(
@@ -205,8 +223,8 @@ fun PaperlyTopBar(
 fun PaperlyBottomBarWithBanner(
     currentRoute: String?,
     isPro: Boolean,
+    showHomeBanner: Boolean,
     onNavigate: (String) -> Unit,
-    onProClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -214,67 +232,20 @@ fun PaperlyBottomBarWithBanner(
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
     ) {
-        // 60.dp slim banner ad safe area above the bottom navigation bar
+        // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
         AnimatedVisibility(
-            visible = !isPro,
+            visible = showHomeBanner && !isPro,
             enter = expandVertically(),
             exit = shrinkVertically()
         ) {
             Column {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                Box(
+                AnchoredAdaptiveBannerSlot(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(60.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f))
-                        .clickable { onProClick() }
-                        .padding(horizontal = 16.dp)
-                        .testTag("slim_banner_ad"),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(4.dp),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.banner_ad_label),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                            Text(
-                                text = stringResource(R.string.banner_ad_copy),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Surface(
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primary
-                        ) {
-                            Text(
-                                text = stringResource(R.string.banner_ad_cta),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = Color.White,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                            )
-                        }
-                    }
-                }
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                        .testTag("home_adaptive_banner_ad")
+                )
             }
         }
 
@@ -302,7 +273,11 @@ fun PaperlyBottomBarWithBanner(
                         )
                     },
                     label = {
-                        Text(text = label, style = MaterialTheme.typography.bodySmall, fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal)
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                        )
                     },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = MaterialTheme.colorScheme.primary,
@@ -319,10 +294,76 @@ fun PaperlyBottomBarWithBanner(
 }
 
 @Composable
-fun SponsoredNativeAdCard(
-    onActionClick: () -> Unit,
+private fun AnchoredAdaptiveBannerSlot(
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    BoxWithConstraints(
+        modifier = modifier,
+        contentAlignment = Alignment.Center
+    ) {
+        val adWidthDp = maxWidth.value.toInt().coerceAtLeast(320)
+        val adView = remember(context, adWidthDp) {
+            val adSize = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidthDp)
+            AdView(context).apply {
+                adUnitId = AdUnitIds.bannerAdUnitId
+                setAdSize(adSize)
+                loadAd(AdRequest.Builder().build())
+            }
+        }
+
+        DisposableEffect(adView, lifecycleOwner) {
+            val observer = LifecycleEventObserver { _, event ->
+                when (event) {
+                    Lifecycle.Event.ON_RESUME -> adView.resume()
+                    Lifecycle.Event.ON_PAUSE -> adView.pause()
+                    else -> Unit
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                adView.destroy()
+            }
+        }
+
+        AndroidView(
+            factory = { adView },
+            modifier = Modifier.fillMaxWidth()
+        )
+    }
+}
+
+@Composable
+fun SponsoredNativeAdCard(
+    adManager: PaperlyAdManager,
+    isDarkMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    var nativeAd by remember { mutableStateOf<NativeAd?>(null) }
+
+    LaunchedEffect(Unit) {
+        adManager.loadNativeAd(
+            onAdLoaded = { loadedAd ->
+                nativeAd = loadedAd
+            },
+            onAdFailed = {
+                // Keep Download Ready unobstructed if native ad fails to fill
+            }
+        )
+    }
+
+    DisposableEffect(nativeAd) {
+        val current = nativeAd
+        onDispose {
+            current?.destroy()
+        }
+    }
+
+    val ad = nativeAd ?: return
+
     Card(
         modifier = modifier
             .fillMaxWidth()
@@ -333,89 +374,109 @@ fun SponsoredNativeAdCard(
         ),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                ) {
-                    Text(
-                        text = stringResource(R.string.sponsored_badge),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
-                }
-                Text(
-                    text = "CloudDeck Workspace",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+        AndroidView(
+            modifier = Modifier.fillMaxWidth(),
+            factory = { ctx ->
+                LayoutInflater.from(ctx).inflate(R.layout.layout_paperly_native_ad, null, false)
+            },
+            update = { rootView ->
+                val nativeAdView = rootView.findViewById<NativeAdView>(R.id.native_ad_view)
+                val badgeView = rootView.findViewById<TextView>(R.id.ad_sponsored_badge)
+                val advertiserView = rootView.findViewById<TextView>(R.id.ad_advertiser)
+                val iconView = rootView.findViewById<ImageView>(R.id.ad_app_icon)
+                val headlineView = rootView.findViewById<TextView>(R.id.ad_headline)
+                val bodyView = rootView.findViewById<TextView>(R.id.ad_body)
+                val ctaView = rootView.findViewById<AndroidButton>(R.id.ad_call_to_action)
 
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(14.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Image(
-                    painter = painterResource(id = R.drawable.img_sponsored_cloud),
-                    contentDescription = "Sponsored partner illustration",
-                    modifier = Modifier
-                        .size(56.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    contentScale = ContentScale.Crop
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.sponsored_headline),
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.sponsored_body),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
+                val density = rootView.resources.displayMetrics.density
+                val primaryText = if (isDarkMode) AndroidColor.parseColor("#F1F5F9") else AndroidColor.parseColor("#0F172A")
+                val secondaryText = if (isDarkMode) AndroidColor.parseColor("#94A3B8") else AndroidColor.parseColor("#475569")
+                val badgeFill = if (isDarkMode) AndroidColor.parseColor("#1E293B") else AndroidColor.parseColor("#FFFFFF")
+                val badgeStroke = if (isDarkMode) AndroidColor.parseColor("#334155") else AndroidColor.parseColor("#CBD5E1")
 
-            OutlinedButton(
-                onClick = onActionClick,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("sponsored_learn_more_button"),
-                shape = RoundedCornerShape(12.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-            ) {
-                Text(
-                    text = stringResource(R.string.sponsored_cta),
-                    style = MaterialTheme.typography.labelLarge
-                )
+                badgeView.text = rootView.context.getString(R.string.sponsored_badge)
+                badgeView.setTextColor(secondaryText)
+                badgeView.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 6f * density
+                    setColor(badgeFill)
+                    setStroke((1f * density).toInt(), badgeStroke)
+                }
+
+                headlineView.setTextColor(primaryText)
+                bodyView.setTextColor(secondaryText)
+                advertiserView.setTextColor(secondaryText)
+
+                ctaView.setTextColor(AndroidColor.WHITE)
+                ctaView.background = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = 12f * density
+                    setColor(AndroidColor.parseColor("#4F46E5"))
+                }
+
+                nativeAdView.headlineView = headlineView
+                headlineView.text = ad.headline
+
+                nativeAdView.bodyView = bodyView
+                if (!ad.body.isNullOrBlank()) {
+                    bodyView.visibility = View.VISIBLE
+                    bodyView.text = ad.body
+                } else {
+                    bodyView.visibility = View.GONE
+                }
+
+                nativeAdView.callToActionView = ctaView
+                if (!ad.callToAction.isNullOrBlank()) {
+                    ctaView.visibility = View.VISIBLE
+                    ctaView.text = ad.callToAction
+                } else {
+                    ctaView.visibility = View.GONE
+                }
+
+                nativeAdView.iconView = iconView
+                val iconDrawable = ad.icon?.drawable
+                if (iconDrawable != null) {
+                    iconView.visibility = View.VISIBLE
+                    iconView.setImageDrawable(iconDrawable)
+                } else {
+                    iconView.visibility = View.GONE
+                }
+
+                nativeAdView.advertiserView = advertiserView
+                if (!ad.advertiser.isNullOrBlank()) {
+                    advertiserView.visibility = View.VISIBLE
+                    advertiserView.text = ad.advertiser
+                } else {
+                    advertiserView.visibility = View.GONE
+                }
+
+                nativeAdView.setNativeAd(ad)
             }
-        }
+        )
     }
 }
 
 @Composable
-fun AiUnlockGateModal(
-    state: AiGateModalState,
+fun RewardedUnlockModal(
+    state: RewardedGateModalState,
     onWatchVideo: () -> Unit,
     onUpgradePro: () -> Unit,
     onDismiss: () -> Unit
 ) {
     if (!state.visible) return
+
+    val isScanTool = state.targetTool == PdfToolType.SCAN
+    val modalTitle = if (isScanTool) {
+        stringResource(R.string.scan_modal_title)
+    } else {
+        stringResource(R.string.ai_modal_title)
+    }
+    val modalSubtitle = if (isScanTool) {
+        stringResource(R.string.scan_modal_subtitle)
+    } else {
+        stringResource(R.string.ai_modal_subtitle)
+    }
+    val headerIcon = if (isScanTool) Icons.Filled.DocumentScanner else Icons.Filled.AutoAwesome
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -425,7 +486,7 @@ fun AiUnlockGateModal(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 20.dp)
-                .testTag("ai_summarize_gate_modal"),
+                .testTag("rewarded_unlock_gate_modal"),
             shape = RoundedCornerShape(24.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
             elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
@@ -441,7 +502,8 @@ fun AiUnlockGateModal(
                 ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.weight(1f)
                     ) {
                         Box(
                             modifier = Modifier
@@ -451,17 +513,13 @@ fun AiUnlockGateModal(
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.AutoAwesome,
-                                contentDescription = "AI Summarize",
+                                imageVector = headerIcon,
+                                contentDescription = modalTitle,
                                 tint = MaterialTheme.colorScheme.primary
                             )
                         }
                         Text(
-                            text = if (state.isWatchingRewardVideo) {
-                                stringResource(R.string.ai_watching_video_title)
-                            } else {
-                                stringResource(R.string.ai_modal_title)
-                            },
+                            text = modalTitle,
                             style = MaterialTheme.typography.titleLarge,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -471,7 +529,7 @@ fun AiUnlockGateModal(
                         onClick = onDismiss,
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
-                            .testTag("ai_modal_close_button")
+                            .testTag("rewarded_modal_close_button")
                     ) {
                         Icon(
                             imageVector = Icons.Filled.Close,
@@ -481,65 +539,52 @@ fun AiUnlockGateModal(
                     }
                 }
 
-                if (state.isWatchingRewardVideo) {
+                Text(
+                    text = modalSubtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                state.errorMessage?.let { err ->
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.fillMaxWidth()
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.errorContainer
                     ) {
-                        Column(
-                            modifier = Modifier.padding(20.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.PlayCircle,
-                                contentDescription = "Sponsor video preview",
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Text(
-                                text = "Unlocking Gemini AI Summarize in ${state.secondsRemaining}s...",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface
-                            )
-                            LinearProgressIndicator(
-                                progress = { (5 - state.secondsRemaining) / 5f },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(6.dp)
-                                    .clip(CircleShape)
-                            )
-                        }
-                    }
-
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .align(Alignment.End)
-                            .height(48.dp)
-                            .testTag("ai_video_skip_button")
-                    ) {
-                        Text(stringResource(R.string.ai_watching_video_skip))
-                    }
-                } else {
-                    Text(
-                        text = stringResource(R.string.ai_modal_subtitle),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-
-                    Button(
-                        onClick = onWatchVideo,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(58.dp)
-                            .testTag("ai_watch_video_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary
+                        Text(
+                            text = err,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 10.dp)
                         )
-                    ) {
+                    }
+                }
+
+                Button(
+                    onClick = onWatchVideo,
+                    enabled = !state.isLoadingAd,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .testTag("rewarded_watch_video_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    if (state.isLoadingAd) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            strokeWidth = 2.dp,
+                            color = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = stringResource(R.string.rewarded_loading_video),
+                            style = MaterialTheme.typography.labelLarge
+                        )
+                    } else {
                         Icon(
                             imageVector = Icons.Filled.PlayCircle,
                             contentDescription = null,
@@ -558,49 +603,49 @@ fun AiUnlockGateModal(
                             )
                         }
                     }
+                }
 
-                    OutlinedButton(
-                        onClick = onUpgradePro,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(58.dp)
-                            .testTag("ai_upgrade_pro_button"),
-                        shape = RoundedCornerShape(14.dp),
-                        border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.WorkspacePremium,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(modifier = Modifier.width(10.dp))
-                        Column(horizontalAlignment = Alignment.Start) {
-                            Text(
-                                text = stringResource(R.string.ai_modal_upgrade_pro),
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            Text(
-                                text = stringResource(R.string.ai_modal_upgrade_pro_sub),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    TextButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("ai_modal_skip_button")
-                    ) {
+                OutlinedButton(
+                    onClick = onUpgradePro,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(58.dp)
+                        .testTag("rewarded_upgrade_pro_button"),
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.2.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f))
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.WorkspacePremium,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column(horizontalAlignment = Alignment.Start) {
                         Text(
-                            text = stringResource(R.string.ai_modal_skip),
+                            text = stringResource(R.string.ai_modal_upgrade_pro),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            text = stringResource(R.string.ai_modal_upgrade_pro_sub),
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("rewarded_modal_skip_button")
+                ) {
+                    Text(
+                        text = stringResource(R.string.ai_modal_skip),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }

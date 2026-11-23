@@ -1,11 +1,13 @@
 package com.example.ui.viewmodel
 
+import android.app.Activity
 import android.app.Application
 import android.graphics.Bitmap
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ads.PaperlyAdManager
 import com.example.data.ai.AiSummarizeRepository
 import com.example.data.local.PaperlyDatabase
 import com.example.data.local.PdfRecordEntity
@@ -20,7 +22,6 @@ import com.example.data.pdf.PdfEngine
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -53,10 +54,11 @@ data class WorkspaceUiState(
     val processing: ProcessingState = ProcessingState()
 )
 
-data class AiGateModalState(
+data class RewardedGateModalState(
     val visible: Boolean = false,
-    val isWatchingRewardVideo: Boolean = false,
-    val secondsRemaining: Int = 5
+    val targetTool: PdfToolType = PdfToolType.AI_SUMMARIZE,
+    val isLoadingAd: Boolean = false,
+    val errorMessage: String? = null
 )
 
 class PaperlyViewModel(application: Application) : AndroidViewModel(application) {
@@ -66,6 +68,11 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val prefsRepository = UserPreferencesRepository(application)
     private val aiRepository = AiSummarizeRepository()
     val pdfEngine = PdfEngine(application)
+    val adManager = PaperlyAdManager(application)
+
+    init {
+        adManager.initialize(preloadRewarded = true)
+    }
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -79,7 +86,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     val defaultCompression: StateFlow<CompressionLevel> = prefsRepository.defaultCompression
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompressionLevel.BALANCED)
 
-    val isAiSessionUnlocked: StateFlow<Boolean> = combine(
+    val isRewardUnlockedForSession: StateFlow<Boolean> = combine(
         prefsRepository.isPro,
         prefsRepository.aiUnlockedUntilMillis
     ) { pro, unlockedUntil ->
@@ -92,8 +99,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _aiSummaryState = MutableStateFlow<AiSummaryUiState>(AiSummaryUiState.Idle)
     val aiSummaryState: StateFlow<AiSummaryUiState> = _aiSummaryState.asStateFlow()
 
-    private val _aiGateModal = MutableStateFlow(AiGateModalState())
-    val aiGateModal: StateFlow<AiGateModalState> = _aiGateModal.asStateFlow()
+    private val _rewardedGateModal = MutableStateFlow(RewardedGateModalState())
+    val rewardedGateModal: StateFlow<RewardedGateModalState> = _rewardedGateModal.asStateFlow()
 
     private val _showProSheet = MutableStateFlow(false)
     val showProSheet: StateFlow<Boolean> = _showProSheet.asStateFlow()
@@ -101,7 +108,6 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
-    private var rewardCountdownJob: Job? = null
     private var aiJob: Job? = null
 
     fun toggleDarkMode() {
@@ -117,6 +123,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             _snackbarMessage.value = if (enabled) {
                 "Paperly Pro activated — Ads removed"
             } else {
+                adManager.preloadRewardedAd()
                 "Switched to Paperly Free plan"
             }
         }
@@ -163,47 +170,70 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         )
     }
 
-    fun openAiGateOrProceed(onNavigateToAiWorkspace: () -> Unit) {
-        if (isAiSessionUnlocked.value) {
-            prepareToolWorkspace(PdfToolType.AI_SUMMARIZE)
-            onNavigateToAiWorkspace()
+    fun openRewardedGateOrProceed(tool: PdfToolType, onNavigateToWorkspace: () -> Unit) {
+        if (isRewardUnlockedForSession.value) {
+            prepareToolWorkspace(tool)
+            onNavigateToWorkspace()
         } else {
-            _aiGateModal.value = AiGateModalState(visible = true)
+            adManager.preloadRewardedAd()
+            _rewardedGateModal.value = RewardedGateModalState(
+                visible = true,
+                targetTool = tool
+            )
         }
     }
 
-    fun dismissAiGateModal() {
-        rewardCountdownJob?.cancel()
-        _aiGateModal.value = AiGateModalState(visible = false)
+    fun dismissRewardedGateModal() {
+        _rewardedGateModal.value = RewardedGateModalState(visible = false)
     }
 
-    fun startRewardedVideoUnlock(onUnlocked: () -> Unit) {
-        rewardCountdownJob?.cancel()
-        _aiGateModal.value = AiGateModalState(
-            visible = true,
-            isWatchingRewardVideo = true,
-            secondsRemaining = 5
-        )
-        rewardCountdownJob = viewModelScope.launch {
-            for (sec in 5 downTo 1) {
-                _aiGateModal.update { it.copy(secondsRemaining = sec) }
-                delay(1000L)
+    fun watchRewardedVideoToUnlock(
+        activity: Activity?,
+        onUnlocked: (PdfToolType) -> Unit
+    ) {
+        val tool = _rewardedGateModal.value.targetTool
+        if (activity == null) {
+            _rewardedGateModal.update {
+                it.copy(isLoadingAd = false, errorMessage = "Unable to present video ad right now.")
             }
-            prefsRepository.grantAiSessionUnlock()
-            _aiGateModal.value = AiGateModalState(visible = false)
-            prepareToolWorkspace(PdfToolType.AI_SUMMARIZE)
-            onUnlocked()
+            return
         }
+
+        _rewardedGateModal.update { it.copy(isLoadingAd = true, errorMessage = null) }
+        adManager.showRewardedAd(
+            activity = activity,
+            onUserEarnedReward = {
+                viewModelScope.launch {
+                    prefsRepository.grantAiSessionUnlock()
+                    _rewardedGateModal.value = RewardedGateModalState(visible = false)
+                    prepareToolWorkspace(tool)
+                    onUnlocked(tool)
+                }
+            },
+            onDismissedWithoutReward = {
+                _rewardedGateModal.update {
+                    it.copy(
+                        isLoadingAd = false,
+                        errorMessage = "Finish watching the short video to unlock for free, or skip anytime."
+                    )
+                }
+            },
+            onLoadFailed = { msg ->
+                _rewardedGateModal.update {
+                    it.copy(isLoadingAd = false, errorMessage = msg)
+                }
+            }
+        )
     }
 
-    fun upgradeToProFromAiModal(onUnlocked: () -> Unit) {
-        rewardCountdownJob?.cancel()
+    fun upgradeToProFromGateModal(onUnlocked: (PdfToolType) -> Unit) {
+        val tool = _rewardedGateModal.value.targetTool
         viewModelScope.launch {
             prefsRepository.setPro(true)
-            _aiGateModal.value = AiGateModalState(visible = false)
-            prepareToolWorkspace(PdfToolType.AI_SUMMARIZE)
-            _snackbarMessage.value = "Paperly Pro activated — Ad-Free AI unlocked"
-            onUnlocked()
+            _rewardedGateModal.value = RewardedGateModalState(visible = false)
+            prepareToolWorkspace(tool)
+            _snackbarMessage.value = "Paperly Pro activated — Ad-Free features unlocked"
+            onUnlocked(tool)
         }
     }
 
@@ -441,7 +471,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "AI summary timed out", e)
                 _aiSummaryState.value = AiSummaryUiState.Error(
-                    "Summarization timed out after 60 seconds. Please check your connection and try again."
+                    "Summarization timed out after 90 seconds. Please check your connection and try again."
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -479,7 +509,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 pdfEngine.saveToUserUri(filePath, destinationUri)
-                _snackbarMessage.value = "PDF downloaded successfully"
+                _snackbarMessage.value = "Saved to device successfully"
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

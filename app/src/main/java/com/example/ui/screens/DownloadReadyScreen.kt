@@ -75,10 +75,10 @@ import com.example.ui.viewmodel.PaperlyViewModel
 fun DownloadReadyScreen(
     recordId: Long,
     isPro: Boolean,
+    isDarkMode: Boolean,
     viewModel: PaperlyViewModel,
     onPreviewPdf: (Long) -> Unit,
-    onDone: () -> Unit,
-    onOpenProSheet: () -> Unit
+    onDone: () -> Unit
 ) {
     val context = LocalContext.current
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
@@ -293,7 +293,7 @@ fun DownloadReadyScreen(
                             }
                         }
 
-                        // Primary Download PDF & Share buttons
+                        // Primary Save to Device & Share buttons
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(
@@ -315,7 +315,7 @@ fun DownloadReadyScreen(
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
-                                            text = stringResource(R.string.download_pdf),
+                                            text = "Save to Device",
                                             style = MaterialTheme.typography.labelLarge
                                         )
                                     }
@@ -377,12 +377,13 @@ fun DownloadReadyScreen(
                             }
                         }
 
-                        // Safe spacing before Sponsored Native Ad Card (zero accidental-tap proximity)
+                        // Safe spacing before Sponsored NativeAd card (hidden when Pro is active)
                         if (!isPro) {
                             item {
                                 Spacer(modifier = Modifier.height(16.dp))
                                 SponsoredNativeAdCard(
-                                    onActionClick = onOpenProSheet
+                                    adManager = viewModel.adManager,
+                                    isDarkMode = isDarkMode
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                             }

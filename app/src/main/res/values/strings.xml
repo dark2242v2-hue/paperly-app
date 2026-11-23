@@ -46,11 +46,14 @@
     <string name="sponsored_cta">Learn More</string>
 
     <string name="ai_modal_title">Unlock AI Summarize</string>
-    <string name="ai_modal_subtitle">Choose how you would like to summarize your PDF with Gemini AI.</string>
+    <string name="ai_modal_subtitle">Watch a short video to unlock AI Summarize free for this session, or go Pro for unlimited ad-free access.</string>
+    <string name="scan_modal_title">Unlock Scan to PDF</string>
+    <string name="scan_modal_subtitle">Watch a short video to unlock Scan to PDF free for this session, or go Pro for unlimited ad-free access.</string>
     <string name="ai_modal_watch_video">Watch a short video to unlock free</string>
-    <string name="ai_modal_watch_video_sub">15-sec sponsor preview • Unlocks AI session</string>
+    <string name="ai_modal_watch_video_sub">Rewarded video • Unlocks feature for this session</string>
+    <string name="rewarded_loading_video">Loading short video…</string>
     <string name="ai_modal_upgrade_pro">Upgrade to Paperly Pro (Ad-Free)</string>
-    <string name="ai_modal_upgrade_pro_sub">Unlimited AI summaries &amp; zero ads</string>
+    <string name="ai_modal_upgrade_pro_sub">Unlimited AI &amp; scanning • Zero ads</string>
     <string name="ai_modal_skip">Skip for now</string>
     <string name="ai_watching_video_title">Sponsor Preview</string>
     <string name="ai_watching_video_skip">Skip Preview</string>

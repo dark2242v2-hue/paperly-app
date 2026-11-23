@@ -23,7 +23,7 @@ class AiSummarizeRepository {
         private const val PRIMARY_ENDPOINT =
             "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
         private const val FALLBACK_ENDPOINT =
-            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
+            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-2.5-flash-lite"
         private const val MAX_RETRIES_PER_ENDPOINT = 2
         private const val RETRY_DELAY_MS = 2_000L
     }
