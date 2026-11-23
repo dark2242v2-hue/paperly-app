@@ -20,9 +20,10 @@ private const val TAG = "AiSummarizeRepository"
 class AiSummarizeRepository {
 
     companion object {
-        private const val WORKER_HOST = "paperly-ai.dark2242v2.workers.dev"
-        private const val PRIMARY_ENDPOINT = "https://$WORKER_HOST?model=gemini-3.8-flash"
-        private const val FALLBACK_ENDPOINT = "https://$WORKER_HOST?model=gemini-3.8-flash"
+        private const val PRIMARY_ENDPOINT =
+            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
+        private const val FALLBACK_ENDPOINT =
+            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
         private const val MAX_RETRIES_PER_ENDPOINT = 2
         private const val RETRY_DELAY_MS = 2_000L
     }
