@@ -21,7 +21,7 @@ class AiSummarizeRepository {
 
     companion object {
         private const val PRIMARY_ENDPOINT = "https://workers.dev"
-        private const val FALLBACK_ENDPOINT = "https://workers.dev?model=gemini-3.8-flash-lite"
+        private const val FALLBACK_ENDPOINT = "https://workers.dev"
         private const val MAX_RETRIES_PER_ENDPOINT = 2
         private const val RETRY_DELAY_MS = 2_000L
     }
@@ -31,10 +31,11 @@ class AiSummarizeRepository {
         val errorMessage: String
     ) : IllegalStateException(errorMessage) {
         val isRateLimitedOrBusy: Boolean
-            get() = statusCode == 429 || statusCode == 503 ||
+            get() = statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 ||
                 errorMessage.contains("high demand", ignoreCase = true) ||
                 errorMessage.contains("overloaded", ignoreCase = true) ||
-                errorMessage.contains("unavailable", ignoreCase = true)
+                errorMessage.contains("unavailable", ignoreCase = true) ||
+                errorMessage.contains("server busy", ignoreCase = true)
     }
 
     suspend fun summarizePdf(payload: PdfAiPayload): String = withTimeout(90_000L) {
@@ -184,19 +185,28 @@ class AiSummarizeRepository {
                 connection.errorStream
             }
             val rawResponse = responseStream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+            val trimmedResponse = rawResponse.trimStart()
 
             if (statusCode !in 200..299) {
-                val apiError = runCatching {
-                    val errJson = JSONObject(rawResponse)
-                    errJson.optJSONObject("error")?.optString("message")
-                        ?: errJson.optString("error")
-                }.getOrNull()
+                val apiError = if (trimmedResponse.startsWith("{")) {
+                    runCatching {
+                        val errJson = JSONObject(trimmedResponse)
+                        errJson.optJSONObject("error")?.optString("message")
+                            ?: errJson.optString("error")
+                    }.getOrNull()
+                } else {
+                    null
+                }
                 val message = apiError?.takeIf { it.isNotBlank() }
-                    ?: "AI request failed (HTTP $statusCode)."
+                    ?: "Server busy, please try again"
                 throw ProxyHttpException(statusCode, message)
             }
 
-            val json = JSONObject(rawResponse)
+            if (!trimmedResponse.startsWith("{")) {
+                throw ProxyHttpException(statusCode, "Server busy, please try again")
+            }
+
+            val json = JSONObject(trimmedResponse)
 
             // Parse standard Gemini response or simplified proxy response
             val candidates = json.optJSONArray("candidates")
