@@ -1095,7 +1095,7 @@ private fun AiSummarizeWorkspaceSection(
                                 style = MaterialTheme.typography.titleSmall
                             )
                             Text(
-                                text = "Sending request to Gemini REST API",
+                                text = "Sending request to Paperly AI service",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

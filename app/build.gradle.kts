@@ -17,12 +17,6 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
-    val envGeminiKey = System.getenv("GEMINI_API_KEY")?.trim().orEmpty()
-    if (envGeminiKey.isNotEmpty()) {
-      val escapedKey = envGeminiKey.replace("\\", "\\\\").replace("\"", "\\\"")
-      buildConfigField("String", "GEMINI_API_KEY", "\"$escapedKey\"")
-    }
   }
 
   // Do not remove or modify these signingConfigs. They are necessary for building, installing,
@@ -84,9 +78,6 @@ secrets {
   propertiesFileName = ".env"
   defaultPropertiesFileName = ".env.example"
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
-  if (!System.getenv("GEMINI_API_KEY").isNullOrBlank()) {
-    ignoreList.add("GEMINI_API_KEY")
-  }
 }
 
 dependencies {

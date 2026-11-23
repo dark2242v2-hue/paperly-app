@@ -37,8 +37,6 @@ jobs:
           fi
 
       - name: Build Debug APK
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: gradle assembleDebug
 
       - name: Upload Paperly APK artifact
