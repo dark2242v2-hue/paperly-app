@@ -28,6 +28,8 @@ class UserPreferencesRepository(private val context: Context) {
         val AI_UNLOCKED_UNTIL = longPreferencesKey("ai_unlocked_until")
         val COMPLETED_CORE_PDF_OPS = intPreferencesKey("completed_core_pdf_ops")
         val AI_SUMMARY_CREDITS = intPreferencesKey("ai_summary_credits")
+        val AI_IMAGE_CREDITS = intPreferencesKey("ai_image_credits")
+        val UPSCALE_CREDITS = intPreferencesKey("upscale_credits")
         val SAVED_PDF_COUNT = intPreferencesKey("saved_pdf_count")
         val IN_APP_REVIEW_REQUESTED = booleanPreferencesKey("in_app_review_requested")
     }
@@ -63,6 +65,14 @@ class UserPreferencesRepository(private val context: Context) {
 
     val aiSummaryCredits: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
         prefs[Keys.AI_SUMMARY_CREDITS] ?: 0
+    }
+
+    val aiImageCredits: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
+        prefs[Keys.AI_IMAGE_CREDITS] ?: 0
+    }
+
+    val upscaleCredits: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
+        prefs[Keys.UPSCALE_CREDITS] ?: 0
     }
 
     suspend fun setDarkMode(enabled: Boolean) {
@@ -105,6 +115,34 @@ class UserPreferencesRepository(private val context: Context) {
         context.paperlyDataStore.edit {
             val current = it[Keys.AI_SUMMARY_CREDITS] ?: 0
             it[Keys.AI_SUMMARY_CREDITS] = (current - 1).coerceAtLeast(0)
+        }
+    }
+
+    suspend fun grantAiImageCredit(amount: Int = 1) {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.AI_IMAGE_CREDITS] ?: 0
+            it[Keys.AI_IMAGE_CREDITS] = current + amount
+        }
+    }
+
+    suspend fun consumeAiImageCredit() {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.AI_IMAGE_CREDITS] ?: 0
+            it[Keys.AI_IMAGE_CREDITS] = (current - 1).coerceAtLeast(0)
+        }
+    }
+
+    suspend fun grantUpscaleCredit(amount: Int = 1) {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.UPSCALE_CREDITS] ?: 0
+            it[Keys.UPSCALE_CREDITS] = current + amount
+        }
+    }
+
+    suspend fun consumeUpscaleCredit() {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.UPSCALE_CREDITS] ?: 0
+            it[Keys.UPSCALE_CREDITS] = (current - 1).coerceAtLeast(0)
         }
     }
 

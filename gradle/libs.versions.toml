@@ -44,6 +44,8 @@ pdfboxAndroid = "2.0.27.0"
 playServicesAds = "24.1.0"
 billingKtx = "7.1.1"
 mlkitDocumentScanner = "16.0.0"
+mlkitTextRecognition = "16.0.1"
+mlkitSubjectSegmentation = "16.0.0-beta1"
 playReview = "2.0.2"
 
 
@@ -103,6 +105,8 @@ pdfbox-android = { group = "com.tom-roush", name = "pdfbox-android", version.ref
 play-services-ads = { group = "com.google.android.gms", name = "play-services-ads", version.ref = "playServicesAds" }
 billing-ktx = { group = "com.android.billingclient", name = "billing-ktx", version.ref = "billingKtx" }
 play-services-mlkit-document-scanner = { group = "com.google.android.gms", name = "play-services-mlkit-document-scanner", version.ref = "mlkitDocumentScanner" }
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
+play-services-mlkit-subject-segmentation = { group = "com.google.android.gms", name = "play-services-mlkit-subject-segmentation", version.ref = "mlkitSubjectSegmentation" }
 play-review-ktx = { group = "com.google.android.play", name = "review-ktx", version.ref = "playReview" }
 
 

@@ -112,6 +112,8 @@ dependencies {
   implementation(libs.pdfbox.android)
   implementation(libs.play.services.ads)
   implementation(libs.play.services.mlkit.document.scanner)
+  implementation(libs.mlkit.text.recognition)
+  implementation(libs.play.services.mlkit.subject.segmentation)
   implementation(libs.play.review.ktx)
   implementation(libs.billing.ktx)
   implementation(libs.kotlinx.coroutines.android)

@@ -382,6 +382,143 @@ class PdfEngine(private val context: Context) {
         )
     }
 
+    suspend fun compressPdfToTargetSize(
+        file: PickedPdfInfo,
+        targetBytes: Long,
+        outputName: String,
+        onProgress: (Float, String) -> Unit
+    ): PdfRecordEntity = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        val srcFile = File(file.localPath)
+        require(srcFile.exists()) { "Source PDF not found." }
+
+        val clampedTarget = targetBytes.coerceAtLeast(10_240L)
+        val baseName = outputName.ifBlank {
+            file.displayName.removeSuffix(".pdf") + "_compressed"
+        }
+        val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
+
+        onProgress(0.08f, "Analyzing ${file.pageCount} pages for target size...")
+        val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
+        pfd.use { descriptor ->
+            PdfRenderer(descriptor).use { renderer ->
+                val pageCount = max(1, renderer.pageCount)
+                val pdfOverhead = 2_400L + pageCount * 520L
+                val pageBudget = ((clampedTarget - pdfOverhead) / pageCount).coerceAtLeast(2_048L)
+
+                fun buildTargetPdf(destination: File, perPageBudget: Long, initialDpi: Float, progressStart: Float, progressSpan: Float) {
+                    PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { outDoc ->
+                        val scaleFactor = initialDpi / 72f
+                        val scaleSteps = floatArrayOf(1.0f, 0.78f, 0.60f, 0.45f, 0.34f, 0.25f)
+
+                        for (i in 0 until pageCount) {
+                            renderer.openPage(i).use { page ->
+                                val origW = max(1, page.width)
+                                val origH = max(1, page.height)
+                                val renderW = (origW * scaleFactor).roundToInt().coerceIn(220, 1800)
+                                val renderH = (origH * scaleFactor).roundToInt().coerceIn(220, 2400)
+
+                                val baseBitmap = Bitmap.createBitmap(renderW, renderH, Bitmap.Config.ARGB_8888)
+                                baseBitmap.eraseColor(Color.WHITE)
+                                page.render(baseBitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+
+                                var chosenBytes: ByteArray? = null
+                                try {
+                                    for (step in scaleSteps) {
+                                        val working = if (step >= 0.999f) {
+                                            baseBitmap
+                                        } else {
+                                            val w = (baseBitmap.width * step).roundToInt().coerceAtLeast(120)
+                                            val h = (baseBitmap.height * step).roundToInt().coerceAtLeast(120)
+                                            Bitmap.createScaledBitmap(baseBitmap, w, h, true)
+                                        }
+                                        try {
+                                            val highTry = encodeJpegBytes(working, 90)
+                                            if (highTry.size <= perPageBudget) {
+                                                chosenBytes = highTry
+                                                break
+                                            }
+                                            val lowTry = encodeJpegBytes(working, 14)
+                                            if (lowTry.size <= perPageBudget) {
+                                                var lo = 14
+                                                var hi = 90
+                                                var candidate = lowTry
+                                                while (lo <= hi) {
+                                                    val mid = (lo + hi) ushr 1
+                                                    val attempt = encodeJpegBytes(working, mid)
+                                                    if (attempt.size <= perPageBudget) {
+                                                        candidate = attempt
+                                                        lo = mid + 1
+                                                    } else {
+                                                        hi = mid - 1
+                                                    }
+                                                }
+                                                chosenBytes = candidate
+                                                break
+                                            }
+                                            if (chosenBytes == null || lowTry.size < chosenBytes!!.size) {
+                                                chosenBytes = lowTry
+                                            }
+                                        } finally {
+                                            if (working !== baseBitmap) working.recycle()
+                                        }
+                                    }
+                                } finally {
+                                    baseBitmap.recycle()
+                                }
+
+                                val pdPage = PDPage(PDRectangle(origW.toFloat(), origH.toFloat()))
+                                outDoc.addPage(pdPage)
+                                val pdImage = JPEGFactory.createFromStream(
+                                    outDoc,
+                                    ByteArrayInputStream(chosenBytes!!)
+                                )
+                                PDPageContentStream(outDoc, pdPage).use { cs ->
+                                    cs.drawImage(pdImage, 0f, 0f, origW.toFloat(), origH.toFloat())
+                                }
+                            }
+                            onProgress(
+                                progressStart + progressSpan * ((i + 1).toFloat() / pageCount),
+                                "Matching target size (page ${i + 1}/$pageCount)..."
+                            )
+                        }
+                        outDoc.save(destination)
+                    }
+                }
+
+                buildTargetPdf(outFile, pageBudget, initialDpi = 144f, progressStart = 0.12f, progressSpan = 0.65f)
+
+                if (outFile.length() > clampedTarget * 1.05 && outFile.length() > 12_288L) {
+                    onProgress(0.82f, "Fine-tuning to exact target size...")
+                    val ratio = (clampedTarget.toDouble() / outFile.length().toDouble()).coerceIn(0.25, 0.90)
+                    val adjustedBudget = (pageBudget * ratio * 0.88).roundToInt().toLong().coerceAtLeast(1_500L)
+                    val retryFile = File(context.cacheDir, "target_retry_${UUID.randomUUID()}.pdf")
+                    buildTargetPdf(retryFile, adjustedBudget, initialDpi = 96f, progressStart = 0.84f, progressSpan = 0.12f)
+                    if (retryFile.exists() && retryFile.length() < outFile.length()) {
+                        retryFile.copyTo(outFile, overwrite = true)
+                    }
+                    retryFile.delete()
+                }
+            }
+        }
+
+        onProgress(1f, "Target compression complete")
+        PdfRecordEntity(
+            displayName = outFile.name,
+            filePath = outFile.absolutePath,
+            pageCount = countPages(outFile),
+            sizeBytes = outFile.length(),
+            originalSizeBytes = file.sizeBytes,
+            operationTag = "Compressed"
+        )
+    }
+
+    private fun encodeJpegBytes(bitmap: Bitmap, quality: Int): ByteArray {
+        val baos = ByteArrayOutputStream()
+        bitmap.compress(Bitmap.CompressFormat.JPEG, quality.coerceIn(1, 100), baos)
+        return baos.toByteArray()
+    }
+
     suspend fun imagesToPdf(
         imageUris: List<Uri>,
         grayscaleEnhance: Boolean,

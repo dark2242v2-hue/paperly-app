@@ -120,6 +120,7 @@ import com.example.ads.PaperlyAdManager
 import com.example.billing.BillingUiState
 import com.example.billing.PaperlyBillingManager
 import com.example.billing.ProPlanType
+import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.theme.PaperlyEmerald
@@ -572,9 +573,11 @@ fun PaperlyProSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedPlan by remember(state.visible) { mutableStateOf(ProPlanType.YEARLY) }
 
-    val triggeredToolLabel = when (state.triggeredByTool) {
-        PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
-        PdfToolType.SIGN -> "Unlock E-Sign PDF"
+    val triggeredToolLabel = when {
+        state.triggeredByTool == PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
+        state.triggeredByTool == PdfToolType.SIGN -> "Unlock E-Sign PDF"
+        state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE -> "Unlock AI Text to Image"
+        state.triggeredByImageTool == ImageToolType.UPSCALER -> "Unlock AI Image Upscaler"
         else -> null
     }
 
@@ -654,8 +657,8 @@ fun PaperlyProSheet(
 
             listOf(
                 "Zero banner, native, or rewarded video ads",
-                "Unlimited instant AI Summarize & E-Sign PDF",
-                "100% private on-device PDF processing"
+                "Unlimited AI Summarize, Text-to-Image, Upscaler & E-Sign",
+                "100% private on-device PDF & image processing"
             ).forEach { perk ->
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -847,8 +850,8 @@ fun PaperlyProSheet(
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Secondary rewarded option when opened via Trigger 1 (AI Summarize or Scan to PDF)
-                if (state.triggeredByTool != null) {
+                // Secondary rewarded option when opened via Trigger 1 (PDF or Image gated tools)
+                if (state.triggeredByTool != null || state.triggeredByImageTool != null) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -911,12 +914,18 @@ fun PaperlyProSheet(
                                 tint = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = if (state.triggeredByTool == PdfToolType.AI_SUMMARIZE) {
+                            val rewardedLabel = when {
+                                state.triggeredByTool == PdfToolType.AI_SUMMARIZE ->
                                     "Watch a short video to unlock 1 summary free"
-                                } else {
+                                state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE ->
+                                    "Watch a short video to unlock 1 AI image free"
+                                state.triggeredByImageTool == ImageToolType.UPSCALER ->
+                                    "Watch a short video to unlock 1 upscale free"
+                                else ->
                                     "Watch a short video to unlock this session free"
-                                },
+                            }
+                            Text(
+                                text = rewardedLabel,
                                 style = MaterialTheme.typography.labelLarge,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,

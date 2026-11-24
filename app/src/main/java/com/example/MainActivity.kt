@@ -42,6 +42,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.ads.findActivity
+import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.ui.components.PaperlyBottomBarWithBanner
 import com.example.ui.components.PaperlyProSheet
@@ -50,6 +51,8 @@ import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.screens.DownloadReadyScreen
 import com.example.ui.screens.FilesScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.ImageResultScreen
+import com.example.ui.screens.ImageWorkspaceScreen
 import com.example.ui.screens.MultiShotCameraScreen
 import com.example.ui.screens.PdfViewerScreen
 import com.example.ui.screens.SettingsScreen
@@ -140,8 +143,14 @@ fun PaperlyApp(
     val defaultCompression by viewModel.defaultCompression.collectAsStateWithLifecycle()
     val completedCorePdfOps by viewModel.completedCorePdfOps.collectAsStateWithLifecycle()
     val aiSummaryCredits by viewModel.aiSummaryCredits.collectAsStateWithLifecycle()
+    val aiImageCredits by viewModel.aiImageCredits.collectAsStateWithLifecycle()
+    val upscaleCredits by viewModel.upscaleCredits.collectAsStateWithLifecycle()
+    val homeCategory by viewModel.homeCategory.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
+    val imageWorkspace by viewModel.imageWorkspace.collectAsStateWithLifecycle()
+    val ocrState by viewModel.ocrState.collectAsStateWithLifecycle()
+    val processedImageResult by viewModel.processedImageResult.collectAsStateWithLifecycle()
     val aiSummaryState by viewModel.aiSummaryState.collectAsStateWithLifecycle()
     val proSheetState by viewModel.proSheetState.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
@@ -184,15 +193,23 @@ fun PaperlyApp(
 
     LaunchedEffect(isPro) {
         val pendingTool = proSheetState.triggeredByTool
-        if (isPro && proSheetState.visible && pendingTool != null) {
+        val pendingImgTool = proSheetState.triggeredByImageTool
+        if (isPro && proSheetState.visible && (pendingTool != null || pendingImgTool != null)) {
             val shouldNavigate = proSheetState.navigateOnUnlock
             val preloaded = proSheetState.preloadedRecord
             viewModel.dismissProSheet()
-            if (shouldNavigate) {
-                viewModel.prepareToolWorkspace(pendingTool, preloadedRecord = preloaded)
-                navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
-            } else if (pendingTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
-                viewModel.summarizeSelectedPdf()
+            if (pendingTool != null) {
+                if (shouldNavigate) {
+                    viewModel.prepareToolWorkspace(pendingTool, preloadedRecord = preloaded)
+                    navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
+                } else if (pendingTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
+                    viewModel.summarizeSelectedPdf()
+                }
+            } else if (pendingImgTool != null) {
+                if (shouldNavigate) {
+                    viewModel.prepareImageToolWorkspace(pendingImgTool)
+                    navController.navigate(PaperlyRoutes.imageWorkspace(pendingImgTool))
+                }
             }
         }
     }
@@ -257,7 +274,9 @@ fun PaperlyApp(
                     popExitTransition = { ExitTransition.None }
                 ) {
                     HomeScreen(
+                        selectedCategory = homeCategory,
                         recentRecords = recentRecords,
+                        onCategorySelected = viewModel::setHomeCategory,
                         onToolSelected = { tool ->
                             if (tool == PdfToolType.AI_SUMMARIZE ||
                                 tool == PdfToolType.SIGN
@@ -268,6 +287,11 @@ fun PaperlyApp(
                             } else {
                                 viewModel.prepareToolWorkspace(tool)
                                 navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                            }
+                        },
+                        onImageToolSelected = { imgTool ->
+                            viewModel.openImageToolOrGate(imgTool) {
+                                navController.navigate(PaperlyRoutes.imageWorkspace(imgTool))
                             }
                         },
                         onRecentSelected = { rec ->
@@ -383,6 +407,43 @@ fun PaperlyApp(
                 }
 
                 composable(
+                    route = PaperlyRoutes.IMAGE_WORKSPACE,
+                    arguments = listOf(navArgument("imageToolType") { type = NavType.StringType })
+                ) {
+                    ImageWorkspaceScreen(
+                        state = imageWorkspace,
+                        ocrState = ocrState,
+                        isPro = isPro,
+                        aiImageCredits = aiImageCredits,
+                        upscaleCredits = upscaleCredits,
+                        viewModel = viewModel,
+                        onUpgradeProClick = viewModel::openProSheet,
+                        onBack = { navController.popBackStack() },
+                        onImageResultReady = {
+                            navController.navigate(PaperlyRoutes.IMAGE_RESULT)
+                        },
+                        onPdfExported = { pdfId ->
+                            navController.navigate(PaperlyRoutes.pdfViewer(pdfId))
+                        }
+                    )
+                }
+
+                composable(PaperlyRoutes.IMAGE_RESULT) {
+                    ImageResultScreen(
+                        result = processedImageResult,
+                        isPro = isPro,
+                        isDarkMode = isDarkMode,
+                        viewModel = viewModel,
+                        onOpenPdfViewer = { pdfId ->
+                            navController.navigate(PaperlyRoutes.pdfViewer(pdfId))
+                        },
+                        onDone = {
+                            navController.popBackStack(PaperlyRoutes.HOME, inclusive = false)
+                        }
+                    )
+                }
+
+                composable(
                     route = PaperlyRoutes.PDF_VIEWER,
                     arguments = listOf(navArgument("recordId") { type = NavType.LongType })
                 ) { backStackEntry ->
@@ -411,11 +472,17 @@ fun PaperlyApp(
             viewModel.subscribeToPlan(activity, planType)
         },
         onWatchRewardedVideo = {
-            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool, shouldNavigate, _ ->
-                if (shouldNavigate) {
-                    navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
-                } else if (unlockedTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
-                    viewModel.summarizeSelectedPdf()
+            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedPdfTool, unlockedImgTool, shouldNavigate, _ ->
+                if (unlockedPdfTool != null) {
+                    if (shouldNavigate) {
+                        navController.navigate(PaperlyRoutes.toolWorkspace(unlockedPdfTool))
+                    } else if (unlockedPdfTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
+                        viewModel.summarizeSelectedPdf()
+                    }
+                } else if (unlockedImgTool != null) {
+                    if (shouldNavigate) {
+                        navController.navigate(PaperlyRoutes.imageWorkspace(unlockedImgTool))
+                    }
                 }
             }
         },

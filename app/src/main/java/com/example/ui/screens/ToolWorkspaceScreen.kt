@@ -133,6 +133,7 @@ import com.example.data.model.CompressionLevel
 import com.example.data.model.PdfToolType
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.SignaturePlacement
+import com.example.data.model.TargetSizeUnit
 import com.example.ui.components.SignaturePad
 import com.example.ui.components.renderSignatureBitmap
 import com.example.ui.theme.PaperlyEmerald
@@ -498,8 +499,12 @@ fun ToolWorkspaceScreen(
                                     CompressControlsCard(
                                         pdf = pdf,
                                         selectedLevel = workspace.compressionLevel,
+                                        useExactTarget = workspace.compressUseExactTarget,
+                                        targetValue = workspace.compressTargetValue,
+                                        targetUnit = workspace.compressTargetUnit,
                                         outputName = workspace.outputFileName,
                                         onSelectLevel = viewModel::updateCompressionLevel,
+                                        onTargetConfigChange = viewModel::updatePdfTargetCompression,
                                         onOutputNameChange = viewModel::updateOutputFileName
                                     )
                                 }
@@ -837,10 +842,22 @@ private fun SplitControlsCard(
 private fun CompressControlsCard(
     pdf: PickedPdfInfo,
     selectedLevel: CompressionLevel,
+    useExactTarget: Boolean,
+    targetValue: String,
+    targetUnit: TargetSizeUnit,
     outputName: String,
     onSelectLevel: (CompressionLevel) -> Unit,
+    onTargetConfigChange: (Boolean, String, TargetSizeUnit) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
+    val presets = listOf(
+        Triple("50 KB", "50", TargetSizeUnit.KB),
+        Triple("100 KB", "100", TargetSizeUnit.KB),
+        Triple("200 KB", "200", TargetSizeUnit.KB),
+        Triple("500 KB", "500", TargetSizeUnit.KB),
+        Triple("1 MB", "1", TargetSizeUnit.MB)
+    )
+
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -856,7 +873,7 @@ private fun CompressControlsCard(
             )
 
             CompressionLevel.entries.forEach { level ->
-                val selected = level == selectedLevel
+                val selected = !useExactTarget && level == selectedLevel
                 Card(
                     onClick = { onSelectLevel(level) },
                     shape = RoundedCornerShape(14.dp),
@@ -895,6 +912,105 @@ private fun CompressControlsCard(
                                 imageVector = Icons.Filled.CheckCircle,
                                 contentDescription = "Selected",
                                 tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+
+            Card(
+                onClick = { onTargetConfigChange(true, targetValue.ifBlank { "200" }, targetUnit) },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (useExactTarget) {
+                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                    } else {
+                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    }
+                ),
+                border = BorderStroke(
+                    width = if (useExactTarget) 1.5.dp else 1.dp,
+                    color = if (useExactTarget) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("pdf_exact_target_card")
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Exact Target File Size",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "Ideal for government forms & job portals",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (useExactTarget) {
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = "Exact Target Selected",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(presets) { (label, valueStr, unit) ->
+                            val isSelected = useExactTarget && targetValue == valueStr && targetUnit == unit
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onTargetConfigChange(true, valueStr, unit) },
+                                label = { Text(label) }
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = targetValue,
+                            onValueChange = { onTargetConfigChange(true, it, targetUnit) },
+                            label = { Text("Target Size") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("pdf_target_size_input")
+                        )
+                        TargetSizeUnit.entries.forEach { unit ->
+                            val unitSelected = useExactTarget && targetUnit == unit
+                            FilterChip(
+                                selected = unitSelected,
+                                onClick = {
+                                    onTargetConfigChange(true, targetValue.ifBlank { "200" }, unit)
+                                },
+                                label = {
+                                    Text(
+                                        text = unit.label,
+                                        fontWeight = if (unitSelected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                },
+                                modifier = Modifier.height(48.dp)
                             )
                         }
                     }

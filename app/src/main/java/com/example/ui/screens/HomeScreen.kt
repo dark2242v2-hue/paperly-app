@@ -3,8 +3,10 @@ package com.example.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -26,11 +28,19 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.automirrored.filled.MergeType
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoFixHigh
+import androidx.compose.material.icons.filled.Badge
 import androidx.compose.material.icons.filled.Compress
+import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Draw
+import androidx.compose.material.icons.filled.HighQuality
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
+import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -39,6 +49,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -58,6 +69,8 @@ import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
+import com.example.data.model.HomeToolCategory
+import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.ui.theme.PaperlyAmber
 import com.example.ui.theme.PaperlyAmberSoft
@@ -72,86 +85,181 @@ import com.example.ui.theme.PaperlySkySoft
 import com.example.ui.theme.PaperlyViolet
 import com.example.ui.theme.PaperlyVioletSoft
 
-private data class ToolCardSpec(
-    val tool: PdfToolType,
+private data class HomeToolItem(
+    val key: String,
     val titleRes: Int,
     val descRes: Int,
     val icon: ImageVector,
     val accent: Color,
     val softBg: Color,
-    val badge: String? = null
+    val badge: String? = null,
+    val onClick: () -> Unit
 )
 
 @Composable
 fun HomeScreen(
+    selectedCategory: HomeToolCategory,
     recentRecords: List<PdfRecordEntity>,
+    onCategorySelected: (HomeToolCategory) -> Unit,
     onToolSelected: (PdfToolType) -> Unit,
+    onImageToolSelected: (ImageToolType) -> Unit,
     onRecentSelected: (PdfRecordEntity) -> Unit,
     onSeeAllFiles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val toolSpecs = listOf(
-        ToolCardSpec(
-            tool = PdfToolType.MERGE,
+    val pdfToolItems = listOf(
+        HomeToolItem(
+            key = PdfToolType.MERGE.routeArg,
             titleRes = R.string.tool_merge_title,
             descRes = R.string.tool_merge_desc,
             icon = Icons.AutoMirrored.Filled.MergeType,
             accent = PaperlyIndigo,
-            softBg = PaperlyIndigoTint
+            softBg = PaperlyIndigoTint,
+            onClick = { onToolSelected(PdfToolType.MERGE) }
         ),
-        ToolCardSpec(
-            tool = PdfToolType.SPLIT,
+        HomeToolItem(
+            key = PdfToolType.SPLIT.routeArg,
             titleRes = R.string.tool_split_title,
             descRes = R.string.tool_split_desc,
             icon = Icons.AutoMirrored.Filled.CallSplit,
             accent = PaperlySky,
-            softBg = PaperlySkySoft
+            softBg = PaperlySkySoft,
+            onClick = { onToolSelected(PdfToolType.SPLIT) }
         ),
-        ToolCardSpec(
-            tool = PdfToolType.COMPRESS,
+        HomeToolItem(
+            key = PdfToolType.COMPRESS.routeArg,
             titleRes = R.string.tool_compress_title,
             descRes = R.string.tool_compress_desc,
             icon = Icons.Filled.Compress,
             accent = PaperlyEmerald,
-            softBg = PaperlyEmeraldSoft
+            softBg = PaperlyEmeraldSoft,
+            onClick = { onToolSelected(PdfToolType.COMPRESS) }
         ),
-        ToolCardSpec(
-            tool = PdfToolType.SCAN,
+        HomeToolItem(
+            key = PdfToolType.SCAN.routeArg,
             titleRes = R.string.tool_scan_title,
             descRes = R.string.tool_scan_desc,
             icon = Icons.Filled.DocumentScanner,
             accent = PaperlyAmber,
-            softBg = PaperlyAmberSoft
+            softBg = PaperlyAmberSoft,
+            onClick = { onToolSelected(PdfToolType.SCAN) }
         ),
-        ToolCardSpec(
-            tool = PdfToolType.AI_SUMMARIZE,
+        HomeToolItem(
+            key = PdfToolType.AI_SUMMARIZE.routeArg,
             titleRes = R.string.tool_ai_title,
             descRes = R.string.tool_ai_desc,
             icon = Icons.Filled.AutoAwesome,
             accent = PaperlyViolet,
             softBg = PaperlyVioletSoft,
-            badge = "AI"
+            badge = "AI",
+            onClick = { onToolSelected(PdfToolType.AI_SUMMARIZE) }
         ),
-        ToolCardSpec(
-            tool = PdfToolType.SIGN,
+        HomeToolItem(
+            key = PdfToolType.SIGN.routeArg,
             titleRes = R.string.tool_sign_title,
             descRes = R.string.tool_sign_desc,
             icon = Icons.Filled.Draw,
             accent = PaperlyRose,
-            softBg = PaperlyRoseSoft
+            softBg = PaperlyRoseSoft,
+            onClick = { onToolSelected(PdfToolType.SIGN) }
+        ),
+        HomeToolItem(
+            key = PdfToolType.LOCK.routeArg,
+            titleRes = R.string.tool_lock_title,
+            descRes = R.string.tool_lock_desc,
+            icon = Icons.Filled.Lock,
+            accent = PaperlyEmerald,
+            softBg = PaperlyEmeraldSoft,
+            onClick = { onToolSelected(PdfToolType.LOCK) }
         )
     )
 
-    Box(
+    val imageToolItems = listOf(
+        HomeToolItem(
+            key = ImageToolType.COMPRESS_IMAGE.routeArg,
+            titleRes = R.string.img_tool_compress_title,
+            descRes = R.string.img_tool_compress_desc,
+            icon = Icons.Filled.PhotoSizeSelectLarge,
+            accent = PaperlyEmerald,
+            softBg = PaperlyEmeraldSoft,
+            badge = "KB",
+            onClick = { onImageToolSelected(ImageToolType.COMPRESS_IMAGE) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.CROP_RESIZE.routeArg,
+            titleRes = R.string.img_tool_crop_title,
+            descRes = R.string.img_tool_crop_desc,
+            icon = Icons.Filled.Crop,
+            accent = PaperlySky,
+            softBg = PaperlySkySoft,
+            onClick = { onImageToolSelected(ImageToolType.CROP_RESIZE) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.IMAGE_TO_TEXT.routeArg,
+            titleRes = R.string.img_tool_ocr_title,
+            descRes = R.string.img_tool_ocr_desc,
+            icon = Icons.Filled.TextFields,
+            accent = PaperlyIndigo,
+            softBg = PaperlyIndigoTint,
+            badge = "OCR",
+            onClick = { onImageToolSelected(ImageToolType.IMAGE_TO_TEXT) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.TEXT_TO_IMAGE.routeArg,
+            titleRes = R.string.img_tool_gen_title,
+            descRes = R.string.img_tool_gen_desc,
+            icon = Icons.Filled.AutoAwesome,
+            accent = PaperlyViolet,
+            softBg = PaperlyVioletSoft,
+            badge = "AI",
+            onClick = { onImageToolSelected(ImageToolType.TEXT_TO_IMAGE) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.UPSCALER.routeArg,
+            titleRes = R.string.img_tool_upscale_title,
+            descRes = R.string.img_tool_upscale_desc,
+            icon = Icons.Filled.HighQuality,
+            accent = PaperlyAmber,
+            softBg = PaperlyAmberSoft,
+            badge = "16K",
+            onClick = { onImageToolSelected(ImageToolType.UPSCALER) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.BG_REMOVER.routeArg,
+            titleRes = R.string.img_tool_bg_title,
+            descRes = R.string.img_tool_bg_desc,
+            icon = Icons.Filled.AutoFixHigh,
+            accent = PaperlyRose,
+            softBg = PaperlyRoseSoft,
+            onClick = { onImageToolSelected(ImageToolType.BG_REMOVER) }
+        ),
+        HomeToolItem(
+            key = ImageToolType.PASSPORT_SHEET.routeArg,
+            titleRes = R.string.img_tool_passport_title,
+            descRes = R.string.img_tool_passport_desc,
+            icon = Icons.Filled.Badge,
+            accent = PaperlyIndigo,
+            softBg = PaperlyIndigoTint,
+            onClick = { onImageToolSelected(ImageToolType.PASSPORT_SHEET) }
+        )
+    )
+
+    BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
         contentAlignment = Alignment.TopCenter
     ) {
+        val gridColumns = when {
+            maxWidth >= 820.dp -> 4
+            maxWidth >= 560.dp -> 3
+            else -> 2
+        }
+
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 720.dp),
+                .widthIn(max = 880.dp),
             contentPadding = PaddingValues(bottom = 24.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
+            verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
                 val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
@@ -195,7 +303,7 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(heroGradient)
-                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                            .padding(horizontal = 18.dp, vertical = 14.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Surface(
@@ -240,6 +348,77 @@ fun HomeScreen(
                 }
             }
 
+            // Sleek Segmented Pill Switcher: 'PDF Tools' | 'Image Tools'
+            item {
+                ToolCategorySwitcher(
+                    selectedCategory = selectedCategory,
+                    onCategorySelected = onCategorySelected,
+                    modifier = Modifier.padding(horizontal = 20.dp)
+                )
+            }
+
+            // Adaptive Tool Grid (2 cols on phone, 3/4 cols on tablet)
+            item {
+                val activeList = if (selectedCategory == HomeToolCategory.PDF) {
+                    pdfToolItems
+                } else {
+                    imageToolItems
+                }
+                val sectionTitle = if (selectedCategory == HomeToolCategory.PDF) {
+                    stringResource(R.string.tools_section_title)
+                } else {
+                    stringResource(R.string.image_tools_section_title)
+                }
+
+                // Put first 6 in balanced grid + compact full-width banner card for 7th item on 2-col phones
+                val useCompactSeventhRow = gridColumns == 2 && activeList.size == 7
+                val gridItems = if (useCompactSeventhRow) activeList.dropLast(1) else activeList
+                val seventhItem = if (useCompactSeventhRow) activeList.last() else null
+
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = sectionTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onBackground
+                        )
+                        Text(
+                            text = "${activeList.size} tools",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    gridItems.chunked(gridColumns).forEach { rowItems ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            rowItems.forEach { spec ->
+                                ToolActionCard(
+                                    spec = spec,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            repeat(gridColumns - rowItems.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+
+                    if (seventhItem != null) {
+                        FeaturedFullWidthToolCard(spec = seventhItem)
+                    }
+                }
+            }
+
             // Recent PDFs Horizontal Carousel
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -258,7 +437,9 @@ fun HomeScreen(
                         if (recentRecords.isNotEmpty()) {
                             TextButton(
                                 onClick = onSeeAllFiles,
-                                modifier = Modifier.height(48.dp).testTag("recent_see_all_button")
+                                modifier = Modifier
+                                    .height(48.dp)
+                                    .testTag("recent_see_all_button")
                             ) {
                                 Text(stringResource(R.string.see_all))
                             }
@@ -284,7 +465,7 @@ fun HomeScreen(
                                     painter = painterResource(id = R.drawable.img_empty_documents),
                                     contentDescription = "Empty documents illustration",
                                     modifier = Modifier
-                                        .size(68.dp)
+                                        .size(64.dp)
                                         .clip(RoundedCornerShape(12.dp)),
                                     contentScale = ContentScale.Crop
                                 )
@@ -319,38 +500,79 @@ fun HomeScreen(
                     }
                 }
             }
+        }
+    }
+}
 
-            // 6 Tool Cards Grid (2 columns)
-            item {
-                Column(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+@Composable
+private fun ToolCategorySwitcher(
+    selectedCategory: HomeToolCategory,
+    onCategorySelected: (HomeToolCategory) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("home_category_switcher"),
+        shape = CircleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            HomeToolCategory.entries.forEach { category ->
+                val selected = category == selectedCategory
+                val icon = if (category == HomeToolCategory.PDF) {
+                    Icons.Filled.PictureAsPdf
+                } else {
+                    Icons.Filled.Image
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    shadowElevation = if (selected) 2.dp else 0.dp,
+                    modifier = Modifier
+                        .weight(1f)
+                        .minimumInteractiveComponentSize()
+                        .clip(CircleShape)
+                        .clickable { onCategorySelected(category) }
+                        .testTag("category_tab_${category.name.lowercase()}")
                 ) {
-                    Text(
-                        text = stringResource(R.string.tools_section_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-
-                    toolSpecs.chunked(2).forEach { rowItems ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            rowItems.forEach { spec ->
-                                ToolActionCard(
-                                    spec = spec,
-                                    onClick = { onToolSelected(spec.tool) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 10.dp, horizontal = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = if (selected) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(7.dp))
+                        Text(
+                            text = category.label,
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                            color = if (selected) {
+                                MaterialTheme.colorScheme.onPrimary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                     }
-
-                    // 7th Tool: Compact full-width Lock PDF card to keep the 2x3 grid balanced & uncluttered
-                    LockPdfQuickCard(
-                        onClick = { onToolSelected(PdfToolType.LOCK) }
-                    )
                 }
             }
         }
@@ -358,14 +580,14 @@ fun HomeScreen(
 }
 
 @Composable
-private fun LockPdfQuickCard(
-    onClick: () -> Unit
+private fun FeaturedFullWidthToolCard(
+    spec: HomeToolItem
 ) {
     Card(
-        onClick = onClick,
+        onClick = spec.onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .testTag("tool_card_lock"),
+            .testTag("tool_card_${spec.key}"),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -382,13 +604,13 @@ private fun LockPdfQuickCard(
                 modifier = Modifier
                     .size(44.dp)
                     .clip(RoundedCornerShape(13.dp))
-                    .background(PaperlyEmeraldSoft),
+                    .background(spec.softBg),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Filled.Lock,
-                    contentDescription = stringResource(R.string.tool_lock_title),
-                    tint = PaperlyEmerald,
+                    imageVector = spec.icon,
+                    contentDescription = stringResource(spec.titleRes),
+                    tint = spec.accent,
                     modifier = Modifier.size(22.dp)
                 )
             }
@@ -397,14 +619,14 @@ private fun LockPdfQuickCard(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = stringResource(R.string.tool_lock_title),
+                    text = stringResource(spec.titleRes),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = stringResource(R.string.tool_lock_desc),
+                    text = stringResource(spec.descRes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -492,15 +714,14 @@ private fun RecentPdfCard(
 
 @Composable
 private fun ToolActionCard(
-    spec: ToolCardSpec,
-    onClick: () -> Unit,
+    spec: HomeToolItem,
     modifier: Modifier = Modifier
 ) {
     Card(
-        onClick = onClick,
+        onClick = spec.onClick,
         modifier = modifier
-            .height(142.dp)
-            .testTag("tool_card_${spec.tool.routeArg}"),
+            .height(140.dp)
+            .testTag("tool_card_${spec.key}"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
