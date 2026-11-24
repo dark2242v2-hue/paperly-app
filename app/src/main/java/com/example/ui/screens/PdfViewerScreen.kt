@@ -33,26 +33,27 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
@@ -60,6 +61,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.MergeType
+import androidx.compose.material.icons.automirrored.rounded.MenuBook
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Download
@@ -71,34 +73,38 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -107,10 +113,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -148,6 +156,7 @@ fun PdfViewerScreen(
     var unlockedRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var isPasswordProtected by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
+    var isBookMode by rememberSaveable(recordId) { mutableStateOf(false) }
 
     LaunchedEffect(recordId) {
         val loaded = viewModel.loadRecordById(recordId)
@@ -174,7 +183,11 @@ fun PdfViewerScreen(
 
     Scaffold(
         containerColor = if (isLockedView) MaterialTheme.colorScheme.background else PaperlyViewerCanvas,
-        contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
+        contentWindowInsets = if (isLockedView) {
+            WindowInsets.safeDrawing.exclude(WindowInsets.ime)
+        } else {
+            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+        },
         topBar = {
             if (isLockedView) {
                 TopAppBar(
@@ -210,7 +223,7 @@ fun PdfViewerScreen(
             } else {
                 TopAppBar(
                     title = {
-                        Column {
+                        Column(modifier = Modifier.padding(end = 4.dp)) {
                             Text(
                                 text = record?.displayName ?: "PDF Preview",
                                 style = MaterialTheme.typography.titleMedium,
@@ -223,7 +236,9 @@ fun PdfViewerScreen(
                                 Text(
                                     text = "${it.pageCount} page(s) • ${formatFileSize(it.sizeBytes)}",
                                     style = MaterialTheme.typography.labelSmall,
-                                    color = Color.White.copy(alpha = 0.68f)
+                                    color = Color.White.copy(alpha = 0.68f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -242,35 +257,68 @@ fun PdfViewerScreen(
                     },
                     actions = {
                         activeRecord?.let { activeRec ->
-                            IconButton(
-                                onClick = { onQuickAction(PdfToolType.AI_SUMMARIZE, activeRec) },
-                                modifier = Modifier.testTag("viewer_topbar_ai_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.AutoAwesome,
-                                    contentDescription = "AI Summarize",
-                                    tint = Color.White
-                                )
-                            }
+                            ViewerTopBarTooltipAction(
+                                tooltip = if (isBookMode) "Vertical Scroll Mode" else "Book Page-Flip Mode",
+                                icon = Icons.AutoMirrored.Rounded.MenuBook,
+                                isActive = isBookMode,
+                                testTagName = "viewer_book_mode_button",
+                                onClick = { isBookMode = !isBookMode }
+                            )
+                            ViewerTopBarTooltipAction(
+                                tooltip = "AI Summarize",
+                                icon = Icons.Filled.AutoAwesome,
+                                testTagName = "viewer_topbar_ai_button",
+                                onClick = { onQuickAction(PdfToolType.AI_SUMMARIZE, activeRec) }
+                            )
 
                             Box {
-                                IconButton(
-                                    onClick = { overflowExpanded = true },
-                                    modifier = Modifier.testTag("viewer_more_menu_button")
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.MoreVert,
-                                        contentDescription = "More options",
-                                        tint = Color.White
-                                    )
-                                }
+                                ViewerTopBarTooltipAction(
+                                    tooltip = "More options",
+                                    icon = Icons.Filled.MoreVert,
+                                    testTagName = "viewer_more_menu_button",
+                                    onClick = { overflowExpanded = true }
+                                )
 
                                 DropdownMenu(
                                     expanded = overflowExpanded,
                                     onDismissRequest = { overflowExpanded = false }
                                 ) {
                                     DropdownMenuItem(
-                                        text = { Text("Download / Save") },
+                                        text = { Text("Compress PDF") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Compress, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            onQuickAction(PdfToolType.COMPRESS, activeRec)
+                                        },
+                                        modifier = Modifier.testTag("viewer_menu_compress")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Merge PDF") },
+                                        leadingIcon = {
+                                            Icon(Icons.AutoMirrored.Filled.MergeType, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            onQuickAction(PdfToolType.MERGE, activeRec)
+                                        },
+                                        modifier = Modifier.testTag("viewer_menu_merge")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Lock PDF") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.Lock, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            onQuickAction(PdfToolType.LOCK, activeRec)
+                                        },
+                                        modifier = Modifier.testTag("viewer_menu_lock")
+                                    )
+                                    HorizontalDivider()
+                                    DropdownMenuItem(
+                                        text = { Text("Save to Device") },
                                         leadingIcon = {
                                             Icon(Icons.Filled.Download, contentDescription = null)
                                         },
@@ -326,90 +374,6 @@ fun PdfViewerScreen(
                     )
                 )
             }
-        },
-        bottomBar = {
-            activeRecord?.let { rec ->
-                if (!isLockedView) {
-                    Surface(
-                        color = PaperlyViewerChrome,
-                        contentColor = Color.White,
-                        tonalElevation = 0.dp
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .windowInsetsPadding(WindowInsets.navigationBars)
-                        ) {
-                            HorizontalDivider(color = Color.White.copy(alpha = 0.12f))
-                            val pillColors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = Color.White.copy(alpha = 0.10f),
-                                contentColor = Color.White
-                            )
-                            LazyRow(
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                item {
-                                    FilledTonalButton(
-                                        onClick = { onQuickAction(PdfToolType.AI_SUMMARIZE, rec) },
-                                        colors = pillColors,
-                                        modifier = Modifier
-                                            .height(48.dp)
-                                            .testTag("viewer_quick_ai_button"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("AI Summarize")
-                                    }
-                                }
-                                item {
-                                    FilledTonalButton(
-                                        onClick = { onQuickAction(PdfToolType.COMPRESS, rec) },
-                                        colors = pillColors,
-                                        modifier = Modifier
-                                            .height(48.dp)
-                                            .testTag("viewer_quick_compress_button"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Compress, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Compress")
-                                    }
-                                }
-                                item {
-                                    FilledTonalButton(
-                                        onClick = { onQuickAction(PdfToolType.MERGE, rec) },
-                                        colors = pillColors,
-                                        modifier = Modifier
-                                            .height(48.dp)
-                                            .testTag("viewer_quick_merge_button"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Icon(Icons.AutoMirrored.Filled.MergeType, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Merge")
-                                    }
-                                }
-                                item {
-                                    FilledTonalButton(
-                                        onClick = { onQuickAction(PdfToolType.LOCK, rec) },
-                                        colors = pillColors,
-                                        modifier = Modifier
-                                            .height(48.dp)
-                                            .testTag("viewer_quick_lock_button"),
-                                        shape = RoundedCornerShape(12.dp)
-                                    ) {
-                                        Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text("Lock PDF")
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
         }
     ) { innerPadding ->
         val current = activeRecord
@@ -441,10 +405,46 @@ fun PdfViewerScreen(
             HdZoomablePdfCanvas(
                 filePath = current.filePath,
                 pageCount = current.pageCount,
+                isBookMode = isBookMode,
                 viewModel = viewModel,
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ViewerTopBarTooltipAction(
+    tooltip: String,
+    icon: ImageVector,
+    testTagName: String,
+    isActive: Boolean = false,
+    onClick: () -> Unit
+) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberPlainTooltipPositionProvider(),
+        tooltip = {
+            PlainTooltip {
+                Text(tooltip)
+            }
+        },
+        state = rememberTooltipState()
+    ) {
+        IconButton(
+            onClick = onClick,
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .clip(RoundedCornerShape(10.dp))
+                .background(if (isActive) Color.White.copy(alpha = 0.2f) else Color.Transparent)
+                .testTag(testTagName)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = tooltip,
+                tint = Color.White
             )
         }
     }
@@ -626,23 +626,105 @@ private fun LockedPdfPasswordPromptSection(
 private fun HdZoomablePdfCanvas(
     filePath: String,
     pageCount: Int,
+    isBookMode: Boolean,
     viewModel: PaperlyViewModel,
     modifier: Modifier = Modifier
 ) {
+    val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    val density = LocalDensity.current
+
     BoxWithConstraints(
         modifier = modifier.background(PaperlyViewerCanvas)
     ) {
-        val hdRenderWidth = remember(constraints.maxWidth) {
-            (constraints.maxWidth * 2).coerceIn(1600, 2600)
+        val availWidthDp = (maxWidth - 32.dp).coerceAtLeast(160.dp)
+        val availHeightDp = (maxHeight - 24.dp - navBarBottomPadding).coerceAtLeast(180.dp)
+        val maxFitWidthDp = if (maxWidth >= 600.dp) minOf(availWidthDp, 540.dp) else availWidthDp
+
+        val hdRenderWidth = remember(maxFitWidthDp, density) {
+            val targetPx = with(density) { maxFitWidthDp.toPx() }
+            (targetPx * 2f).roundToInt().coerceIn(1400, 2400)
         }
+
         val viewportWidthPx = constraints.maxWidth.toFloat().coerceAtLeast(1f)
         val viewportHeightPx = constraints.maxHeight.toFloat().coerceAtLeast(1f)
-        val lazyListState = rememberLazyListState()
+        var activePageIndex by rememberSaveable(filePath) { mutableIntStateOf(0) }
+
+        val lazyListState = rememberLazyListState(
+            initialFirstVisibleItemIndex = activePageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        )
+        val pagerState = rememberPagerState(
+            initialPage = activePageIndex.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+        ) {
+            pageCount.coerceAtLeast(0)
+        }
         val scope = rememberCoroutineScope()
 
         var zoomScale by remember(filePath) { mutableFloatStateOf(1f) }
         var panOffset by remember(filePath) { mutableStateOf(Offset.Zero) }
         var zoomAnimJob by remember(filePath) { mutableStateOf<Job?>(null) }
+
+        // Keep page position synced when toggling between Vertical Scroll and Book Page-Flip mode
+        LaunchedEffect(isBookMode, pageCount) {
+            zoomAnimJob?.cancel()
+            zoomScale = 1f
+            panOffset = Offset.Zero
+            if (pageCount > 0) {
+                val target = activePageIndex.coerceIn(0, pageCount - 1)
+                if (isBookMode) {
+                    if (pagerState.currentPage != target) {
+                        pagerState.scrollToPage(target)
+                    }
+                } else {
+                    if (lazyListState.firstVisibleItemIndex != target) {
+                        lazyListState.scrollToItem(target)
+                    }
+                }
+            }
+        }
+
+        // Reset zoom cleanly when flipping to a new page in Book mode
+        LaunchedEffect(pagerState.currentPage, isBookMode) {
+            if (isBookMode) {
+                activePageIndex = pagerState.currentPage
+                zoomAnimJob?.cancel()
+                zoomScale = 1f
+                panOffset = Offset.Zero
+            }
+        }
+
+        val currentVerticalPageIndex by remember(pageCount) {
+            derivedStateOf {
+                if (pageCount <= 0) 0
+                else {
+                    val info = lazyListState.layoutInfo
+                    val visible = info.visibleItemsInfo
+                    if (visible.isEmpty()) {
+                        lazyListState.firstVisibleItemIndex.coerceIn(0, pageCount - 1)
+                    } else {
+                        val centerY = (info.viewportStartOffset + info.viewportEndOffset) / 2
+                        val centerItem = visible.minByOrNull { item ->
+                            abs((item.offset + item.size / 2) - centerY)
+                        }
+                        (centerItem?.index ?: lazyListState.firstVisibleItemIndex)
+                            .coerceIn(0, pageCount - 1)
+                    }
+                }
+            }
+        }
+
+        LaunchedEffect(currentVerticalPageIndex, isBookMode) {
+            if (!isBookMode) {
+                activePageIndex = currentVerticalPageIndex
+            }
+        }
+
+        val currentPageOneBased = if (pageCount <= 0) {
+            0
+        } else if (isBookMode) {
+            (pagerState.currentPage + 1).coerceIn(1, pageCount)
+        } else {
+            (currentVerticalPageIndex + 1).coerceIn(1, pageCount)
+        }
 
         fun clampOffset(raw: Offset, scale: Float): Offset {
             if (scale <= 1.005f) return Offset.Zero
@@ -654,26 +736,6 @@ private fun HdZoomablePdfCanvas(
             )
         }
 
-        val currentPageOneBased by remember(pageCount) {
-            derivedStateOf {
-                if (pageCount <= 0) 0
-                else {
-                    val info = lazyListState.layoutInfo
-                    val visible = info.visibleItemsInfo
-                    if (visible.isEmpty()) {
-                        (lazyListState.firstVisibleItemIndex + 1).coerceIn(1, pageCount)
-                    } else {
-                        val centerY = (info.viewportStartOffset + info.viewportEndOffset) / 2
-                        val centerItem = visible.minByOrNull { item ->
-                            abs((item.offset + item.size / 2) - centerY)
-                        }
-                        ((centerItem?.index ?: lazyListState.firstVisibleItemIndex) + 1)
-                            .coerceIn(1, pageCount)
-                    }
-                }
-            }
-        }
-
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -683,7 +745,7 @@ private fun HdZoomablePdfCanvas(
                             zoomAnimJob?.cancel()
                             val startScale = zoomScale
                             val startOffset = panOffset
-                            val targetScale = if (startScale > 1.15f) 1f else 2.5f
+                            val targetScale = if (abs(startScale - 1f) > 0.12f) 1f else 2f
                             val center = Offset(viewportWidthPx / 2f, viewportHeightPx / 2f)
                             val rawTargetOffset = if (targetScale <= 1.005f) {
                                 Offset.Zero
@@ -705,7 +767,7 @@ private fun HdZoomablePdfCanvas(
                         }
                     )
                 }
-                .pointerInput(filePath, viewportWidthPx, viewportHeightPx) {
+                .pointerInput(filePath, isBookMode, viewportWidthPx, viewportHeightPx) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
                         var pastTouchSlop = false
@@ -739,7 +801,7 @@ private fun HdZoomablePdfCanvas(
                                     zoomAnimJob?.cancel()
                                     val oldScale = zoomScale
                                     val newScale = if (pressedCount > 1) {
-                                        (oldScale * zoomChange).coerceIn(1f, 4f)
+                                        (oldScale * zoomChange).coerceIn(0.8f, 4f)
                                     } else {
                                         oldScale
                                     }
@@ -754,20 +816,15 @@ private fun HdZoomablePdfCanvas(
                                     }
 
                                     val clamped = clampOffset(desiredOffset, newScale)
-                                    if (pressedCount == 1 && zoomScale > 1.02f) {
+                                    if (!isBookMode && pressedCount == 1 && zoomScale > 1.02f) {
                                         val leftoverY = desiredOffset.y - clamped.y
                                         if (abs(leftoverY) > 0.5f) {
                                             lazyListState.dispatchRawDelta(-leftoverY / newScale)
                                         }
                                     }
 
-                                    if (newScale <= 1.005f) {
-                                        zoomScale = 1f
-                                        panOffset = Offset.Zero
-                                    } else {
-                                        zoomScale = newScale
-                                        panOffset = clamped
-                                    }
+                                    zoomScale = if (abs(newScale - 1f) < 0.015f) 1f else newScale
+                                    panOffset = if (newScale <= 1.005f) Offset.Zero else clamped
 
                                     event.changes.forEach { change ->
                                         if (change.positionChanged()) change.consume()
@@ -778,69 +835,76 @@ private fun HdZoomablePdfCanvas(
                     }
                 }
         ) {
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = zoomScale
-                        scaleY = zoomScale
-                        translationX = panOffset.x
-                        translationY = panOffset.y
-                    },
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                items(
-                    count = pageCount,
-                    key = { index -> "${filePath}_$index" }
+            if (isBookMode) {
+                HorizontalPager(
+                    state = pagerState,
+                    beyondViewportPageCount = 1,
+                    userScrollEnabled = zoomScale <= 1.02f,
+                    key = { index -> "${filePath}_book_$index" },
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("viewer_book_pager")
+                        .graphicsLayer {
+                            scaleX = zoomScale
+                            scaleY = zoomScale
+                            translationX = panOffset.x
+                            translationY = panOffset.y
+                        }
                 ) { pageIndex ->
-                    val pageBitmap by produceState<Bitmap?>(
-                        initialValue = null,
-                        filePath,
-                        pageIndex,
-                        hdRenderWidth
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(
+                                start = 16.dp,
+                                end = 16.dp,
+                                top = 12.dp,
+                                bottom = navBarBottomPadding + 12.dp
+                            ),
+                        contentAlignment = Alignment.Center
                     ) {
-                        value = viewModel.pdfEngine.renderPageThumbnail(
+                        PdfFittedPageSheet(
                             filePath = filePath,
                             pageIndex = pageIndex,
-                            maxWidth = hdRenderWidth
+                            hdRenderWidth = hdRenderWidth,
+                            maxFitWidthDp = maxFitWidthDp,
+                            availHeightDp = availHeightDp,
+                            viewModel = viewModel
                         )
                     }
-
-                    Surface(
-                        shape = RoundedCornerShape(4.dp),
-                        color = Color.White,
-                        shadowElevation = 2.dp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .widthIn(max = 920.dp)
-                            .testTag("viewer_page_$pageIndex")
-                    ) {
-                        val bmp = pageBitmap
-                        if (bmp != null) {
-                            Image(
-                                bitmap = bmp.asImageBitmap(),
-                                contentDescription = "Page ${pageIndex + 1}",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()),
-                                contentScale = ContentScale.FillWidth
-                            )
-                        } else {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .aspectRatio(1f / 1.414f)
-                                    .background(Color.White),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                CircularProgressIndicator(
-                                    color = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        }
+                }
+            } else {
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("viewer_vertical_list")
+                        .graphicsLayer {
+                            scaleX = zoomScale
+                            scaleY = zoomScale
+                            translationX = panOffset.x
+                            translationY = panOffset.y
+                        },
+                    contentPadding = PaddingValues(
+                        start = 16.dp,
+                        end = 16.dp,
+                        top = 12.dp,
+                        bottom = navBarBottomPadding + 16.dp
+                    ),
+                    verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    items(
+                        count = pageCount,
+                        key = { index -> "${filePath}_$index" }
+                    ) { pageIndex ->
+                        PdfFittedPageSheet(
+                            filePath = filePath,
+                            pageIndex = pageIndex,
+                            hdRenderWidth = hdRenderWidth,
+                            maxFitWidthDp = maxFitWidthDp,
+                            availHeightDp = availHeightDp,
+                            viewModel = viewModel
+                        )
                     }
                 }
             }
@@ -855,7 +919,7 @@ private fun HdZoomablePdfCanvas(
                         .padding(14.dp)
                         .testTag("viewer_page_counter_badge")
                 ) {
-                    val zoomLabel = if (zoomScale > 1.05f) {
+                    val zoomLabel = if (abs(zoomScale - 1f) > 0.05f) {
                         " • ${((zoomScale * 10f).roundToInt() / 10f)}x"
                     } else {
                         ""
@@ -868,6 +932,76 @@ private fun HdZoomablePdfCanvas(
                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PdfFittedPageSheet(
+    filePath: String,
+    pageIndex: Int,
+    hdRenderWidth: Int,
+    maxFitWidthDp: androidx.compose.ui.unit.Dp,
+    availHeightDp: androidx.compose.ui.unit.Dp,
+    viewModel: PaperlyViewModel
+) {
+    val cachedInitial = remember(filePath, pageIndex, hdRenderWidth) {
+        viewModel.pdfEngine.getCachedPageThumbnail(
+            filePath = filePath,
+            pageIndex = pageIndex,
+            maxWidth = hdRenderWidth
+        )
+    }
+    val pageBitmap by produceState<Bitmap?>(
+        initialValue = cachedInitial,
+        filePath,
+        pageIndex,
+        hdRenderWidth
+    ) {
+        if (value == null) {
+            value = viewModel.pdfEngine.renderPageThumbnail(
+                filePath = filePath,
+                pageIndex = pageIndex,
+                maxWidth = hdRenderWidth
+            )
+        }
+    }
+
+    val bmp = pageBitmap
+    val pageAspect = if (bmp != null) {
+        bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
+    } else {
+        1f / 1.414f
+    }
+    val pageWidthDp = minOf(maxFitWidthDp, availHeightDp * pageAspect)
+    val pageHeightDp = pageWidthDp / pageAspect
+
+    Surface(
+        shape = RoundedCornerShape(4.dp),
+        color = Color.White,
+        shadowElevation = 3.dp,
+        modifier = Modifier
+            .size(width = pageWidthDp, height = pageHeightDp)
+            .testTag("viewer_page_$pageIndex")
+    ) {
+        if (bmp != null) {
+            Image(
+                bitmap = bmp.asImageBitmap(),
+                contentDescription = "Page ${pageIndex + 1}",
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Fit
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                CircularProgressIndicator(
+                    color = MaterialTheme.colorScheme.primary
+                )
             }
         }
     }

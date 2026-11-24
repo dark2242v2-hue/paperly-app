@@ -6,18 +6,16 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
-import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
-import android.os.Build
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button as AndroidButton
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -32,6 +30,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -102,8 +101,6 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -114,7 +111,6 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -144,27 +140,6 @@ fun PaperlyTopBar(
     onProClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val context = LocalContext.current
-    val launcherIconBitmap = remember(context) {
-        runCatching {
-            val drawable = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)
-                ?: return@runCatching null
-            val sizePx = 144
-            val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
-            val canvas = AndroidCanvas(bmp)
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                drawable is AdaptiveIconDrawable
-            ) {
-                val bleed = (sizePx * 0.25f).toInt()
-                drawable.setBounds(-bleed, -bleed, sizePx + bleed, sizePx + bleed)
-            } else {
-                drawable.setBounds(0, 0, sizePx, sizePx)
-            }
-            drawable.draw(canvas)
-            bmp.asImageBitmap()
-        }.getOrNull()
-    }
-
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -176,33 +151,10 @@ fun PaperlyTopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Surface(
-                modifier = Modifier
-                    .size(40.dp)
-                    .testTag("top_bar_app_icon"),
-                shape = RoundedCornerShape(12.dp),
-                shadowElevation = 4.dp,
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = if (isDarkMode) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f)
-                )
-            ) {
-                if (launcherIconBitmap != null) {
-                    Image(
-                        bitmap = launcherIconBitmap,
-                        contentDescription = stringResource(R.string.app_name),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(40.dp)
-                    )
-                } else {
-                    Image(
-                        painter = painterResource(id = R.drawable.img_app_icon_fg),
-                        contentDescription = stringResource(R.string.app_name),
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.size(40.dp)
-                    )
-                }
-            }
+            PaperlyBrandBadge(
+                isDarkMode = isDarkMode,
+                modifier = Modifier.testTag("top_bar_app_icon")
+            )
             Column {
                 Text(
                     text = stringResource(R.string.app_name),
@@ -269,6 +221,103 @@ fun PaperlyTopBar(
 }
 
 @Composable
+private fun PaperlyBrandBadge(
+    isDarkMode: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier.size(38.dp),
+        shape = RoundedCornerShape(11.dp),
+        shadowElevation = 3.dp,
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (isDarkMode) Color.White.copy(alpha = 0.2f) else PaperlyIndigo.copy(alpha = 0.22f)
+        )
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(
+                    brush = Brush.linearGradient(
+                        colors = listOf(PaperlyIndigo, PaperlyViolet)
+                    )
+                )
+                .padding(7.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
+
+                // Clean white folded document sheet (slightly left-bottom anchored to leave room for top-right sparkle)
+                val docLeft = w * 0.10f
+                val docTop = h * 0.16f
+                val docRight = w * 0.74f
+                val docBottom = h * 0.94f
+                val cornerFold = w * 0.22f
+                val r = w * 0.10f
+
+                val docPath = Path().apply {
+                    moveTo(docLeft + r, docTop)
+                    lineTo(docRight - cornerFold, docTop)
+                    lineTo(docRight, docTop + cornerFold)
+                    lineTo(docRight, docBottom - r)
+                    quadraticTo(docRight, docBottom, docRight - r, docBottom)
+                    lineTo(docLeft + r, docBottom)
+                    quadraticTo(docLeft, docBottom, docLeft, docBottom - r)
+                    lineTo(docLeft, docTop + r)
+                    quadraticTo(docLeft, docTop, docLeft + r, docTop)
+                    close()
+                }
+                drawPath(path = docPath, color = Color.White)
+
+                // Folded dog-ear flap accent
+                val foldPath = Path().apply {
+                    moveTo(docRight - cornerFold, docTop)
+                    lineTo(docRight - cornerFold, docTop + cornerFold)
+                    lineTo(docRight, docTop + cornerFold)
+                    close()
+                }
+                drawPath(path = foldPath, color = PaperlyIndigo.copy(alpha = 0.28f))
+
+                // Crisp horizontal text lines inside the document
+                val lineColor = PaperlyIndigo.copy(alpha = 0.45f)
+                val lineStroke = (w * 0.08f).coerceAtLeast(1.5f)
+                drawLine(
+                    color = lineColor,
+                    start = Offset(docLeft + w * 0.13f, docTop + h * 0.36f),
+                    end = Offset(docRight - w * 0.13f, docTop + h * 0.36f),
+                    strokeWidth = lineStroke,
+                    cap = StrokeCap.Round
+                )
+                drawLine(
+                    color = lineColor,
+                    start = Offset(docLeft + w * 0.13f, docTop + h * 0.54f),
+                    end = Offset(docRight - w * 0.22f, docTop + h * 0.54f),
+                    strokeWidth = lineStroke,
+                    cap = StrokeCap.Round
+                )
+
+                // Crisp white 4-point sparkle mark in top-right corner
+                val sx = w * 0.80f
+                val sy = h * 0.20f
+                val sr = w * 0.19f
+                val waist = sr * 0.16f
+                val sparklePath = Path().apply {
+                    moveTo(sx, sy - sr)
+                    quadraticTo(sx + waist, sy - waist, sx + sr, sy)
+                    quadraticTo(sx + waist, sy + waist, sx, sy + sr)
+                    quadraticTo(sx - waist, sy + waist, sx - sr, sy)
+                    quadraticTo(sx - waist, sy - waist, sx, sy - sr)
+                    close()
+                }
+                drawPath(path = sparklePath, color = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
 fun PaperlyBottomBarWithBanner(
     currentRoute: String?,
     isPro: Boolean,
@@ -284,8 +333,8 @@ fun PaperlyBottomBarWithBanner(
         // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
         AnimatedVisibility(
             visible = showHomeBanner && !isPro,
-            enter = expandVertically(),
-            exit = shrinkVertically()
+            enter = EnterTransition.None,
+            exit = ExitTransition.None
         ) {
             Column {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)

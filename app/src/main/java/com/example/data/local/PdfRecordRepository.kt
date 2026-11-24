@@ -9,6 +9,8 @@ class PdfRecordRepository(private val dao: PdfRecordDao) {
 
     val recentRecords: Flow<List<PdfRecordEntity>> = dao.observeAll()
 
+    suspend fun getAllSnapshot(): List<PdfRecordEntity> = dao.getAllSnapshot()
+
     suspend fun insert(record: PdfRecordEntity): Long = dao.insert(record)
 
     suspend fun getById(id: Long): PdfRecordEntity? = dao.getById(id)

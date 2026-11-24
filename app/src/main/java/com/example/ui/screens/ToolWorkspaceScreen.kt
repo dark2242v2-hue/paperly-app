@@ -8,6 +8,7 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -63,11 +64,13 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -178,6 +181,14 @@ fun ToolWorkspaceScreen(
         }
     }
 
+    val photoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.importScanImageUris(uris, fromSmartScan = false)
+        }
+    }
+
     val smartScannerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartIntentSenderForResult()
     ) { result ->
@@ -276,7 +287,9 @@ fun ToolWorkspaceScreen(
             )
         },
         bottomBar = {
-            if (tool != PdfToolType.AI_SUMMARIZE) {
+            val showBottomBar = tool != PdfToolType.AI_SUMMARIZE &&
+                !(tool == PdfToolType.SCAN && workspace.scanImageUris.isEmpty() && !workspace.processing.isProcessing)
+            if (showBottomBar) {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
                     tonalElevation = 2.dp
@@ -408,6 +421,11 @@ fun ToolWorkspaceScreen(
                             isLaunchingSmartScanner = isLaunchingSmartScanner,
                             onSmartScan = { launchSmartDocumentScanner() },
                             onOpenMultiShotCamera = onOpenMultiShotCamera,
+                            onPickFromGallery = {
+                                photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
                             onMoveLeft = viewModel::moveScanImageLeft,
                             onMoveRight = viewModel::moveScanImageRight,
                             onRemoveImage = viewModel::removeScanImageAt,
@@ -900,6 +918,7 @@ private fun ScanWorkspaceContent(
     isLaunchingSmartScanner: Boolean,
     onSmartScan: () -> Unit,
     onOpenMultiShotCamera: () -> Unit,
+    onPickFromGallery: () -> Unit,
     onMoveLeft: (Int) -> Unit,
     onMoveRight: (Int) -> Unit,
     onRemoveImage: (Int) -> Unit,
@@ -907,202 +926,76 @@ private fun ScanWorkspaceContent(
     onToggleEnhance: (Boolean) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Text(
-            text = if (imageUris.isEmpty()) "Choose Scan Mode" else "Add More Pages",
-            style = MaterialTheme.typography.titleMedium,
-            color = MaterialTheme.colorScheme.onBackground
-        )
-
-        // Mode 1: Smart Document Scan (Auto-Crop & Clean) — Official Google ML Kit Document Scanner
-        Card(
-            onClick = onSmartScan,
-            enabled = !isLaunchingSmartScanner,
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
-            ),
-            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)),
+    Box(
+        modifier = Modifier.fillMaxWidth(),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("scan_mode_smart_card")
+                .widthIn(max = 620.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.DocumentScanner,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
+            Text(
+                text = if (imageUris.isEmpty()) "Choose Scan Mode" else "Add More Pages",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onBackground
+            )
 
-                    Surface(
-                        shape = CircleShape,
-                        color = PaperlyEmerald.copy(alpha = 0.15f)
-                    ) {
-                        Text(
-                            text = stringResource(R.string.scan_mode_smart_badge),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = PaperlyEmerald,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
+            // Card 1: Smart Document Scan (Recommended)
+            ScanModeOptionCard(
+                title = stringResource(R.string.scan_mode_smart_title),
+                subtitle = stringResource(R.string.scan_mode_smart_desc),
+                icon = Icons.Filled.DocumentScanner,
+                iconTint = MaterialTheme.colorScheme.primary,
+                iconContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                badgeText = stringResource(R.string.scan_mode_smart_badge),
+                pillTags = if (isLaunchingSmartScanner) {
+                    listOf("Opening Smart Scanner…")
+                } else {
+                    listOf("Auto-crop", "Straighten", "Clean")
+                },
+                highlighted = true,
+                enabled = !isLaunchingSmartScanner,
+                isLoading = isLaunchingSmartScanner,
+                testTagName = "scan_mode_smart_card",
+                onClick = onSmartScan
+            )
 
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = stringResource(R.string.scan_mode_smart_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = stringResource(R.string.scan_mode_smart_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            // Card 2: Normal Camera (Multi-Shot)
+            ScanModeOptionCard(
+                title = stringResource(R.string.scan_mode_normal_title),
+                subtitle = stringResource(R.string.scan_mode_normal_desc),
+                icon = Icons.Filled.CameraAlt,
+                iconTint = MaterialTheme.colorScheme.secondary,
+                iconContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                badgeText = null,
+                pillTags = listOf("Multi-Shot", "Live Strip"),
+                highlighted = false,
+                enabled = true,
+                isLoading = false,
+                testTagName = "scan_mode_normal_card",
+                onClick = onOpenMultiShotCamera
+            )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                    ) {
-                        Text(
-                            text = if (isLaunchingSmartScanner) "Opening Smart Scanner…" else "Auto-crop • Filters • Clean",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                    if (isLaunchingSmartScanner) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                    } else {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
-                }
-            }
-        }
+            // Card 3: Import from Gallery
+            ScanModeOptionCard(
+                title = stringResource(R.string.scan_mode_gallery_title),
+                subtitle = stringResource(R.string.scan_mode_gallery_desc),
+                icon = Icons.Filled.PhotoLibrary,
+                iconTint = MaterialTheme.colorScheme.tertiary,
+                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                badgeText = null,
+                pillTags = listOf("Multi-Select", "Photos & Screenshots"),
+                highlighted = false,
+                enabled = true,
+                isLoading = false,
+                testTagName = "scan_mode_gallery_card",
+                onClick = onPickFromGallery
+            )
 
-        // Mode 2: Normal Photo / Gallery (Multi-Shot) — Unified card layout matching Smart Scan
-        Card(
-            onClick = onOpenMultiShotCamera,
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("scan_mode_normal_card")
-        ) {
-            Column(
-                modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.secondaryContainer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.CameraAlt,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                    }
-
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.secondaryContainer
-                    ) {
-                        Text(
-                            text = "Multi-Shot",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        text = stringResource(R.string.scan_mode_normal_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = stringResource(R.string.scan_mode_normal_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Surface(
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = "Multi-Shot Camera • Gallery Import",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                        )
-                    }
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        }
-
-        if (imageUris.isNotEmpty()) {
+            if (imageUris.isNotEmpty()) {
             Card(
                 shape = RoundedCornerShape(18.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1377,6 +1270,160 @@ private fun ScanWorkspaceContent(
                         helper = null
                     )
                 }
+            }
+        }
+    }
+    }
+}
+
+@Composable
+private fun ScanModeOptionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconTint: Color,
+    iconContainerColor: Color,
+    badgeText: String?,
+    pillTags: List<String>,
+    highlighted: Boolean,
+    enabled: Boolean,
+    isLoading: Boolean,
+    testTagName: String,
+    onClick: () -> Unit
+) {
+    Card(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (highlighted) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            } else {
+                MaterialTheme.colorScheme.surface
+            }
+        ),
+        border = BorderStroke(
+            width = if (highlighted) 1.5.dp else 1.dp,
+            color = if (highlighted) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)
+            } else {
+                MaterialTheme.colorScheme.outline
+            }
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag(testTagName)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(iconContainerColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false)
+                    )
+                    if (badgeText != null) {
+                        Surface(
+                            shape = CircleShape,
+                            color = PaperlyEmerald.copy(alpha = 0.15f)
+                        ) {
+                            Text(
+                                text = badgeText,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = PaperlyEmerald,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    pillTags.forEach { tag ->
+                        Surface(
+                            shape = CircleShape,
+                            color = if (highlighted) {
+                                MaterialTheme.colorScheme.primary.copy(alpha = 0.11f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            }
+                        ) {
+                            Text(
+                                text = tag,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (highlighted) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (isLoading) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(18.dp),
+                    strokeWidth = 2.dp
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                    contentDescription = null,
+                    tint = if (highlighted) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }

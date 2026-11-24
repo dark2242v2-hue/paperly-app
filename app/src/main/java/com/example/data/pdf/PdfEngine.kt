@@ -19,6 +19,7 @@ import android.provider.OpenableColumns
 import android.text.Layout
 import android.text.StaticLayout
 import android.text.TextPaint
+import android.util.LruCache
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.CompressionLevel
 import com.example.data.model.PdfAiPayload
@@ -61,6 +62,30 @@ class PdfEngine(private val context: Context) {
 
     val cacheDir: File
         get() = context.cacheDir
+
+    private val pageThumbnailCache: LruCache<String, Bitmap> by lazy {
+        val maxMemoryKb = (Runtime.getRuntime().maxMemory() / 1024L).toInt()
+        val cacheSizeKb = (maxMemoryKb / 8).coerceIn(16_384, 65_536)
+        object : LruCache<String, Bitmap>(cacheSizeKb) {
+            override fun sizeOf(key: String, value: Bitmap): Int {
+                return (value.allocationByteCount / 1024).coerceAtLeast(1)
+            }
+        }
+    }
+
+    private fun buildCacheKey(filePath: String, pageIndex: Int, maxWidth: Int): String {
+        val lastModified = runCatching { File(filePath).lastModified() }.getOrDefault(0L)
+        return "$filePath|$lastModified|$pageIndex|$maxWidth"
+    }
+
+    fun getCachedPageThumbnail(
+        filePath: String,
+        pageIndex: Int = 0,
+        maxWidth: Int = 720
+    ): Bitmap? {
+        val key = buildCacheKey(filePath, pageIndex, maxWidth)
+        return pageThumbnailCache.get(key)?.takeIf { !it.isRecycled }
+    }
 
     @Synchronized
     private fun ensurePdfBoxInit() {
@@ -722,6 +747,10 @@ class PdfEngine(private val context: Context) {
     ): Bitmap? = withContext(Dispatchers.IO) {
         val file = File(filePath)
         if (!file.exists()) return@withContext null
+        val cacheKey = "${filePath}|${file.lastModified()}|$pageIndex|$maxWidth"
+        pageThumbnailCache.get(cacheKey)?.takeIf { !it.isRecycled }?.let { cached ->
+            return@withContext cached
+        }
         runCatching {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
@@ -741,6 +770,7 @@ class PdfEngine(private val context: Context) {
                         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                         bmp.eraseColor(Color.WHITE)
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        pageThumbnailCache.put(cacheKey, bmp)
                         bmp
                     }
                 }
@@ -828,13 +858,14 @@ class PdfEngine(private val context: Context) {
         )
     }
 
-    private fun countPages(file: File): Int {
+    fun countPages(file: File): Int {
         return runCatching {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer -> renderer.pageCount }
             }
         }.getOrElse {
             runCatching {
+                ensurePdfBoxInit()
                 PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { it.numberOfPages }
             }.getOrDefault(0)
         }

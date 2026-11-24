@@ -60,11 +60,13 @@
     <string name="ai_watching_video_title">Sponsor Preview</string>
     <string name="ai_watching_video_skip">Skip Preview</string>
 
-    <string name="scan_mode_smart_title">Smart Document Scan (Auto-Crop &amp; Clean)</string>
-    <string name="scan_mode_smart_desc">Google Drive-style scanner with auto edge detection, perspective straighten, Enhance, Filters &amp; Clean.</string>
+    <string name="scan_mode_smart_title">Smart Document Scan</string>
+    <string name="scan_mode_smart_desc">Auto-crop, perspective straighten &amp; clean via Google ML Kit Scanner.</string>
     <string name="scan_mode_smart_badge">Recommended</string>
-    <string name="scan_mode_normal_title">Normal Photo / Gallery (Multi-Shot)</string>
-    <string name="scan_mode_normal_desc">Continuous multi-shot camera with live bottom thumbnail strip, or import photos directly from Gallery.</string>
+    <string name="scan_mode_normal_title">Normal Camera (Multi-Shot)</string>
+    <string name="scan_mode_normal_desc">Continuous multi-page photo capture with live bottom thumbnail strip.</string>
+    <string name="scan_mode_gallery_title">Import from Gallery</string>
+    <string name="scan_mode_gallery_desc">Select multiple existing photos or screenshots to convert into a PDF.</string>
     <string name="scan_camera_permission_title">Camera Access Needed</string>
     <string name="scan_camera_permission_desc">Allow camera access to capture continuous multi-shot document photos, or import existing photos from your Gallery.</string>
     <string name="scan_camera_grant_button">Allow Camera</string>

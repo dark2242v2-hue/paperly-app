@@ -27,10 +27,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -39,6 +41,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -53,12 +56,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
 import com.example.ui.viewmodel.PaperlyViewModel
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilesScreen(
     records: List<PdfRecordEntity>,
@@ -67,6 +72,7 @@ fun FilesScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val isRefreshing by viewModel.isRefreshingFiles.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
     var pendingSaveRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
@@ -90,22 +96,45 @@ fun FilesScreen(
         }
     }
 
-    Box(
-        modifier = modifier.fillMaxSize(),
-        contentAlignment = Alignment.TopCenter
+    PullToRefreshBox(
+        isRefreshing = isRefreshing,
+        onRefresh = { viewModel.refreshFilesCache(force = true) },
+        modifier = modifier.fillMaxSize()
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .widthIn(max = 720.dp)
-                .padding(horizontal = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+        Box(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.TopCenter
         ) {
-            Text(
-                text = "Your Paperly Files",
-                style = MaterialTheme.typography.headlineMedium,
-                color = MaterialTheme.colorScheme.onBackground
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .widthIn(max = 720.dp)
+                    .padding(horizontal = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Your Paperly Files",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.onBackground
+                    )
+                    IconButton(
+                        onClick = { viewModel.refreshFilesCache(force = true) },
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("files_refresh_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Refresh,
+                            contentDescription = "Refresh files",
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
 
             OutlinedTextField(
                 value = query,
@@ -280,6 +309,7 @@ fun FilesScreen(
                     }
                 }
             }
+        }
         }
     }
 }

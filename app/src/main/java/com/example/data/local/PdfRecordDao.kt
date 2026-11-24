@@ -11,6 +11,9 @@ interface PdfRecordDao {
     @Query("SELECT * FROM pdf_records ORDER BY createdAtMillis DESC")
     fun observeAll(): Flow<List<PdfRecordEntity>>
 
+    @Query("SELECT * FROM pdf_records ORDER BY createdAtMillis DESC")
+    suspend fun getAllSnapshot(): List<PdfRecordEntity>
+
     @Query("SELECT * FROM pdf_records WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): PdfRecordEntity?
 

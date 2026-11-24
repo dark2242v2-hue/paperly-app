@@ -25,6 +25,7 @@ import com.example.data.model.SignaturePlacement
 import com.example.data.pdf.PdfEngine
 import com.example.security.SecurityGuard
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.delay
@@ -36,6 +37,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 private const val TAG = "PaperlyViewModel"
 
@@ -99,19 +101,29 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         SecurityGuard.isAppTrusted(application)
     }
 
-    init {
-        adManager.initialize(preloadRewarded = true)
-        if (isAppIntegrityTrusted) {
-            billingManager.initialize()
-        } else {
-            viewModelScope.launch {
-                prefsRepository.setPlayProActive(false, null)
-            }
-        }
-    }
+    private val _workspace = MutableStateFlow(WorkspaceUiState())
+    val workspace: StateFlow<WorkspaceUiState> = _workspace.asStateFlow()
+
+    private val _aiSummaryState = MutableStateFlow<AiSummaryUiState>(AiSummaryUiState.Idle)
+    val aiSummaryState: StateFlow<AiSummaryUiState> = _aiSummaryState.asStateFlow()
+
+    private val _proSheetState = MutableStateFlow(ProSheetUiState())
+    val proSheetState: StateFlow<ProSheetUiState> = _proSheetState.asStateFlow()
+
+    private val _snackbarMessage = MutableStateFlow<String?>(null)
+    val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
+
+    private val _shouldRequestInAppReview = MutableStateFlow(false)
+    val shouldRequestInAppReview: StateFlow<Boolean> = _shouldRequestInAppReview.asStateFlow()
+
+    private val _isRefreshingFiles = MutableStateFlow(false)
+    val isRefreshingFiles: StateFlow<Boolean> = _isRefreshingFiles.asStateFlow()
+
+    private var hasScannedFilesOnce = false
+    private var aiJob: Job? = null
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val isDarkMode: StateFlow<Boolean> = prefsRepository.isDarkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
@@ -145,22 +157,62 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         pro || unlockedUntil > System.currentTimeMillis()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
-    private val _workspace = MutableStateFlow(WorkspaceUiState())
-    val workspace: StateFlow<WorkspaceUiState> = _workspace.asStateFlow()
+    init {
+        adManager.initialize(preloadRewarded = true)
+        if (isAppIntegrityTrusted) {
+            billingManager.initialize()
+        } else {
+            viewModelScope.launch {
+                prefsRepository.setPlayProActive(false, null)
+            }
+        }
+        refreshFilesCache(force = false)
+    }
 
-    private val _aiSummaryState = MutableStateFlow<AiSummaryUiState>(AiSummaryUiState.Idle)
-    val aiSummaryState: StateFlow<AiSummaryUiState> = _aiSummaryState.asStateFlow()
-
-    private val _proSheetState = MutableStateFlow(ProSheetUiState())
-    val proSheetState: StateFlow<ProSheetUiState> = _proSheetState.asStateFlow()
-
-    private val _snackbarMessage = MutableStateFlow<String?>(null)
-    val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
-
-    private val _shouldRequestInAppReview = MutableStateFlow(false)
-    val shouldRequestInAppReview: StateFlow<Boolean> = _shouldRequestInAppReview.asStateFlow()
-
-    private var aiJob: Job? = null
+    fun refreshFilesCache(force: Boolean = false) {
+        if (_isRefreshingFiles.value) return
+        if (hasScannedFilesOnce && !force) return
+        hasScannedFilesOnce = true
+        viewModelScope.launch(Dispatchers.IO) {
+            if (force) {
+                _isRefreshingFiles.value = true
+            }
+            try {
+                val existing = recordRepository.getAllSnapshot()
+                val existingPaths = existing.mapTo(HashSet()) { it.filePath }
+                existing.forEach { record ->
+                    if (!File(record.filePath).exists()) {
+                        recordRepository.deleteRecord(record)
+                    }
+                }
+                val dirFiles = pdfEngine.pdfsDir.listFiles { file ->
+                    file.isFile && file.extension.equals("pdf", ignoreCase = true)
+                }.orEmpty()
+                dirFiles.forEach { file ->
+                    if (file.absolutePath !in existingPaths) {
+                        val pages = runCatching { pdfEngine.countPages(file) }.getOrDefault(1).coerceAtLeast(1)
+                        recordRepository.insert(
+                            PdfRecordEntity(
+                                displayName = file.name,
+                                filePath = file.absolutePath,
+                                operationTag = "Saved",
+                                pageCount = pages,
+                                sizeBytes = file.length(),
+                                createdAtMillis = file.lastModified().takeIf { it > 0L }
+                                    ?: System.currentTimeMillis()
+                            )
+                        )
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.w(TAG, "Silent files cache sync failed", e)
+            } finally {
+                _isRefreshingFiles.value = false
+            }
+        }
+    }
 
     fun toggleDarkMode() {
         viewModelScope.launch {

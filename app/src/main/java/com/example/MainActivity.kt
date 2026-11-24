@@ -8,6 +8,8 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.IntentCompat
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -241,9 +243,19 @@ fun PaperlyApp(
         ) {
             NavHost(
                 navController = navController,
-                startDestination = PaperlyRoutes.HOME
+                startDestination = PaperlyRoutes.HOME,
+                enterTransition = { EnterTransition.None },
+                exitTransition = { ExitTransition.None },
+                popEnterTransition = { EnterTransition.None },
+                popExitTransition = { ExitTransition.None }
             ) {
-                composable(PaperlyRoutes.HOME) {
+                composable(
+                    route = PaperlyRoutes.HOME,
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                    popEnterTransition = { EnterTransition.None },
+                    popExitTransition = { ExitTransition.None }
+                ) {
                     HomeScreen(
                         recentRecords = recentRecords,
                         onToolSelected = { tool ->
@@ -273,7 +285,13 @@ fun PaperlyApp(
                     )
                 }
 
-                composable(PaperlyRoutes.FILES) {
+                composable(
+                    route = PaperlyRoutes.FILES,
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                    popEnterTransition = { EnterTransition.None },
+                    popExitTransition = { ExitTransition.None }
+                ) {
                     FilesScreen(
                         records = recentRecords,
                         viewModel = viewModel,
@@ -283,7 +301,13 @@ fun PaperlyApp(
                     )
                 }
 
-                composable(PaperlyRoutes.SETTINGS) {
+                composable(
+                    route = PaperlyRoutes.SETTINGS,
+                    enterTransition = { EnterTransition.None },
+                    exitTransition = { ExitTransition.None },
+                    popEnterTransition = { EnterTransition.None },
+                    popExitTransition = { ExitTransition.None }
+                ) {
                     SettingsScreen(
                         isDarkMode = isDarkMode,
                         isPro = isPro,
