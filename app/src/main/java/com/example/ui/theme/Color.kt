@@ -36,3 +36,7 @@ val PaperlyRose = Color(0xFFE11D48)
 val PaperlyRoseSoft = Color(0xFFFFE4E6)
 val PaperlyViolet = Color(0xFF7C3AED)
 val PaperlyVioletSoft = Color(0xFFEDE9FE)
+
+// Google Drive-style HD PDF Viewer Dark Canvas & Chrome
+val PaperlyViewerCanvas = Color(0xFF121318)
+val PaperlyViewerChrome = Color(0xFF1A1C24)

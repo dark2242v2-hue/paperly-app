@@ -729,8 +729,15 @@ class PdfEngine(private val context: Context) {
                     val clampedIndex = pageIndex.coerceIn(0, renderer.pageCount - 1)
                     renderer.openPage(clampedIndex).use { page ->
                         val ratio = page.height.toFloat() / max(1, page.width).toFloat()
-                        val w = maxWidth.coerceAtLeast(160)
-                        val h = (w * ratio).roundToInt().coerceAtLeast(160)
+                        var w = maxWidth.coerceIn(160, 2880)
+                        var h = (w * ratio).roundToInt().coerceAtLeast(160)
+                        val maxPixels = 7_500_000f
+                        val totalPixels = w.toFloat() * h.toFloat()
+                        if (totalPixels > maxPixels) {
+                            val scaleDown = kotlin.math.sqrt(maxPixels / totalPixels)
+                            w = (w * scaleDown).roundToInt().coerceAtLeast(160)
+                            h = (h * scaleDown).roundToInt().coerceAtLeast(160)
+                        }
                         val bmp = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
                         bmp.eraseColor(Color.WHITE)
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
