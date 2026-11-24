@@ -26,26 +26,6 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      - name: Prepare debug keystore
-        run: |
-          if [ ! -f debug.keystore ]; then
-            if [ -f debug.keystore.base64 ]; then
-              base64 -d debug.keystore.base64 > debug.keystore
-            else
-              keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
-            fi
-          fi
-
-      - name: Build Debug APK
-        run: gradle assembleDebug
-
-      - name: Upload Paperly APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: Paperly-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
-
       - name: Check release signing secrets
         id: check_release_secrets
         env:
@@ -58,7 +38,7 @@ jobs:
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
             echo "ready=false" >> "$GITHUB_OUTPUT"
-            echo "Release signing secrets are not all configured; skipping bundleRelease."
+            echo "Release signing secrets are not all configured; falling back to generated debug keystore and skipping bundleRelease."
           fi
 
       - name: Prepare release keystore
@@ -81,6 +61,46 @@ jobs:
             COMBINED_SHA256="${UPLOAD_SHA256},${PLAY_APP_SIGNING_SHA256}"
           fi
           echo "cert_sha256=$COMBINED_SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare debug keystore
+        run: |
+          if [ ! -f debug.keystore ]; then
+            if [ -f debug.keystore.base64 ]; then
+              base64 -d debug.keystore.base64 > debug.keystore
+            else
+              keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+            fi
+          fi
+
+      - name: Build Debug APK
+        run: gradle assembleDebug
+
+      - name: Sign Debug APK with persistent release keystore
+        if: steps.check_release_secrets.outputs.ready == 'true'
+        env:
+          STORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          APKSIGNER=$(find "$SDK_ROOT/build-tools" -maxdepth 2 -name apksigner | sort -V | tail -n 1)
+          if [ -z "$APKSIGNER" ]; then
+            echo "apksigner not found in $SDK_ROOT/build-tools"
+            exit 1
+          fi
+          "$APKSIGNER" sign \
+            --ks my-upload-key.jks \
+            --ks-key-alias upload \
+            --ks-pass "env:STORE_PASSWORD" \
+            --key-pass "env:KEY_PASSWORD" \
+            app/build/outputs/apk/debug/app-debug.apk
+          "$APKSIGNER" verify --print-certs app/build/outputs/apk/debug/app-debug.apk
+
+      - name: Upload Paperly APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Paperly-APK
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
 
       - name: Build Signed Release AAB
         if: steps.check_release_secrets.outputs.ready == 'true'
