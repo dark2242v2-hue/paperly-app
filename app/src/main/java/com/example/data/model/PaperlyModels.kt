@@ -159,7 +159,29 @@ data class ProcessedImageResult(
     val originalWidth: Int?,
     val originalHeight: Int?,
     val operationLabel: String,
-    val secondaryPdfRecordId: Long? = null
+    val secondaryPdfRecordId: Long? = null,
+    val originalFilePath: String? = null
+)
+
+data class RecentImageItem(
+    val displayName: String,
+    val filePath: String,
+    val format: ImageOutputFormat,
+    val width: Int,
+    val height: Int,
+    val sizeBytes: Long,
+    val createdAtMillis: Long
+)
+
+data class BgBrushPoint(
+    val xNorm: Float,
+    val yNorm: Float
+)
+
+data class BgBrushStroke(
+    val isErase: Boolean,
+    val radiusNorm: Float,
+    val points: List<BgBrushPoint>
 )
 
 sealed interface OcrUiState {

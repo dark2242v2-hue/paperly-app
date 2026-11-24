@@ -4,11 +4,17 @@ import android.content.ContentValues
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapShader
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Matrix
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
 import android.graphics.Rect
+import android.graphics.RectF
+import android.graphics.Shader
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
@@ -18,10 +24,12 @@ import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.core.content.FileProvider
 import com.example.data.local.PdfRecordEntity
+import com.example.data.model.BgBrushStroke
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.OcrUiState
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.ProcessedImageResult
+import com.example.data.model.RecentImageItem
 import com.example.data.model.UpscaleTarget
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
@@ -86,6 +94,36 @@ class ImageEngine(private val context: Context) {
         val file = File(dir, "ocr_${System.currentTimeMillis()}.jpg")
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
         return file to uri
+    }
+
+    suspend fun listRecentImages(limit: Int = 15): List<RecentImageItem> = withContext(Dispatchers.IO) {
+        val files = imagesDir.listFiles { file ->
+            file.isFile && file.extension.lowercase() in setOf("jpg", "jpeg", "png", "webp")
+        }.orEmpty()
+
+        files.sortedByDescending { it.lastModified() }
+            .take(limit)
+            .mapNotNull { file ->
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(file.absolutePath, bounds)
+                val w = bounds.outWidth
+                val h = bounds.outHeight
+                if (w <= 0 || h <= 0) return@mapNotNull null
+                val fmt = when (file.extension.lowercase()) {
+                    "png" -> ImageOutputFormat.PNG
+                    "webp" -> ImageOutputFormat.WEBP
+                    else -> ImageOutputFormat.JPG
+                }
+                RecentImageItem(
+                    displayName = file.name,
+                    filePath = file.absolutePath,
+                    format = fmt,
+                    width = w,
+                    height = h,
+                    sizeBytes = file.length(),
+                    createdAtMillis = file.lastModified().takeIf { it > 0L } ?: System.currentTimeMillis()
+                )
+            }
     }
 
     suspend fun importPickedImage(uri: Uri): PickedImageInfo = withContext(Dispatchers.IO) {
@@ -229,7 +267,8 @@ class ImageEngine(private val context: Context) {
             originalSizeBytes = info.sizeBytes,
             originalWidth = info.width,
             originalHeight = info.height,
-            operationLabel = "Compressed Image"
+            operationLabel = "Compressed Image",
+            originalFilePath = info.localPath
         )
     }
 
@@ -330,7 +369,8 @@ class ImageEngine(private val context: Context) {
             originalSizeBytes = info.sizeBytes,
             originalWidth = info.width,
             originalHeight = info.height,
-            operationLabel = "Cropped & Resized"
+            operationLabel = "Cropped & Resized",
+            originalFilePath = info.localPath
         )
     }
 
@@ -410,17 +450,17 @@ class ImageEngine(private val context: Context) {
                 if (pass > 5) break
             }
 
-            onProgress(0.82f, "Applying crisp detail sharpening...")
-            val sharpened = applyLightUnsharpSharpen(current)
-            if (sharpened !== current) {
+            onProgress(0.80f, "Boosting clarity & fine edge detail...")
+            val enhanced = applyMultiRadiusClarityEnhance(current)
+            if (enhanced !== current) {
                 current.recycle()
-                current = sharpened
+                current = enhanced
             }
 
             onProgress(0.92f, "Encoding ${format.label}...")
             val baseTitle = info.displayName.substringBeforeLast('.')
             val outFile = uniqueImageOutputFile("${sanitizeFileName(baseTitle)}_${target.name.lowercase()}.${format.ext}")
-            writeBitmapToFile(current, outFile, format, quality = 95)
+            writeBitmapToFile(current, outFile, format, quality = 96)
 
             onProgress(1f, "Upscale complete")
             ProcessedImageResult(
@@ -433,7 +473,8 @@ class ImageEngine(private val context: Context) {
                 originalSizeBytes = info.sizeBytes,
                 originalWidth = info.width,
                 originalHeight = info.height,
-                operationLabel = "Upscaled ${target.label}"
+                operationLabel = "Upscaled ${target.label}",
+                originalFilePath = info.localPath
             )
         } finally {
             if (!current.isRecycled) current.recycle()
@@ -443,7 +484,7 @@ class ImageEngine(private val context: Context) {
     suspend fun removeBackground(
         info: PickedImageInfo,
         onProgress: (Float, String) -> Unit
-    ): String = withContext(Dispatchers.IO) {
+    ): Pair<String, String> = withContext(Dispatchers.IO) {
         val srcFile = File(info.localPath)
         require(srcFile.exists()) { "Source image not found." }
 
@@ -463,13 +504,18 @@ class ImageEngine(private val context: Context) {
 
             onProgress(0.85f, "Saving transparent cutout...")
             val outDir = File(context.cacheDir, "cutouts").apply { mkdirs() }
-            val cutoutFile = File(outDir, "cutout_${UUID.randomUUID()}.png")
+            val uid = UUID.randomUUID()
+            val cutoutFile = File(outDir, "cutout_$uid.png")
             FileOutputStream(cutoutFile).use { out ->
                 fg.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
+            val alignedOrigFile = File(outDir, "orig_$uid.jpg")
+            FileOutputStream(alignedOrigFile).use { out ->
+                source.compress(Bitmap.CompressFormat.JPEG, 96, out)
+            }
             if (fg !== source) fg.recycle()
             onProgress(1f, "Subject isolated")
-            cutoutFile.absolutePath
+            cutoutFile.absolutePath to alignedOrigFile.absolutePath
         } finally {
             source.recycle()
             runCatching { segmenter.close() }
@@ -478,24 +524,91 @@ class ImageEngine(private val context: Context) {
 
     suspend fun exportCutoutResult(
         cutoutPngPath: String,
+        alignedOriginalPath: String?,
+        strokes: List<BgBrushStroke>,
         originalInfo: PickedImageInfo,
         backgroundColorArgb: Int?,
         format: ImageOutputFormat
     ): ProcessedImageResult = withContext(Dispatchers.IO) {
         val srcFile = File(cutoutPngPath)
         require(srcFile.exists()) { "Cutout bitmap not found." }
-        val fg = BitmapFactory.decodeFile(srcFile.absolutePath)
+        val decodedFg = BitmapFactory.decodeFile(srcFile.absolutePath)
             ?: throw IllegalStateException("Could not decode cutout image.")
+
+        val mutableFg = if (decodedFg.isMutable) {
+            decodedFg
+        } else {
+            decodedFg.copy(Bitmap.Config.ARGB_8888, true).also { decodedFg.recycle() }
+        }
+
+        val alignedOrig = if (strokes.any { !it.isErase } && !alignedOriginalPath.isNullOrBlank()) {
+            BitmapFactory.decodeFile(alignedOriginalPath)?.let { raw ->
+                if (raw.width == mutableFg.width && raw.height == mutableFg.height) {
+                    raw
+                } else {
+                    Bitmap.createScaledBitmap(raw, mutableFg.width, mutableFg.height, true).also {
+                        if (it !== raw) raw.recycle()
+                    }
+                }
+            }
+        } else null
+
+        try {
+            if (strokes.isNotEmpty()) {
+                val canvas = Canvas(mutableFg)
+                val w = mutableFg.width.toFloat()
+                val h = mutableFg.height.toFloat()
+                val minSide = min(w, h)
+                val restoreShader = alignedOrig?.let { orig ->
+                    BitmapShader(orig, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+                }
+
+                strokes.forEach { stroke ->
+                    if (stroke.points.isEmpty()) return@forEach
+                    val radiusPx = (stroke.radiusNorm * minSide).coerceAtLeast(3f)
+                    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        style = Paint.Style.STROKE
+                        strokeWidth = radiusPx * 2f
+                        strokeCap = Paint.Cap.ROUND
+                        strokeJoin = Paint.Join.ROUND
+                        if (stroke.isErase) {
+                            xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                        } else if (restoreShader != null) {
+                            shader = restoreShader
+                        }
+                    }
+                    if (!stroke.isErase && restoreShader == null) return@forEach
+
+                    if (stroke.points.size == 1) {
+                        val pt = stroke.points[0]
+                        paint.style = Paint.Style.FILL
+                        canvas.drawCircle(pt.xNorm * w, pt.yNorm * h, radiusPx, paint)
+                    } else {
+                        val path = Path().apply {
+                            val first = stroke.points.first()
+                            moveTo(first.xNorm * w, first.yNorm * h)
+                            for (i in 1 until stroke.points.size) {
+                                val p = stroke.points[i]
+                                lineTo(p.xNorm * w, p.yNorm * h)
+                            }
+                        }
+                        canvas.drawPath(path, paint)
+                    }
+                }
+            }
+        } finally {
+            alignedOrig?.recycle()
+        }
 
         val effectiveFormat = if (backgroundColorArgb == null) ImageOutputFormat.PNG else format
         val outputBitmap = if (backgroundColorArgb == null) {
-            fg
+            mutableFg
         } else {
-            val composed = Bitmap.createBitmap(fg.width, fg.height, Bitmap.Config.ARGB_8888)
+            val composed = Bitmap.createBitmap(mutableFg.width, mutableFg.height, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(composed)
             canvas.drawColor(backgroundColorArgb)
-            canvas.drawBitmap(fg, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-            fg.recycle()
+            canvas.drawBitmap(mutableFg, 0f, 0f, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
+            mutableFg.recycle()
             composed
         }
 
@@ -513,31 +626,11 @@ class ImageEngine(private val context: Context) {
                 originalSizeBytes = originalInfo.sizeBytes,
                 originalWidth = originalInfo.width,
                 originalHeight = originalInfo.height,
-                operationLabel = if (backgroundColorArgb == null) "Transparent PNG" else "Background Replaced"
+                operationLabel = if (backgroundColorArgb == null) "Transparent PNG" else "Background Replaced",
+                originalFilePath = originalInfo.localPath
             )
         } finally {
             outputBitmap.recycle()
-        }
-    }
-
-    suspend fun renderPassportTilePreview(
-        sourceOrCutoutPath: String,
-        removeBgEnabled: Boolean,
-        backgroundColorArgb: Int
-    ): Bitmap? = withContext(Dispatchers.IO) {
-        val file = File(sourceOrCutoutPath)
-        if (!file.exists()) return@withContext null
-        val bmp = decodeSampledFileBitmap(file, 900) ?: return@withContext null
-        try {
-            createPassportTileBitmap(
-                source = bmp,
-                tileW = 420,
-                tileH = 540,
-                fillBg = removeBgEnabled,
-                bgColorArgb = backgroundColorArgb
-            )
-        } finally {
-            bmp.recycle()
         }
     }
 
@@ -548,6 +641,9 @@ class ImageEngine(private val context: Context) {
         backgroundColorArgb: Int,
         copyCount: Int,
         exportAsPdf: Boolean,
+        zoom: Float,
+        offsetXNorm: Float,
+        offsetYNorm: Float,
         pdfsDir: File,
         onProgress: (Float, String) -> Unit
     ): Pair<ProcessedImageResult, PdfRecordEntity?> = withContext(Dispatchers.IO) {
@@ -558,15 +654,13 @@ class ImageEngine(private val context: Context) {
         val rawPortrait = decodeSampledFileBitmap(srcFile, 1600)
             ?: throw IllegalStateException("Could not decode portrait image.")
 
-        // Standard 4x6 inch @ 300 DPI sheet = 1800 x 1200 landscape for 4/6/8 copies,
-        // or A4 @ 240 DPI (1984 x 2806) for 12 copies so every 35x45mm tile fits comfortably.
         val tileW = 413 // 35mm @ 300 DPI
         val tileH = 531 // 45mm @ 300 DPI
         val (sheetW, sheetH, cols) = when (copyCount) {
             4 -> Triple(1800, 1200, 2)
             6 -> Triple(1800, 1200, 3)
             8 -> Triple(1800, 1200, 4)
-            else -> Triple(1800, 2400, 4) // 12 copies (4x3 grid on 6x8 / A4 proportion)
+            else -> Triple(1800, 2400, 4)
         }
         val rows = ((copyCount + cols - 1) / cols).coerceAtLeast(1)
 
@@ -575,7 +669,10 @@ class ImageEngine(private val context: Context) {
             tileW = tileW,
             tileH = tileH,
             fillBg = removeBgEnabled,
-            bgColorArgb = backgroundColorArgb
+            bgColorArgb = backgroundColorArgb,
+            zoom = zoom,
+            offsetXNorm = offsetXNorm,
+            offsetYNorm = offsetYNorm
         )
         rawPortrait.recycle()
 
@@ -639,7 +736,8 @@ class ImageEngine(private val context: Context) {
                 originalWidth = originalInfo.width,
                 originalHeight = originalInfo.height,
                 operationLabel = "Passport Sheet ($copyCount copies)",
-                secondaryPdfRecordId = null
+                secondaryPdfRecordId = null,
+                originalFilePath = originalInfo.localPath
             )
             imageResult to pdfRecord
         } finally {
@@ -769,7 +867,10 @@ class ImageEngine(private val context: Context) {
         tileW: Int,
         tileH: Int,
         fillBg: Boolean,
-        bgColorArgb: Int
+        bgColorArgb: Int,
+        zoom: Float = 1.0f,
+        offsetXNorm: Float = 0f,
+        offsetYNorm: Float = 0f
     ): Bitmap {
         val tile = Bitmap.createBitmap(tileW, tileH, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(tile)
@@ -778,72 +879,115 @@ class ImageEngine(private val context: Context) {
         } else {
             canvas.drawColor(Color.WHITE)
         }
-        val scale = max(tileW.toFloat() / max(1, source.width), tileH.toFloat() / max(1, source.height))
-        val drawW = source.width * scale
-        val drawH = source.height * scale
-        val left = (tileW - drawW) / 2f
-        val top = (tileH - drawH) * 0.25f // slightly upper bias to preserve top head/hair margin
-        val destRect = Rect(
-            left.roundToInt(),
-            top.roundToInt(),
-            (left + drawW).roundToInt(),
-            (top + drawH).roundToInt()
-        )
+        val baseScale = max(tileW.toFloat() / max(1, source.width), tileH.toFloat() / max(1, source.height))
+        val effectiveScale = baseScale * zoom.coerceIn(0.6f, 3.5f)
+        val drawW = source.width * effectiveScale
+        val drawH = source.height * effectiveScale
+        val left = (tileW - drawW) / 2f + offsetXNorm * tileW
+        val top = (tileH - drawH) * 0.25f + offsetYNorm * tileH
+        val destRect = RectF(left, top, left + drawW, top + drawH)
         canvas.drawBitmap(source, null, destRect, Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
         return tile
     }
 
-    private fun applyLightUnsharpSharpen(src: Bitmap): Bitmap {
+    private fun applyMultiRadiusClarityEnhance(src: Bitmap): Bitmap {
         val w = src.width
         val h = src.height
-        // Skip full-pixel convolution above 28MP to keep processing < 1.5s & zero OOM risk
-        if (w.toLong() * h.toLong() > 28_000_000L) return src
+        val totalPixels = w.toLong() * h.toLong()
+        if (w < 4 || h < 4) return src
+        // If ultra-large 16K exceeds fast pixel pass budget, downscale-sharpen-blend or run lightweight 3x3
+        val useMultiRadius = totalPixels <= 38_000_000L
+        if (totalPixels > 120_000_000L) return src
 
         return runCatching {
-            val rowPrev = IntArray(w)
+            val rowPrev2 = IntArray(w)
+            val rowPrev1 = IntArray(w)
             val rowCurr = IntArray(w)
-            val rowNext = IntArray(w)
+            val rowNext1 = IntArray(w)
+            val rowNext2 = IntArray(w)
             val rowOut = IntArray(w)
             val out = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
 
-            src.getPixels(rowPrev, 0, w, 0, 0, w, 1)
-            out.setPixels(rowPrev, 0, w, 0, 0, w, 1)
-            if (h <= 2) return out
+            src.getPixels(rowPrev2, 0, w, 0, 0, w, 1)
+            src.getPixels(rowPrev1, 0, w, 0, 1, w, 1)
+            out.setPixels(rowPrev2, 0, w, 0, 0, w, 1)
+            out.setPixels(rowPrev1, 0, w, 0, 1, w, 1)
 
-            src.getPixels(rowCurr, 0, w, 0, 1, w, 1)
-            for (y in 1 until h - 1) {
-                src.getPixels(rowNext, 0, w, 0, y + 1, w, 1)
+            src.getPixels(rowCurr, 0, w, 0, 2, w, 1)
+            src.getPixels(rowNext1, 0, w, 0, 3, w, 1)
+
+            for (y in 2 until h - 2) {
+                src.getPixels(rowNext2, 0, w, 0, y + 2, w, 1)
                 rowOut[0] = rowCurr[0]
+                rowOut[1] = rowCurr[1]
+                rowOut[w - 2] = rowCurr[w - 2]
                 rowOut[w - 1] = rowCurr[w - 1]
-                for (x in 1 until w - 1) {
+
+                for (x in 2 until w - 2) {
                     val c = rowCurr[x]
                     val a = c ushr 24
                     val rC = (c ushr 16) and 0xFF
                     val gC = (c ushr 8) and 0xFF
                     val bC = c and 0xFF
 
-                    val top = rowPrev[x]
-                    val bot = rowNext[x]
-                    val lft = rowCurr[x - 1]
-                    val rgt = rowCurr[x + 1]
+                    val top1 = rowPrev1[x]
+                    val bot1 = rowNext1[x]
+                    val lft1 = rowCurr[x - 1]
+                    val rgt1 = rowCurr[x + 1]
 
-                    val rAvg = (((top ushr 16) and 0xFF) + ((bot ushr 16) and 0xFF) +
-                        ((lft ushr 16) and 0xFF) + ((rgt ushr 16) and 0xFF)) shr 2
-                    val gAvg = (((top ushr 8) and 0xFF) + ((bot ushr 8) and 0xFF) +
-                        ((lft ushr 8) and 0xFF) + ((rgt ushr 8) and 0xFF)) shr 2
-                    val bAvg = ((top and 0xFF) + (bot and 0xFF) + (lft and 0xFF) + (rgt and 0xFF)) shr 2
+                    val rFineAvg = (((top1 ushr 16) and 0xFF) + ((bot1 ushr 16) and 0xFF) +
+                        ((lft1 ushr 16) and 0xFF) + ((rgt1 ushr 16) and 0xFF)) shr 2
+                    val gFineAvg = (((top1 ushr 8) and 0xFF) + ((bot1 ushr 8) and 0xFF) +
+                        ((lft1 ushr 8) and 0xFF) + ((rgt1 ushr 8) and 0xFF)) shr 2
+                    val bFineAvg = ((top1 and 0xFF) + (bot1 and 0xFF) + (lft1 and 0xFF) + (rgt1 and 0xFF)) shr 2
 
-                    val rNew = (rC + ((rC - rAvg) * 3) / 10).coerceIn(0, 255)
-                    val gNew = (gC + ((gC - gAvg) * 3) / 10).coerceIn(0, 255)
-                    val bNew = (bC + ((bC - bAvg) * 3) / 10).coerceIn(0, 255)
+                    val rDiffFine = rC - rFineAvg
+                    val gDiffFine = gC - gFineAvg
+                    val bDiffFine = bC - bFineAvg
+
+                    var rDelta: Int
+                    var gDelta: Int
+                    var bDelta: Int
+
+                    if (useMultiRadius) {
+                        val top2 = rowPrev2[x]
+                        val bot2 = rowNext2[x]
+                        val lft2 = rowCurr[x - 2]
+                        val rgt2 = rowCurr[x + 2]
+                        val rCoarseAvg = (((top2 ushr 16) and 0xFF) + ((bot2 ushr 16) and 0xFF) +
+                            ((lft2 ushr 16) and 0xFF) + ((rgt2 ushr 16) and 0xFF)) shr 2
+                        val gCoarseAvg = (((top2 ushr 8) and 0xFF) + ((bot2 ushr 8) and 0xFF) +
+                            ((lft2 ushr 8) and 0xFF) + ((rgt2 ushr 8) and 0xFF)) shr 2
+                        val bCoarseAvg = ((top2 and 0xFF) + (bot2 and 0xFF) + (lft2 and 0xFF) + (rgt2 and 0xFF)) shr 2
+
+                        val rDiffCoarse = rC - rCoarseAvg
+                        val gDiffCoarse = gC - gCoarseAvg
+                        val bDiffCoarse = bC - bCoarseAvg
+
+                        // Coring: smooth tiny flat compression noise; strongly sharpen real detail & structure
+                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) -(rDiffFine / 3) else ((rDiffFine * 85 + rDiffCoarse * 40) / 100)
+                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) -(gDiffFine / 3) else ((gDiffFine * 85 + gDiffCoarse * 40) / 100)
+                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) -(bDiffFine / 3) else ((bDiffFine * 85 + bDiffCoarse * 40) / 100)
+                    } else {
+                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) 0 else ((rDiffFine * 85) / 100)
+                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) 0 else ((gDiffFine * 85) / 100)
+                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) 0 else ((bDiffFine * 85) / 100)
+                    }
+
+                    val rNew = (rC + rDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                    val gNew = (gC + gDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                    val bNew = (bC + bDelta.coerceIn(-48, 48)).coerceIn(0, 255)
                     rowOut[x] = (a shl 24) or (rNew shl 16) or (gNew shl 8) or bNew
                 }
+
                 out.setPixels(rowOut, 0, w, 0, y, w, 1)
-                System.arraycopy(rowCurr, 0, rowPrev, 0, w)
-                System.arraycopy(rowNext, 0, rowCurr, 0, w)
+                System.arraycopy(rowPrev1, 0, rowPrev2, 0, w)
+                System.arraycopy(rowCurr, 0, rowPrev1, 0, w)
+                System.arraycopy(rowNext1, 0, rowCurr, 0, w)
+                System.arraycopy(rowNext2, 0, rowNext1, 0, w)
             }
-            src.getPixels(rowNext, 0, w, 0, h - 1, w, 1)
-            out.setPixels(rowNext, 0, w, 0, h - 1, w, 1)
+            out.setPixels(rowCurr, 0, w, 0, h - 2, w, 1)
+            out.setPixels(rowNext1, 0, w, 0, h - 1, w, 1)
             out
         }.getOrElse { src }
     }

@@ -1,7 +1,15 @@
 package com.example.ui.components
 
 import android.graphics.Bitmap
+import android.graphics.BitmapShader
+import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
+import android.graphics.Paint as AndroidPaint
+import android.graphics.Path as AndroidPath
+import android.graphics.PorterDuff
+import android.graphics.PorterDuffXfermode
+import android.graphics.RectF
+import android.graphics.Shader
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -9,21 +17,31 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CompareArrows
+import androidx.compose.material.icons.filled.ZoomIn
+import androidx.compose.material.icons.filled.ZoomOut
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -34,6 +52,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -41,20 +60,29 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.example.data.model.BgBrushPoint
+import com.example.data.model.BgBrushStroke
 import kotlin.math.abs
 import kotlin.math.hypot
+import kotlin.math.max
+import kotlin.math.min
 import kotlin.math.roundToInt
 
 private enum class DragCorner { NONE, MOVE, TL, TR, BL, BR }
@@ -108,6 +136,7 @@ fun InteractiveCropPreview(
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .heightIn(max = 280.dp)
             .testTag("crop_preview_container"),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF121318),
@@ -116,14 +145,27 @@ fun InteractiveCropPreview(
         BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .heightIn(min = 170.dp, max = 276.dp)
+                .padding(10.dp),
             contentAlignment = Alignment.Center
         ) {
+            val density = LocalDensity.current
+            val availW = maxWidth
+            val availH = min(maxHeight.value, 256f).dp
+            val fitW: androidx.compose.ui.unit.Dp
+            val fitH: androidx.compose.ui.unit.Dp
+            if (availW / availH > imgAspect) {
+                fitH = availH
+                fitW = availH * imgAspect
+            } else {
+                fitW = availW
+                fitH = availW / imgAspect
+            }
+
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(imgAspect)
-                    .clip(RoundedCornerShape(10.dp))
+                    .size(width = fitW, height = fitH)
+                    .clip(RoundedCornerShape(8.dp))
                     .background(Color(0xFF1A1C24)),
                 contentAlignment = Alignment.Center
             ) {
@@ -140,6 +182,7 @@ fun InteractiveCropPreview(
                 )
 
                 var activeHandle by remember { mutableStateOf(DragCorner.NONE) }
+                val touchThresholdPx = with(density) { 44.dp.toPx() }
                 Canvas(
                     modifier = Modifier
                         .fillMaxSize()
@@ -152,7 +195,6 @@ fun InteractiveCropPreview(
                                     val tPx = latestTop * h
                                     val rPx = latestRight * w
                                     val bPx = latestBottom * h
-                                    val threshold = 48.dp.toPx()
 
                                     val dTL = hypot(start.x - lPx, start.y - tPx)
                                     val dTR = hypot(start.x - rPx, start.y - tPx)
@@ -161,10 +203,10 @@ fun InteractiveCropPreview(
                                     val minD = minOf(dTL, dTR, dBL, dBR)
 
                                     activeHandle = when {
-                                        minD <= threshold && abs(minD - dTL) < 0.5f -> DragCorner.TL
-                                        minD <= threshold && abs(minD - dTR) < 0.5f -> DragCorner.TR
-                                        minD <= threshold && abs(minD - dBL) < 0.5f -> DragCorner.BL
-                                        minD <= threshold && abs(minD - dBR) < 0.5f -> DragCorner.BR
+                                        minD <= touchThresholdPx && abs(minD - dTL) < 0.5f -> DragCorner.TL
+                                        minD <= touchThresholdPx && abs(minD - dTR) < 0.5f -> DragCorner.TR
+                                        minD <= touchThresholdPx && abs(minD - dBL) < 0.5f -> DragCorner.BL
+                                        minD <= touchThresholdPx && abs(minD - dBR) < 0.5f -> DragCorner.BR
                                         start.x in lPx..rPx && start.y in tPx..bPx -> DragCorner.MOVE
                                         else -> DragCorner.NONE
                                     }
@@ -183,7 +225,7 @@ fun InteractiveCropPreview(
                                     var t = latestTop
                                     var r = latestRight
                                     var b = latestBottom
-                                    val minSpan = 0.12f
+                                    val minSpan = 0.14f
 
                                     when (activeHandle) {
                                         DragCorner.MOVE -> {
@@ -242,14 +284,12 @@ fun InteractiveCropPreview(
                     val boxW = (r - l).coerceAtLeast(1f)
                     val boxH = (b - t).coerceAtLeast(1f)
 
-                    val scrimColor = Color.Black.copy(alpha = 0.56f)
-                    // Top, Bottom, Left, Right scrim strips
+                    val scrimColor = Color.Black.copy(alpha = 0.58f)
                     drawRect(scrimColor, Offset.Zero, Size(size.width, t))
                     drawRect(scrimColor, Offset(0f, b), Size(size.width, size.height - b))
                     drawRect(scrimColor, Offset(0f, t), Size(l, boxH))
                     drawRect(scrimColor, Offset(r, t), Size(size.width - r, boxH))
 
-                    // Crop rectangle border
                     drawRect(
                         color = Color.White,
                         topLeft = Offset(l, t),
@@ -257,7 +297,6 @@ fun InteractiveCropPreview(
                         style = Stroke(width = 2.dp.toPx())
                     )
 
-                    // Rule of thirds gridlines
                     val gridColor = Color.White.copy(alpha = 0.42f)
                     for (i in 1..2) {
                         val x = l + boxW * (i / 3f)
@@ -266,17 +305,459 @@ fun InteractiveCropPreview(
                         drawLine(gridColor, Offset(l, y), Offset(r, y), strokeWidth = 1.dp.toPx())
                     }
 
-                    // 4 draggable corner handles
-                    val handleRadius = 8.dp.toPx()
+                    // Bold corner drag handles + L-brackets for unmistakably clear grab targets
+                    val handleRadius = 9.dp.toPx()
                     listOf(
                         Offset(l, t),
                         Offset(r, t),
                         Offset(l, b),
                         Offset(r, b)
                     ).forEach { corner ->
-                        drawCircle(color = Color(0xFF4F46E5), radius = handleRadius + 2.dp.toPx(), center = corner)
+                        drawCircle(color = Color(0xFF4F46E5), radius = handleRadius + 2.5.dp.toPx(), center = corner)
                         drawCircle(color = Color.White, radius = handleRadius, center = corner)
                     }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BgTouchUpPreview(
+    cutoutBitmap: Bitmap?,
+    originalBitmap: Bitmap?,
+    selectedBgColorArgb: Int?,
+    strokes: List<BgBrushStroke>,
+    isEraseMode: Boolean,
+    brushRadiusNorm: Float,
+    onStrokeCompleted: (BgBrushStroke) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val activeStrokePoints = remember { mutableStateListOf<BgBrushPoint>() }
+    var cursorOffset by remember { mutableStateOf<Offset?>(null) }
+
+    val latestErase by rememberUpdatedState(isEraseMode)
+    val latestRadius by rememberUpdatedState(brushRadiusNorm)
+    val latestOnComplete by rememberUpdatedState(onStrokeCompleted)
+
+    // Render cutout + committed strokes onto a compact preview bitmap cleanly
+    val composedPreview = remember(cutoutBitmap, originalBitmap, strokes, activeStrokePoints.size) {
+        val base = cutoutBitmap ?: return@remember null
+        val working = base.copy(Bitmap.Config.ARGB_8888, true)
+        val allStrokes = if (activeStrokePoints.isNotEmpty()) {
+            strokes + BgBrushStroke(
+                isErase = latestErase,
+                radiusNorm = latestRadius,
+                points = activeStrokePoints.toList()
+            )
+        } else {
+            strokes
+        }
+        if (allStrokes.isEmpty()) return@remember working
+
+        val canvas = AndroidCanvas(working)
+        val w = working.width.toFloat()
+        val h = working.height.toFloat()
+        val minSide = min(w, h)
+        val alignedOrig = if (allStrokes.any { !it.isErase } && originalBitmap != null) {
+            if (originalBitmap.width == working.width && originalBitmap.height == working.height) {
+                originalBitmap
+            } else {
+                Bitmap.createScaledBitmap(originalBitmap, working.width, working.height, true)
+            }
+        } else null
+
+        val shader = alignedOrig?.let { orig ->
+            BitmapShader(orig, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        }
+
+        try {
+            allStrokes.forEach { stroke ->
+                if (stroke.points.isEmpty()) return@forEach
+                val rPx = (stroke.radiusNorm * minSide).coerceAtLeast(2f)
+                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                    style = AndroidPaint.Style.STROKE
+                    strokeWidth = rPx * 2f
+                    strokeCap = AndroidPaint.Cap.ROUND
+                    strokeJoin = AndroidPaint.Join.ROUND
+                    if (stroke.isErase) {
+                        xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                    } else if (shader != null) {
+                        this.shader = shader
+                    }
+                }
+                if (!stroke.isErase && shader == null) return@forEach
+                if (stroke.points.size == 1) {
+                    val p = stroke.points[0]
+                    paint.style = AndroidPaint.Style.FILL
+                    canvas.drawCircle(p.xNorm * w, p.yNorm * h, rPx, paint)
+                } else {
+                    val path = AndroidPath().apply {
+                        val first = stroke.points.first()
+                        moveTo(first.xNorm * w, first.yNorm * h)
+                        for (i in 1 until stroke.points.size) {
+                            val pt = stroke.points[i]
+                            lineTo(pt.xNorm * w, pt.yNorm * h)
+                        }
+                    }
+                    canvas.drawPath(path, paint)
+                }
+            }
+        } finally {
+            if (alignedOrig != null && alignedOrig !== originalBitmap && !alignedOrig.isRecycled) {
+                alignedOrig.recycle()
+            }
+        }
+        working
+    }
+
+    val displayAspect = remember(cutoutBitmap, originalBitmap) {
+        val b = cutoutBitmap ?: originalBitmap
+        if (b != null) (b.width.toFloat() / max(1, b.height).toFloat()).coerceIn(0.45f, 2.2f) else 1f
+    }
+
+    Surface(
+        shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 210.dp, max = 270.dp)
+            .testTag("bg_touchup_preview")
+    ) {
+        BoxWithConstraints(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = 210.dp, max = 270.dp)
+                .padding(8.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            val availW = maxWidth
+            val availH = min(maxHeight.value, 254f).dp
+            val fitW: androidx.compose.ui.unit.Dp
+            val fitH: androidx.compose.ui.unit.Dp
+            if (availW / availH > displayAspect) {
+                fitH = availH
+                fitW = availH * displayAspect
+            } else {
+                fitW = availW
+                fitH = availW / displayAspect
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(width = fitW, height = fitH)
+                    .clip(RoundedCornerShape(12.dp)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (selectedBgColorArgb == null) {
+                    TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color(selectedBgColorArgb))
+                    )
+                }
+
+                val bmp = composedPreview ?: originalBitmap
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Subject cutout with touch-up preview",
+                        contentScale = ContentScale.FillBounds,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+
+                // Touch-up gesture overlay (only active when cutout is ready)
+                if (cutoutBitmap != null) {
+                    Canvas(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .pointerInput(cutoutBitmap) {
+                                detectDragGestures(
+                                    onDragStart = { offset ->
+                                        activeStrokePoints.clear()
+                                        val nx = (offset.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                        val ny = (offset.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                        activeStrokePoints.add(BgBrushPoint(nx, ny))
+                                        cursorOffset = offset
+                                    },
+                                    onDrag = { change, _ ->
+                                        change.consume()
+                                        val pos = change.position
+                                        val nx = (pos.x / size.width.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                        val ny = (pos.y / size.height.coerceAtLeast(1)).coerceIn(0f, 1f)
+                                        activeStrokePoints.add(BgBrushPoint(nx, ny))
+                                        cursorOffset = pos
+                                    },
+                                    onDragEnd = {
+                                        if (activeStrokePoints.isNotEmpty()) {
+                                            latestOnComplete(
+                                                BgBrushStroke(
+                                                    isErase = latestErase,
+                                                    radiusNorm = latestRadius,
+                                                    points = activeStrokePoints.toList()
+                                                )
+                                            )
+                                        }
+                                        activeStrokePoints.clear()
+                                        cursorOffset = null
+                                    },
+                                    onDragCancel = {
+                                        activeStrokePoints.clear()
+                                        cursorOffset = null
+                                    }
+                                )
+                            }
+                    ) {
+                        cursorOffset?.let { pos ->
+                            val rPx = latestRadius * min(size.width, size.height)
+                            drawCircle(
+                                color = if (latestErase) Color(0xFFEF4444) else Color(0xFF10B981),
+                                radius = rPx,
+                                center = pos,
+                                style = Stroke(width = 2.dp.toPx())
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PassportFramingPreview(
+    bitmap: Bitmap?,
+    removeBgEnabled: Boolean,
+    bgColorArgb: Int,
+    zoom: Float,
+    offsetXNorm: Float,
+    offsetYNorm: Float,
+    onFramingChanged: (Float, Float, Float) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val latestZoom by rememberUpdatedState(zoom)
+    val latestOffsetX by rememberUpdatedState(offsetXNorm)
+    val latestOffsetY by rememberUpdatedState(offsetYNorm)
+    val latestOnChanged by rememberUpdatedState(onFramingChanged)
+
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
+        modifier = modifier
+            .width(126.dp)
+            .aspectRatio(35f / 45f)
+            .testTag("passport_framing_preview")
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(if (removeBgEnabled) Color(bgColorArgb) else Color.White)
+                .clipToBounds()
+                .pointerInput(bitmap) {
+                    detectTransformGestures { _, pan, gestureZoom, _ ->
+                        val w = size.width.toFloat().coerceAtLeast(1f)
+                        val h = size.height.toFloat().coerceAtLeast(1f)
+                        val newZoom = (latestZoom * gestureZoom).coerceIn(0.65f, 3.2f)
+                        val newOx = (latestOffsetX + pan.x / w).coerceIn(-0.65f, 0.65f)
+                        val newOy = (latestOffsetY + pan.y / h).coerceIn(-0.65f, 0.65f)
+                        latestOnChanged(newOx, newOy, newZoom)
+                    }
+                }
+        ) {
+            if (bitmap != null) {
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val tileW = size.width
+                    val tileH = size.height
+                    val baseScale = max(tileW / max(1, bitmap.width), tileH / max(1, bitmap.height))
+                    val effectiveScale = baseScale * latestZoom.coerceIn(0.65f, 3.2f)
+                    val drawW = bitmap.width * effectiveScale
+                    val drawH = bitmap.height * effectiveScale
+                    val left = (tileW - drawW) / 2f + latestOffsetX * tileW
+                    val top = (tileH - drawH) * 0.25f + latestOffsetY * tileH
+
+                    drawImage(
+                        image = bitmap.asImageBitmap(),
+                        dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                        dstSize = IntSize(drawW.roundToInt().coerceAtLeast(1), drawH.roundToInt().coerceAtLeast(1))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun SplitBeforeAfterComparisonPreview(
+    originalBitmap: Bitmap?,
+    enhancedBitmap: Bitmap?,
+    modifier: Modifier = Modifier
+) {
+    var splitFraction by remember { mutableFloatStateOf(0.5f) }
+    var zoom2x by remember { mutableStateOf(false) }
+
+    Column(
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = modifier.fillMaxWidth()
+    ) {
+        Surface(
+            shape = RoundedCornerShape(14.dp),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            color = Color(0xFF121318),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(210.dp)
+                .testTag("upscaler_split_preview")
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clipToBounds()
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, _ ->
+                            change.consume()
+                            val w = size.width.toFloat().coerceAtLeast(1f)
+                            splitFraction = (change.position.x / w).coerceIn(0.08f, 0.92f)
+                        }
+                    }
+            ) {
+                // Full Enhanced on Right
+                if (enhancedBitmap != null) {
+                    Image(
+                        bitmap = enhancedBitmap.asImageBitmap(),
+                        contentDescription = "Enhanced upscaled image",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                val s = if (zoom2x) 2.2f else 1f
+                                scaleX = s
+                                scaleY = s
+                            }
+                    )
+                }
+
+                // Original clipped to Left of splitFraction
+                if (originalBitmap != null) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val splitX = size.width * splitFraction
+                        clipRect(left = 0f, top = 0f, right = splitX, bottom = size.height) {
+                            val imgW = originalBitmap.width.toFloat().coerceAtLeast(1f)
+                            val imgH = originalBitmap.height.toFloat().coerceAtLeast(1f)
+                            val fitScale = min(size.width / imgW, size.height / imgH) * (if (zoom2x) 2.2f else 1f)
+                            val drawW = imgW * fitScale
+                            val drawH = imgH * fitScale
+                            val left = (size.width - drawW) / 2f
+                            val top = (size.height - drawH) / 2f
+                            drawImage(
+                                image = originalBitmap.asImageBitmap(),
+                                dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
+                                dstSize = IntSize(drawW.roundToInt().coerceAtLeast(1), drawH.roundToInt().coerceAtLeast(1))
+                            )
+                        }
+                    }
+                }
+
+                // Divider line + handle
+                Canvas(modifier = Modifier.fillMaxSize()) {
+                    val splitX = size.width * splitFraction
+                    drawLine(
+                        color = Color.White,
+                        start = Offset(splitX, 0f),
+                        end = Offset(splitX, size.height),
+                        strokeWidth = 2.dp.toPx()
+                    )
+                    drawCircle(
+                        color = Color(0xFF4F46E5),
+                        radius = 13.dp.toPx(),
+                        center = Offset(splitX, size.height / 2f)
+                    )
+                    drawCircle(
+                        color = Color.White,
+                        radius = 10.dp.toPx(),
+                        center = Offset(splitX, size.height / 2f)
+                    )
+                }
+
+                // Labels
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.65f),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "Original",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = Color(0xFF4F46E5).copy(alpha = 0.90f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                ) {
+                    Text(
+                        text = "Enhanced",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                    )
+                }
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CompareArrows,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(16.dp)
+                )
+                Text(
+                    text = "Drag slider to compare clarity",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Surface(
+                shape = CircleShape,
+                color = if (zoom2x) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier.clickable { zoom2x = !zoom2x }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = if (zoom2x) Icons.Filled.ZoomOut else Icons.Filled.ZoomIn,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = if (zoom2x) "1x Fit" else "2x Detail Zoom",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
                 }
             }
         }

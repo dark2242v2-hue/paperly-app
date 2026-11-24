@@ -13,6 +13,9 @@
     <string name="see_all">See all</string>
     <string name="recent_empty_title">No PDFs processed yet</string>
     <string name="recent_empty_subtitle">Pick a tool below to merge, split, compress, scan, sign, or edit images locally on your device.</string>
+    <string name="recent_images_title">Recent Images</string>
+    <string name="recent_images_empty_title">No images processed yet</string>
+    <string name="recent_images_empty_subtitle">Pick a tool above to compress, crop, or edit images</string>
     <string name="tools_section_title">PDF Tools</string>
     <string name="image_tools_section_title">Image Tools</string>
 

@@ -147,6 +147,7 @@ fun PaperlyApp(
     val upscaleCredits by viewModel.upscaleCredits.collectAsStateWithLifecycle()
     val homeCategory by viewModel.homeCategory.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
+    val recentImages by viewModel.recentImages.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val imageWorkspace by viewModel.imageWorkspace.collectAsStateWithLifecycle()
     val ocrState by viewModel.ocrState.collectAsStateWithLifecycle()
@@ -276,6 +277,7 @@ fun PaperlyApp(
                     HomeScreen(
                         selectedCategory = homeCategory,
                         recentRecords = recentRecords,
+                        recentImages = recentImages,
                         onCategorySelected = viewModel::setHomeCategory,
                         onToolSelected = { tool ->
                             if (tool == PdfToolType.AI_SUMMARIZE ||
@@ -296,6 +298,10 @@ fun PaperlyApp(
                         },
                         onRecentSelected = { rec ->
                             navController.navigate(PaperlyRoutes.pdfViewer(rec.id))
+                        },
+                        onRecentImageSelected = { item ->
+                            viewModel.openRecentImage(item)
+                            navController.navigate(PaperlyRoutes.IMAGE_RESULT)
                         },
                         onSeeAllFiles = {
                             navController.navigate(PaperlyRoutes.FILES) {
@@ -414,6 +420,7 @@ fun PaperlyApp(
                         state = imageWorkspace,
                         ocrState = ocrState,
                         isPro = isPro,
+                        isDarkMode = isDarkMode,
                         aiImageCredits = aiImageCredits,
                         upscaleCredits = upscaleCredits,
                         viewModel = viewModel,

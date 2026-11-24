@@ -46,8 +46,12 @@ import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.RotateRight
+import androidx.compose.material.icons.automirrored.filled.Undo
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddPhotoAlternate
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoFixOff
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
@@ -57,6 +61,8 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Remove
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
@@ -73,6 +79,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -87,6 +94,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
@@ -99,9 +107,11 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.R
+import com.example.ads.PaperlyAdManager
 import com.example.core.formatFileSize
 import com.example.data.model.AiImageAspectRatio
 import com.example.data.model.AiImageStyle
+import com.example.data.model.BgBrushStroke
 import com.example.data.model.CropAspectPreset
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ImageToolType
@@ -109,10 +119,12 @@ import com.example.data.model.OcrUiState
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.TargetSizeUnit
 import com.example.data.model.UpscaleTarget
+import com.example.ui.components.BgTouchUpPreview
 import com.example.ui.components.ColorSwatchCircle
 import com.example.ui.components.CustomColorPickerDialog
 import com.example.ui.components.InteractiveCropPreview
-import com.example.ui.components.TransparencyCheckerboardCanvas
+import com.example.ui.components.PassportFramingPreview
+import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.viewmodel.ImageWorkspaceUiState
@@ -127,6 +139,7 @@ fun ImageWorkspaceScreen(
     state: ImageWorkspaceUiState,
     ocrState: OcrUiState,
     isPro: Boolean,
+    isDarkMode: Boolean,
     aiImageCredits: Int,
     upscaleCredits: Int,
     viewModel: PaperlyViewModel,
@@ -407,7 +420,8 @@ fun ImageWorkspaceScreen(
                                 ImageCompressionControlsCard(
                                     info = info,
                                     state = state,
-                                    onConfigChange = viewModel::updateImageCompressionConfig
+                                    onConfigChange = viewModel::updateImageCompressionConfig,
+                                    onClearPreset = viewModel::clearCompressionPresetSelection
                                 )
                             }
                         }
@@ -428,6 +442,9 @@ fun ImageWorkspaceScreen(
                         item {
                             OcrWorkspaceCard(
                                 ocrState = ocrState,
+                                isPro = isPro,
+                                isDarkMode = isDarkMode,
+                                adManager = viewModel.adManager,
                                 onCopyText = { text ->
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("Paperly OCR Text", text))
@@ -480,7 +497,11 @@ fun ImageWorkspaceScreen(
                             item {
                                 BgRemoverWorkspaceCard(
                                     state = state,
-                                    onColorSelected = viewModel::updateBgColor
+                                    onColorSelected = viewModel::updateBgColor,
+                                    onBrushModeChanged = viewModel::setBgBrushMode,
+                                    onBrushRadiusChanged = viewModel::setBgBrushRadius,
+                                    onStrokeCompleted = viewModel::addBgBrushStroke,
+                                    onUndoStroke = viewModel::undoBgBrushStroke
                                 )
                             }
                         }
@@ -491,7 +512,9 @@ fun ImageWorkspaceScreen(
                             item {
                                 PassportSheetWorkspaceCard(
                                     state = state,
-                                    onUpdatePassport = viewModel::updatePassportConfig
+                                    onUpdatePassport = viewModel::updatePassportConfig,
+                                    onFramingChanged = viewModel::updatePassportFraming,
+                                    onResetFraming = viewModel::resetPassportFraming
                                 )
                             }
                         }
@@ -592,7 +615,8 @@ private fun ImagePickerCard(
 private fun ImageCompressionControlsCard(
     info: PickedImageInfo,
     state: ImageWorkspaceUiState,
-    onConfigChange: (String?, TargetSizeUnit?, ImageOutputFormat?) -> Unit
+    onConfigChange: (String?, TargetSizeUnit?, ImageOutputFormat?, String?, Boolean) -> Unit,
+    onClearPreset: () -> Unit
 ) {
     val presets = listOf(
         Triple("10 KB", "10", TargetSizeUnit.KB),
@@ -638,10 +662,10 @@ private fun ImageCompressionControlsCard(
 
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(presets) { (label, valStr, unit) ->
-                        val selected = state.compressTargetValue == valStr && state.compressTargetUnit == unit
+                        val selected = state.compressSelectedPresetLabel == label
                         FilterChip(
                             selected = selected,
-                            onClick = { onConfigChange(valStr, unit, null) },
+                            onClick = { onConfigChange(valStr, unit, null, label, false) },
                             label = { Text(label) }
                         )
                     }
@@ -654,20 +678,25 @@ private fun ImageCompressionControlsCard(
                 ) {
                     OutlinedTextField(
                         value = state.compressTargetValue,
-                        onValueChange = { onConfigChange(it, null, null) },
+                        onValueChange = { onConfigChange(it, null, null, null, true) },
                         label = { Text("Exact Target") },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .weight(1f)
+                            .onFocusChanged { focusState ->
+                                if (focusState.isFocused) {
+                                    onClearPreset()
+                                }
+                            }
                             .testTag("image_compress_target_input")
                     )
 
                     TargetSizeUnit.entries.forEach { unit ->
                         FilterChip(
                             selected = state.compressTargetUnit == unit,
-                            onClick = { onConfigChange(null, unit, null) },
+                            onClick = { onConfigChange(null, unit, null, null, false) },
                             label = { Text(unit.label, fontWeight = FontWeight.SemiBold) },
                             modifier = Modifier.height(48.dp)
                         )
@@ -682,7 +711,7 @@ private fun ImageCompressionControlsCard(
                     listOf(ImageOutputFormat.JPG, ImageOutputFormat.WEBP).forEach { fmt ->
                         FilterChip(
                             selected = state.outputFormat == fmt,
-                            onClick = { onConfigChange(null, null, fmt) },
+                            onClick = { onConfigChange(null, null, fmt, null, false) },
                             label = { Text(fmt.label) }
                         )
                     }
@@ -819,6 +848,9 @@ private fun CropAndResizeWorkspaceCard(
 @Composable
 private fun OcrWorkspaceCard(
     ocrState: OcrUiState,
+    isPro: Boolean,
+    isDarkMode: Boolean,
+    adManager: PaperlyAdManager,
     onCopyText: (String) -> Unit,
     onShareText: (String) -> Unit,
     onSaveAsPdf: (String) -> Unit
@@ -975,6 +1007,14 @@ private fun OcrWorkspaceCard(
                         Text("Save as PDF", fontWeight = FontWeight.SemiBold)
                     }
                 }
+            }
+
+            if (!isPro) {
+                Spacer(modifier = Modifier.height(14.dp))
+                SponsoredNativeAdCard(
+                    adManager = adManager,
+                    isDarkMode = isDarkMode
+                )
             }
         }
     }
@@ -1250,7 +1290,11 @@ private fun UpscalerWorkspaceCard(
 @Composable
 private fun BgRemoverWorkspaceCard(
     state: ImageWorkspaceUiState,
-    onColorSelected: (Int?) -> Unit
+    onColorSelected: (Int?) -> Unit,
+    onBrushModeChanged: (Boolean) -> Unit,
+    onBrushRadiusChanged: (Float) -> Unit,
+    onStrokeCompleted: (BgBrushStroke) -> Unit,
+    onUndoStroke: () -> Unit
 ) {
     var showColorDialog by remember { mutableStateOf(false) }
 
@@ -1263,35 +1307,114 @@ private fun BgRemoverWorkspaceCard(
         0xFFE5E7EB.toInt() to "Light"
     )
 
-    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(270.dp)
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        BgTouchUpPreview(
+            cutoutBitmap = state.cutoutPreviewBitmap,
+            originalBitmap = state.previewBitmap,
+            selectedBgColorArgb = state.selectedBgColorArgb,
+            strokes = state.bgBrushStrokes,
+            isEraseMode = state.bgBrushModeIsErase,
+            brushRadiusNorm = state.bgBrushRadiusNorm,
+            onStrokeCompleted = onStrokeCompleted
+        )
+
+        // Compact Manual Touch-Up Bar
+        Card(
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                val chosenArgb = state.selectedBgColorArgb
-                if (chosenArgb == null) {
-                    TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
-                } else {
-                    Box(
+            Column(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column {
+                        Text("Manual Touch-Up", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = "Paint on preview to refine edges",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = onUndoStroke,
+                        enabled = state.bgBrushStrokes.isNotEmpty(),
+                        shape = RoundedCornerShape(10.dp),
                         modifier = Modifier
-                            .fillMaxSize()
-                            .background(Color(chosenArgb))
+                            .heightIn(min = 40.dp)
+                            .testTag("bg_touchup_undo_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Undo,
+                            contentDescription = "Undo touch-up stroke",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Undo")
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = state.bgBrushModeIsErase,
+                        onClick = { onBrushModeChanged(true) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.AutoFixOff,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = { Text("Erase") },
+                        modifier = Modifier.testTag("bg_erase_pill")
+                    )
+                    FilterChip(
+                        selected = !state.bgBrushModeIsErase,
+                        onClick = { onBrushModeChanged(false) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Filled.Brush,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        label = { Text("Restore") },
+                        modifier = Modifier.testTag("bg_restore_pill")
+                    )
+                    Spacer(modifier = Modifier.weight(1f))
+                    Text(
+                        text = "${(state.bgBrushRadiusNorm * 1000).roundToInt()}px",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
-                val displayBmp = state.cutoutPreviewBitmap ?: state.previewBitmap
-                if (displayBmp != null) {
-                    Image(
-                        bitmap = displayBmp.asImageBitmap(),
-                        contentDescription = "Subject cutout preview",
-                        contentScale = ContentScale.Fit,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        text = "Brush Size",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Slider(
+                        value = state.bgBrushRadiusNorm,
+                        onValueChange = onBrushRadiusChanged,
+                        valueRange = 0.015f..0.095f,
                         modifier = Modifier
-                            .fillMaxSize()
-                            .padding(12.dp)
+                            .weight(1f)
+                            .testTag("bg_brush_size_slider")
                     )
                 }
             }
@@ -1364,7 +1487,9 @@ private fun BgRemoverWorkspaceCard(
 @Composable
 private fun PassportSheetWorkspaceCard(
     state: ImageWorkspaceUiState,
-    onUpdatePassport: (Boolean?, Int?, Int?, Boolean?) -> Unit
+    onUpdatePassport: (Boolean?, Int?, Int?, Boolean?) -> Unit,
+    onFramingChanged: (Float, Float, Float) -> Unit,
+    onResetFraming: () -> Unit
 ) {
     var showColorDialog by remember { mutableStateOf(false) }
 
@@ -1376,8 +1501,14 @@ private fun PassportSheetWorkspaceCard(
         0xFFE5E7EB.toInt() to "Gray"
     )
 
+    val framingBitmap = if (state.passportRemoveBg && state.cutoutPreviewBitmap != null) {
+        state.cutoutPreviewBitmap
+    } else {
+        state.previewBitmap
+    }
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Live 35x45mm tile preview
+        // Interactive Drag & Pinch-to-Zoom 35x45mm Framing Preview
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1390,34 +1521,77 @@ private fun PassportSheetWorkspaceCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier
-                        .width(105.dp)
-                        .aspectRatio(35f / 45f)
-                ) {
-                    val tile = state.passportTilePreview ?: state.previewBitmap
-                    if (tile != null) {
-                        Image(
-                            bitmap = tile.asImageBitmap(),
-                            contentDescription = "35x45mm Passport Tile Preview",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.fillMaxSize()
-                        )
-                    }
-                }
+                PassportFramingPreview(
+                    bitmap = framingBitmap,
+                    removeBgEnabled = state.passportRemoveBg,
+                    bgColorArgb = state.passportBgColorArgb,
+                    zoom = state.passportZoom,
+                    offsetXNorm = state.passportOffsetXNorm,
+                    offsetYNorm = state.passportOffsetYNorm,
+                    onFramingChanged = onFramingChanged
+                )
 
                 Column(
                     modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("35×45 mm Standard", style = MaterialTheme.typography.titleMedium)
+                    Text("35×45 mm Framing", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "${state.passportCopyCount} photos laid out with crisp print cut guides.",
+                        text = "Drag to position • Pinch to zoom (${state.passportCopyCount} copies)",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                onFramingChanged(
+                                    state.passportOffsetXNorm,
+                                    state.passportOffsetYNorm,
+                                    (state.passportZoom - 0.15f).coerceIn(0.65f, 3.2f)
+                                )
+                            },
+                            contentPadding = PaddingValues(0.dp),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("passport_zoom_out")
+                        ) {
+                            Icon(Icons.Filled.Remove, contentDescription = "Zoom out", modifier = Modifier.size(18.dp))
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                onFramingChanged(
+                                    state.passportOffsetXNorm,
+                                    state.passportOffsetYNorm,
+                                    (state.passportZoom + 0.15f).coerceIn(0.65f, 3.2f)
+                                )
+                            },
+                            contentPadding = PaddingValues(0.dp),
+                            shape = CircleShape,
+                            modifier = Modifier
+                                .size(48.dp)
+                                .testTag("passport_zoom_in")
+                        ) {
+                            Icon(Icons.Filled.Add, contentDescription = "Zoom in", modifier = Modifier.size(18.dp))
+                        }
+
+                        OutlinedButton(
+                            onClick = onResetFraming,
+                            shape = RoundedCornerShape(10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            modifier = Modifier
+                                .height(48.dp)
+                                .testTag("passport_framing_reset")
+                        ) {
+                            Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Reset", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
                 }
             }
         }

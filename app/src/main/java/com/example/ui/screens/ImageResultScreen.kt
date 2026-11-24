@@ -63,6 +63,7 @@ import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ProcessedImageResult
+import com.example.ui.components.SplitBeforeAfterComparisonPreview
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.TransparencyCheckerboardCanvas
 import com.example.ui.theme.PaperlyEmerald
@@ -80,10 +81,19 @@ fun ImageResultScreen(
 ) {
     val context = LocalContext.current
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
-    LaunchedEffect(result?.filePath) {
+    LaunchedEffect(result?.filePath, result?.originalFilePath, result?.operationLabel) {
         previewBitmap = result?.filePath?.let { path ->
             viewModel.imageEngine.decodePreviewBitmap(path, maxEdge = 1600)
+        }
+        originalBitmap = if (result != null &&
+            result.operationLabel.startsWith("Upscaled") &&
+            !result.originalFilePath.isNullOrBlank()
+        ) {
+            viewModel.imageEngine.decodePreviewBitmap(result.originalFilePath, maxEdge = 1200)
+        } else {
+            null
         }
     }
 
@@ -139,9 +149,9 @@ fun ImageResultScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 680.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 14.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .widthIn(max = 600.dp),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 item {
                     Card(
@@ -152,8 +162,8 @@ fun ImageResultScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                                .padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
@@ -163,7 +173,7 @@ fun ImageResultScreen(
                                     imageVector = Icons.Filled.CheckCircle,
                                     contentDescription = "Ready",
                                     tint = PaperlyEmerald,
-                                    modifier = Modifier.size(26.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
@@ -180,27 +190,36 @@ fun ImageResultScreen(
                                 }
                             }
 
-                            Surface(
-                                shape = RoundedCornerShape(14.dp),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 180.dp, max = 300.dp)
-                            ) {
-                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                    if (result.format == ImageOutputFormat.PNG) {
-                                        TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
-                                    }
-                                    previewBitmap?.let { bmp ->
-                                        Image(
-                                            bitmap = bmp.asImageBitmap(),
-                                            contentDescription = "Processed image output",
-                                            contentScale = ContentScale.Fit,
-                                            modifier = Modifier
-                                                .fillMaxWidth()
-                                                .heightIn(max = 290.dp)
-                                                .clip(RoundedCornerShape(12.dp))
-                                        )
+                            val showSplitComparison = result.operationLabel.startsWith("Upscaled") &&
+                                originalBitmap != null && previewBitmap != null
+                            if (showSplitComparison) {
+                                SplitBeforeAfterComparisonPreview(
+                                    originalBitmap = originalBitmap,
+                                    enhancedBitmap = previewBitmap
+                                )
+                            } else {
+                                Surface(
+                                    shape = RoundedCornerShape(14.dp),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 140.dp, max = 220.dp)
+                                ) {
+                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                        if (result.format == ImageOutputFormat.PNG) {
+                                            TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
+                                        }
+                                        previewBitmap?.let { bmp ->
+                                            Image(
+                                                bitmap = bmp.asImageBitmap(),
+                                                contentDescription = "Processed image output",
+                                                contentScale = ContentScale.Fit,
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .heightIn(max = 216.dp)
+                                                    .clip(RoundedCornerShape(12.dp))
+                                            )
+                                        }
                                     }
                                 }
                             }

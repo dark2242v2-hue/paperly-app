@@ -22,6 +22,7 @@ import com.example.data.local.UserPreferencesRepository
 import com.example.data.model.AiImageAspectRatio
 import com.example.data.model.AiImageStyle
 import com.example.data.model.AiSummaryUiState
+import com.example.data.model.BgBrushStroke
 import com.example.data.model.CompressionLevel
 import com.example.data.model.CropAspectPreset
 import com.example.data.model.HomeToolCategory
@@ -32,6 +33,7 @@ import com.example.data.model.PdfToolType
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.ProcessedImageResult
+import com.example.data.model.RecentImageItem
 import com.example.data.model.SignaturePlacement
 import com.example.data.model.TargetSizeUnit
 import com.example.data.model.UpscaleTarget
@@ -91,6 +93,7 @@ data class ImageWorkspaceUiState(
     val previewBitmap: Bitmap? = null,
     val compressTargetValue: String = "100",
     val compressTargetUnit: TargetSizeUnit = TargetSizeUnit.KB,
+    val compressSelectedPresetLabel: String? = "100 KB",
     val outputFormat: ImageOutputFormat = ImageOutputFormat.JPG,
     val cropLeftNorm: Float = 0.05f,
     val cropTopNorm: Float = 0.05f,
@@ -107,13 +110,19 @@ data class ImageWorkspaceUiState(
     val aiAspectRatio: AiImageAspectRatio = AiImageAspectRatio.SQUARE,
     val upscaleTarget: UpscaleTarget = UpscaleTarget.HD_2X,
     val cutoutPngPath: String? = null,
+    val alignedOriginalPath: String? = null,
     val cutoutPreviewBitmap: Bitmap? = null,
     val selectedBgColorArgb: Int? = null,
+    val bgBrushModeIsErase: Boolean = true,
+    val bgBrushRadiusNorm: Float = 0.045f,
+    val bgBrushStrokes: List<BgBrushStroke> = emptyList(),
     val passportRemoveBg: Boolean = true,
     val passportBgColorArgb: Int = 0xFFFFFFFF.toInt(),
     val passportCopyCount: Int = 6,
     val passportExportAsPdf: Boolean = true,
-    val passportTilePreview: Bitmap? = null,
+    val passportZoom: Float = 1.0f,
+    val passportOffsetXNorm: Float = 0f,
+    val passportOffsetYNorm: Float = 0f,
     val processing: ProcessingState = ProcessingState()
 )
 
@@ -181,6 +190,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _shouldRequestInAppReview = MutableStateFlow(false)
     val shouldRequestInAppReview: StateFlow<Boolean> = _shouldRequestInAppReview.asStateFlow()
 
+    private val _recentImages = MutableStateFlow<List<RecentImageItem>>(emptyList())
+    val recentImages: StateFlow<List<RecentImageItem>> = _recentImages.asStateFlow()
+
     private val _isRefreshingFiles = MutableStateFlow(false)
     val isRefreshingFiles: StateFlow<Boolean> = _isRefreshingFiles.asStateFlow()
 
@@ -239,6 +251,32 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             }
         }
         refreshFilesCache(force = false)
+        refreshRecentImages()
+    }
+
+    fun refreshRecentImages() {
+        viewModelScope.launch(Dispatchers.IO) {
+            runCatching {
+                imageEngine.listRecentImages(limit = 15)
+            }.onSuccess { list ->
+                _recentImages.value = list
+            }
+        }
+    }
+
+    fun openRecentImage(item: RecentImageItem) {
+        _processedImageResult.value = ProcessedImageResult(
+            displayName = item.displayName,
+            filePath = item.filePath,
+            format = item.format,
+            width = item.width,
+            height = item.height,
+            sizeBytes = item.sizeBytes,
+            originalSizeBytes = null,
+            originalWidth = null,
+            originalHeight = null,
+            operationLabel = "Saved Image"
+        )
     }
 
     fun refreshFilesCache(force: Boolean = false) {
@@ -1010,8 +1048,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             _imageWorkspace.update {
                 it.copy(
                     cutoutPngPath = null,
+                    alignedOriginalPath = null,
                     cutoutPreviewBitmap = null,
-                    passportTilePreview = null,
+                    bgBrushStrokes = emptyList(),
+                    passportZoom = 1.0f,
+                    passportOffsetXNorm = 0f,
+                    passportOffsetYNorm = 0f,
                     processing = ProcessingState(true, 0.25f, "Loading image...")
                 )
             }
@@ -1044,9 +1086,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     ImageToolType.BG_REMOVER -> runBackgroundSegmentation(info)
                     ImageToolType.PASSPORT_SHEET -> {
                         if (_imageWorkspace.value.passportRemoveBg) {
-                            runBackgroundSegmentation(info, updatePassportTile = true)
-                        } else {
-                            refreshPassportTilePreview()
+                            runBackgroundSegmentation(info)
                         }
                     }
                     else -> Unit
@@ -1065,16 +1105,31 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     fun updateImageCompressionConfig(
         targetValue: String? = null,
         unit: TargetSizeUnit? = null,
-        format: ImageOutputFormat? = null
+        format: ImageOutputFormat? = null,
+        selectedPresetLabel: String? = null,
+        clearPreset: Boolean = false
     ) {
         _imageWorkspace.update { state ->
             val cleaned = targetValue?.filter { it.isDigit() || it == '.' }?.take(7) ?: state.compressTargetValue
+            val nextPreset = when {
+                clearPreset -> null
+                selectedPresetLabel != null -> selectedPresetLabel
+                else -> state.compressSelectedPresetLabel
+            }
             state.copy(
                 compressTargetValue = cleaned,
                 compressTargetUnit = unit ?: state.compressTargetUnit,
+                compressSelectedPresetLabel = nextPreset,
                 outputFormat = format ?: state.outputFormat,
                 processing = state.processing.copy(errorMessage = null)
             )
+        }
+    }
+
+    fun clearCompressionPresetSelection() {
+        _imageWorkspace.update { state ->
+            if (state.compressSelectedPresetLabel == null) state
+            else state.copy(compressSelectedPresetLabel = null)
         }
     }
 
@@ -1099,6 +1154,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 }
                 _processedImageResult.value = res
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1265,6 +1321,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 }
                 _processedImageResult.value = res
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1368,6 +1425,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 }
                 _processedImageResult.value = result
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1408,6 +1466,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 }
                 _processedImageResult.value = result
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1420,26 +1479,24 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     private suspend fun runBackgroundSegmentation(
-        info: PickedImageInfo,
-        updatePassportTile: Boolean = false
+        info: PickedImageInfo
     ) {
         _imageWorkspace.update {
             it.copy(processing = ProcessingState(true, 0.25f, "Isolating subject with ML Kit..."))
         }
         try {
-            val cutoutPath = imageEngine.removeBackground(info) { p, msg ->
+            val (cutoutPath, alignedOrigPath) = imageEngine.removeBackground(info) { p, msg ->
                 _imageWorkspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
             }
             val cutoutPreview = imageEngine.decodePreviewBitmap(cutoutPath, 1100)
             _imageWorkspace.update {
                 it.copy(
                     cutoutPngPath = cutoutPath,
+                    alignedOriginalPath = alignedOrigPath,
                     cutoutPreviewBitmap = cutoutPreview,
+                    bgBrushStrokes = emptyList(),
                     processing = ProcessingState()
                 )
-            }
-            if (updatePassportTile) {
-                refreshPassportTilePreview()
             }
         } catch (e: CancellationException) {
             throw e
@@ -1447,14 +1504,13 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             _imageWorkspace.update {
                 it.copy(
                     cutoutPngPath = null,
+                    alignedOriginalPath = null,
                     cutoutPreviewBitmap = null,
+                    bgBrushStrokes = emptyList(),
                     processing = ProcessingState(
                         errorMessage = e.localizedMessage ?: "Could not isolate subject automatically."
                     )
                 )
-            }
-            if (updatePassportTile) {
-                refreshPassportTilePreview()
             }
         }
     }
@@ -1463,6 +1519,28 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _imageWorkspace.update { state ->
             val fmt = if (colorArgb == null) ImageOutputFormat.PNG else ImageOutputFormat.JPG
             state.copy(selectedBgColorArgb = colorArgb, outputFormat = fmt)
+        }
+    }
+
+    fun setBgBrushMode(isErase: Boolean) {
+        _imageWorkspace.update { it.copy(bgBrushModeIsErase = isErase) }
+    }
+
+    fun setBgBrushRadius(radiusNorm: Float) {
+        _imageWorkspace.update { it.copy(bgBrushRadiusNorm = radiusNorm.coerceIn(0.015f, 0.095f)) }
+    }
+
+    fun addBgBrushStroke(stroke: BgBrushStroke) {
+        if (stroke.points.isEmpty()) return
+        _imageWorkspace.update { state ->
+            state.copy(bgBrushStrokes = state.bgBrushStrokes + stroke)
+        }
+    }
+
+    fun undoBgBrushStroke() {
+        _imageWorkspace.update { state ->
+            if (state.bgBrushStrokes.isEmpty()) state
+            else state.copy(bgBrushStrokes = state.bgBrushStrokes.dropLast(1))
         }
     }
 
@@ -1477,12 +1555,15 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             try {
                 val res = imageEngine.exportCutoutResult(
                     cutoutPngPath = cutoutPath,
+                    alignedOriginalPath = state.alignedOriginalPath,
+                    strokes = state.bgBrushStrokes,
                     originalInfo = info,
                     backgroundColorArgb = state.selectedBgColorArgb,
                     format = state.outputFormat
                 )
                 _processedImageResult.value = res
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1514,27 +1595,29 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             val state = _imageWorkspace.value
             val info = state.pickedImage ?: return@launch
             if (state.passportRemoveBg && !prevRemoveBg && state.cutoutPngPath == null) {
-                runBackgroundSegmentation(info, updatePassportTile = true)
-            } else {
-                refreshPassportTilePreview()
+                runBackgroundSegmentation(info)
             }
         }
     }
 
-    private suspend fun refreshPassportTilePreview() {
-        val state = _imageWorkspace.value
-        val info = state.pickedImage ?: return
-        val srcPath = if (state.passportRemoveBg && state.cutoutPngPath != null) {
-            state.cutoutPngPath
-        } else {
-            info.localPath
+    fun updatePassportFraming(offsetXNorm: Float, offsetYNorm: Float, zoom: Float) {
+        _imageWorkspace.update {
+            it.copy(
+                passportZoom = zoom.coerceIn(0.65f, 3.2f),
+                passportOffsetXNorm = offsetXNorm.coerceIn(-0.65f, 0.65f),
+                passportOffsetYNorm = offsetYNorm.coerceIn(-0.65f, 0.65f)
+            )
         }
-        val tile = imageEngine.renderPassportTilePreview(
-            sourceOrCutoutPath = srcPath,
-            removeBgEnabled = state.passportRemoveBg,
-            backgroundColorArgb = state.passportBgColorArgb
-        )
-        _imageWorkspace.update { it.copy(passportTilePreview = tile) }
+    }
+
+    fun resetPassportFraming() {
+        _imageWorkspace.update {
+            it.copy(
+                passportZoom = 1.0f,
+                passportOffsetXNorm = 0f,
+                passportOffsetYNorm = 0f
+            )
+        }
     }
 
     fun generatePassportSheet(onResultReady: () -> Unit) {
@@ -1557,6 +1640,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     backgroundColorArgb = state.passportBgColorArgb,
                     copyCount = state.passportCopyCount,
                     exportAsPdf = state.passportExportAsPdf,
+                    zoom = state.passportZoom,
+                    offsetXNorm = state.passportOffsetXNorm,
+                    offsetYNorm = state.passportOffsetYNorm,
                     pdfsDir = pdfEngine.pdfsDir
                 ) { p, msg ->
                     _imageWorkspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
@@ -1564,6 +1650,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val pdfId = pdfRecord?.let { recordRepository.insert(it) }
                 _processedImageResult.value = imgResult.copy(secondaryPdfRecordId = pdfId)
                 _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                refreshRecentImages()
                 onResultReady()
             } catch (e: CancellationException) {
                 throw e
@@ -1580,6 +1667,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             try {
                 imageEngine.saveImageToGallery(res.filePath, res.displayName, res.format)
+                refreshRecentImages()
                 _snackbarMessage.value = "Saved to Gallery (Pictures/Paperly)"
             } catch (e: CancellationException) {
                 throw e
@@ -1624,6 +1712,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     fun clearAllLocalFiles() {
         viewModelScope.launch {
             recordRepository.clearAll(pdfEngine.pdfsDir, pdfEngine.cacheDir)
+            imageEngine.imagesDir.listFiles()?.forEach { runCatching { it.delete() } }
+            _recentImages.value = emptyList()
             _snackbarMessage.value = "Cleared local Paperly files"
         }
     }

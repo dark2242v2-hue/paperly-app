@@ -1,5 +1,7 @@
 package com.example.ui.screens
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -51,11 +53,14 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -72,6 +77,9 @@ import com.example.data.local.PdfRecordEntity
 import com.example.data.model.HomeToolCategory
 import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
+import com.example.data.model.RecentImageItem
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import com.example.ui.theme.PaperlyAmber
 import com.example.ui.theme.PaperlyAmberSoft
 import com.example.ui.theme.PaperlyEmerald
@@ -100,10 +108,12 @@ private data class HomeToolItem(
 fun HomeScreen(
     selectedCategory: HomeToolCategory,
     recentRecords: List<PdfRecordEntity>,
+    recentImages: List<RecentImageItem>,
     onCategorySelected: (HomeToolCategory) -> Unit,
     onToolSelected: (PdfToolType) -> Unit,
     onImageToolSelected: (ImageToolType) -> Unit,
     onRecentSelected: (PdfRecordEntity) -> Unit,
+    onRecentImageSelected: (RecentImageItem) -> Unit,
     onSeeAllFiles: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -419,82 +429,159 @@ fun HomeScreen(
                 }
             }
 
-            // Recent PDFs Horizontal Carousel
+            // Context-aware Recent Files Carousel (Recent PDFs on PDF tab, Recent Images on Image tab)
             item {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 20.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = stringResource(R.string.recent_pdfs_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        if (recentRecords.isNotEmpty()) {
-                            TextButton(
-                                onClick = onSeeAllFiles,
-                                modifier = Modifier
-                                    .height(48.dp)
-                                    .testTag("recent_see_all_button")
-                            ) {
-                                Text(stringResource(R.string.see_all))
-                            }
-                        }
-                    }
-
-                    if (recentRecords.isEmpty()) {
-                        Card(
+                if (selectedCategory == HomeToolCategory.PDF) {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 20.dp)
-                                .testTag("recent_empty_card"),
-                            shape = RoundedCornerShape(18.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                                .padding(horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(14.dp)
-                            ) {
-                                Image(
-                                    painter = painterResource(id = R.drawable.img_empty_documents),
-                                    contentDescription = "Empty documents illustration",
+                            Text(
+                                text = stringResource(R.string.recent_pdfs_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                            if (recentRecords.isNotEmpty()) {
+                                TextButton(
+                                    onClick = onSeeAllFiles,
                                     modifier = Modifier
-                                        .size(64.dp)
-                                        .clip(RoundedCornerShape(12.dp)),
-                                    contentScale = ContentScale.Crop
-                                )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = stringResource(R.string.recent_empty_title),
-                                        style = MaterialTheme.typography.titleSmall,
-                                        color = MaterialTheme.colorScheme.onSurface
+                                        .height(48.dp)
+                                        .testTag("recent_see_all_button")
+                                ) {
+                                    Text(stringResource(R.string.see_all))
+                                }
+                            }
+                        }
+
+                        if (recentRecords.isEmpty()) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp)
+                                    .testTag("recent_empty_card"),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Image(
+                                        painter = painterResource(id = R.drawable.img_empty_documents),
+                                        contentDescription = "Empty documents illustration",
+                                        modifier = Modifier
+                                            .size(64.dp)
+                                            .clip(RoundedCornerShape(12.dp)),
+                                        contentScale = ContentScale.Crop
                                     )
-                                    Spacer(modifier = Modifier.height(4.dp))
-                                    Text(
-                                        text = stringResource(R.string.recent_empty_subtitle),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = stringResource(R.string.recent_empty_title),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = stringResource(R.string.recent_empty_subtitle),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("recent_pdfs_row")
+                            ) {
+                                items(recentRecords.take(10), key = { it.id }) { record ->
+                                    RecentPdfCard(
+                                        record = record,
+                                        onClick = { onRecentSelected(record) }
                                     )
                                 }
                             }
                         }
-                    } else {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 20.dp),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            modifier = Modifier.testTag("recent_pdfs_row")
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 20.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            items(recentRecords.take(10), key = { it.id }) { record ->
-                                RecentPdfCard(
-                                    record = record,
-                                    onClick = { onRecentSelected(record) }
-                                )
+                            Text(
+                                text = stringResource(R.string.recent_images_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onBackground
+                            )
+                        }
+
+                        if (recentImages.isEmpty()) {
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 20.dp)
+                                    .testTag("recent_images_empty_card"),
+                                shape = RoundedCornerShape(18.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(56.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(PaperlyIndigoTint),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Image,
+                                            contentDescription = null,
+                                            tint = PaperlyIndigo,
+                                            modifier = Modifier.size(28.dp)
+                                        )
+                                    }
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = stringResource(R.string.recent_images_empty_title),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                            text = stringResource(R.string.recent_images_empty_subtitle),
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("recent_images_row")
+                            ) {
+                                items(recentImages.take(10), key = { it.filePath }) { img ->
+                                    RecentImageCard(
+                                        item = img,
+                                        onClick = { onRecentImageSelected(img) }
+                                    )
+                                }
                             }
                         }
                     }
@@ -703,6 +790,99 @@ private fun RecentPdfCard(
 
             Text(
                 text = "${record.pageCount}p • ${formatFileSize(record.sizeBytes)} • ${formatTimestamp(record.createdAtMillis)}",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+    }
+}
+
+@Composable
+private fun RecentImageCard(
+    item: RecentImageItem,
+    onClick: () -> Unit
+) {
+    val thumbBitmap by produceState<Bitmap?>(initialValue = null, key1 = item.filePath) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(item.filePath, bounds)
+                var sample = 1
+                while (bounds.outWidth / sample > 260 || bounds.outHeight / sample > 260) {
+                    sample *= 2
+                }
+                BitmapFactory.decodeFile(
+                    item.filePath,
+                    BitmapFactory.Options().apply { inSampleSize = sample }
+                )
+            }.getOrNull()
+        }
+    }
+
+    Card(
+        onClick = onClick,
+        modifier = Modifier
+            .width(184.dp)
+            .testTag("recent_image_card"),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(82.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (thumbBitmap != null) {
+                    Image(
+                        bitmap = thumbBitmap!!.asImageBitmap(),
+                        contentDescription = item.displayName,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Filled.Image,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(26.dp)
+                    )
+                }
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.65f),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = item.format.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                    )
+                }
+            }
+
+            Text(
+                text = item.displayName,
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+
+            Text(
+                text = "${item.width}×${item.height} • ${formatFileSize(item.sizeBytes)} • ${formatTimestamp(item.createdAtMillis)}",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
