@@ -25,6 +25,11 @@ data class GeneratedAiImagePayload(
     val modelUsed: String
 )
 
+private class PollinationsHttpException(
+    val statusCode: Int,
+    message: String
+) : IllegalStateException(message)
+
 class AiImageRepository {
 
     suspend fun generateImage(
@@ -47,30 +52,64 @@ class AiImageRepository {
             AiImageAspectRatio.CLASSIC_PORTRAIT -> 896 to 1152
         }
         val requestHeight = height + WATERMARK_CROP_BOTTOM_PX
+        val seed = Random.nextInt(100_000, 9_999_999)
 
-        var lastError: Exception? = null
-        repeat(2) { attempt ->
-            val seed = Random.nextInt(100_000, 9_999_999)
-            val endpointUrl =
-                "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$requestHeight&nologo=true&seed=$seed"
+        val primaryUrl =
+            "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$requestHeight&model=flux&nologo=true&seed=$seed"
+
+        try {
+            return@withTimeout downloadImagePayload(primaryUrl, modelName = "flux")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: PollinationsHttpException) {
+            Log.w(TAG, "Pollinations flux failed with HTTP ${e.statusCode}, retrying with turbo", e)
+            if (e.statusCode in setOf(402, 429, 503)) {
+                delay(450L)
+                val fallbackUrl =
+                    "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$requestHeight&model=turbo&nologo=true&seed=$seed"
+                try {
+                    return@withTimeout downloadImagePayload(fallbackUrl, modelName = "turbo")
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (fallbackErr: PollinationsHttpException) {
+                    Log.w(TAG, "Pollinations turbo fallback failed with HTTP ${fallbackErr.statusCode}", fallbackErr)
+                    if (fallbackErr.statusCode in setOf(402, 429, 503)) {
+                        throw IllegalStateException("AI image server is busy right now — please tap Generate again in a moment")
+                    }
+                    throw fallbackErr
+                } catch (fallbackErr: Exception) {
+                    Log.w(TAG, "Pollinations turbo fallback failed", fallbackErr)
+                    throw IllegalStateException("AI image server is busy right now — please tap Generate again in a moment")
+                }
+            }
+            throw e
+        } catch (e: Exception) {
+            Log.w(TAG, "Pollinations flux attempt failed, retrying with turbo", e)
+            delay(500L)
+            val fallbackUrl =
+                "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$requestHeight&model=turbo&nologo=true&seed=$seed"
             try {
-                return@withTimeout downloadImagePayload(endpointUrl)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                lastError = e
-                Log.w(TAG, "Pollinations generation attempt ${attempt + 1} failed", e)
-                if (attempt == 0) delay(700L)
+                return@withTimeout downloadImagePayload(fallbackUrl, modelName = "turbo")
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (fallbackErr: PollinationsHttpException) {
+                if (fallbackErr.statusCode in setOf(402, 429, 503)) {
+                    throw IllegalStateException("AI image server is busy right now — please tap Generate again in a moment")
+                }
+                throw fallbackErr
+            } catch (fallbackErr: Exception) {
+                throw IllegalStateException(
+                    fallbackErr.localizedMessage
+                        ?: "AI image server is busy right now — please tap Generate again in a moment"
+                )
             }
         }
-
-        throw IllegalStateException(
-            lastError?.localizedMessage
-                ?: "Could not generate AI image right now. Please check your internet connection and try again."
-        )
     }
 
-    private suspend fun downloadImagePayload(endpointUrl: String): GeneratedAiImagePayload =
+    private suspend fun downloadImagePayload(
+        endpointUrl: String,
+        modelName: String
+    ): GeneratedAiImagePayload =
         withContext(Dispatchers.IO) {
             val url = URL(endpointUrl)
             val connection = (url.openConnection() as HttpsURLConnection).apply {
@@ -78,14 +117,21 @@ class AiImageRepository {
                 instanceFollowRedirects = true
                 connectTimeout = 20_000
                 readTimeout = 45_000
-                setRequestProperty("User-Agent", "PaperlyAndroidApp/1.0")
-                setRequestProperty("Accept", "image/jpeg,image/png,image/*")
+                setRequestProperty(
+                    "User-Agent",
+                    "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
+                )
+                setRequestProperty("Referer", "https://paperly.app")
+                setRequestProperty("Accept", "image/jpeg,image/png,image/webp,image/*;q=0.8")
             }
 
             try {
                 val statusCode = connection.responseCode
                 if (statusCode !in 200..299) {
-                    throw IllegalStateException("AI image generator returned HTTP $statusCode. Please try again.")
+                    throw PollinationsHttpException(
+                        statusCode = statusCode,
+                        message = "AI image generator returned HTTP $statusCode. Please try again."
+                    )
                 }
 
                 val contentType = connection.contentType.orEmpty()
@@ -126,7 +172,7 @@ class AiImageRepository {
                 GeneratedAiImagePayload(
                     bytes = finalBytes,
                     mimeType = detectedMime,
-                    modelUsed = "pollinations"
+                    modelUsed = "pollinations-$modelName"
                 )
             } finally {
                 connection.disconnect()
