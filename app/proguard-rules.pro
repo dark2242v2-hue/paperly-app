@@ -67,3 +67,11 @@
 -dontwarn javax.imageio.**
 -dontwarn javax.xml.**
 -dontwarn org.w3c.dom.**
+
+# ------------------------------------------------------------------------------
+# Google ML Kit Document Scanner, CameraX & Play In-App Review
+# ------------------------------------------------------------------------------
+-keep class com.google.mlkit.vision.documentscanner.** { *; }
+-dontwarn com.google.mlkit.**
+-keep class com.google.android.play.core.review.** { *; }
+-dontwarn com.google.android.play.core.**

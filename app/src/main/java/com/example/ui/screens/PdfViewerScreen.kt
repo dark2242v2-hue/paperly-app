@@ -20,18 +20,29 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.MergeType
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Compress
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -49,14 +60,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
+import com.example.data.model.PdfToolType
+import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -64,6 +80,7 @@ import com.example.ui.viewmodel.PaperlyViewModel
 fun PdfViewerScreen(
     recordId: Long,
     viewModel: PaperlyViewModel,
+    onQuickAction: (PdfToolType, PdfRecordEntity) -> Unit,
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
@@ -140,6 +157,81 @@ fun PdfViewerScreen(
                     containerColor = MaterialTheme.colorScheme.surface
                 )
             )
+        },
+        bottomBar = {
+            record?.let { rec ->
+                if (rec.operationTag != "Locked") {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surface,
+                        tonalElevation = 2.dp
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.navigationBars)
+                        ) {
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item {
+                                    FilledTonalButton(
+                                        onClick = { onQuickAction(PdfToolType.AI_SUMMARIZE, rec) },
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("viewer_quick_ai_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("AI Summarize")
+                                    }
+                                }
+                                item {
+                                    FilledTonalButton(
+                                        onClick = { onQuickAction(PdfToolType.COMPRESS, rec) },
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("viewer_quick_compress_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Compress, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Compress")
+                                    }
+                                }
+                                item {
+                                    FilledTonalButton(
+                                        onClick = { onQuickAction(PdfToolType.MERGE, rec) },
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("viewer_quick_merge_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.AutoMirrored.Filled.MergeType, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Merge")
+                                    }
+                                }
+                                item {
+                                    FilledTonalButton(
+                                        onClick = { onQuickAction(PdfToolType.LOCK, rec) },
+                                        modifier = Modifier
+                                            .height(48.dp)
+                                            .testTag("viewer_quick_lock_button"),
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Icon(Icons.Filled.Lock, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text("Lock PDF")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     ) { innerPadding ->
         val current = record
@@ -151,6 +243,53 @@ fun PdfViewerScreen(
                 contentAlignment = Alignment.Center
             ) {
                 CircularProgressIndicator()
+            }
+        } else if (current.operationTag == "Locked") {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(22.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.widthIn(max = 420.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(24.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(RoundedCornerShape(16.dp))
+                                .background(PaperlyEmerald.copy(alpha = 0.14f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.Lock,
+                                contentDescription = "Locked PDF",
+                                tint = PaperlyEmerald,
+                                modifier = Modifier.size(28.dp)
+                            )
+                        }
+                        Text(
+                            text = "Password-Protected PDF",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "This document is encrypted with 128-bit password protection. Save or share it, then open in a PDF reader with your password.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
             }
         } else {
             Box(

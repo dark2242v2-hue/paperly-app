@@ -28,6 +28,8 @@ class UserPreferencesRepository(private val context: Context) {
         val AI_UNLOCKED_UNTIL = longPreferencesKey("ai_unlocked_until")
         val COMPLETED_CORE_PDF_OPS = intPreferencesKey("completed_core_pdf_ops")
         val AI_SUMMARY_CREDITS = intPreferencesKey("ai_summary_credits")
+        val SAVED_PDF_COUNT = intPreferencesKey("saved_pdf_count")
+        val IN_APP_REVIEW_REQUESTED = booleanPreferencesKey("in_app_review_requested")
     }
 
     val isDarkMode: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
@@ -111,5 +113,19 @@ class UserPreferencesRepository(private val context: Context) {
             val current = it[Keys.COMPLETED_CORE_PDF_OPS] ?: 0
             it[Keys.COMPLETED_CORE_PDF_OPS] = current + 1
         }
+    }
+
+    suspend fun incrementSavedPdfCountAndShouldPromptReview(): Boolean {
+        var shouldTriggerReview = false
+        context.paperlyDataStore.edit {
+            val newCount = (it[Keys.SAVED_PDF_COUNT] ?: 0) + 1
+            it[Keys.SAVED_PDF_COUNT] = newCount
+            val alreadyRequested = it[Keys.IN_APP_REVIEW_REQUESTED] ?: false
+            if (newCount >= 3 && !alreadyRequested) {
+                it[Keys.IN_APP_REVIEW_REQUESTED] = true
+                shouldTriggerReview = true
+            }
+        }
+        return shouldTriggerReview
     }
 }

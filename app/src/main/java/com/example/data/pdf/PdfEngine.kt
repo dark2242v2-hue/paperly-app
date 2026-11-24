@@ -31,6 +31,9 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.PDPage
 import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
+import com.tom_roush.pdfbox.pdmodel.encryption.AccessPermission
+import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
+import com.tom_roush.pdfbox.pdmodel.encryption.StandardProtectionPolicy
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import com.tom_roush.pdfbox.text.PDFTextStripper
@@ -86,6 +89,34 @@ class PdfEngine(private val context: Context) {
             localPath = tempFile.absolutePath,
             pageCount = pageCount,
             sizeBytes = tempFile.length()
+        )
+    }
+
+    suspend fun importExternalPdfRecord(uri: Uri): PdfRecordEntity = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        val displayName = resolveDisplayName(uri) ?: "Shared_Document.pdf"
+        val cleanName = ensurePdfExtension(sanitizeFileName(displayName))
+        val outFile = uniqueOutputFile(cleanName)
+
+        context.contentResolver.openInputStream(uri)?.use { input ->
+            FileOutputStream(outFile).use { output ->
+                input.copyTo(output)
+            }
+        } ?: throw IllegalStateException("Unable to read opened PDF file.")
+
+        val pageCount = countPages(outFile)
+        if (pageCount <= 0) {
+            outFile.delete()
+            throw IllegalStateException("Opened file is not a valid PDF or is password-protected.")
+        }
+
+        PdfRecordEntity(
+            displayName = outFile.name,
+            filePath = outFile.absolutePath,
+            pageCount = pageCount,
+            sizeBytes = outFile.length(),
+            originalSizeBytes = null,
+            operationTag = "Opened"
         )
     }
 
@@ -341,7 +372,9 @@ class PdfEngine(private val context: Context) {
         file: PickedPdfInfo,
         signatureBitmap: Bitmap,
         targetPageOneBased: Int,
-        placement: SignaturePlacement,
+        centerXNorm: Float = 0.72f,
+        centerYNorm: Float = 0.82f,
+        widthFraction: Float = 0.28f,
         outputName: String,
         onProgress: (Float, String) -> Unit
     ): PdfRecordEntity = withContext(Dispatchers.IO) {
@@ -360,24 +393,24 @@ class PdfEngine(private val context: Context) {
             val page = doc.getPage(pageIdx)
             val box = page.cropBox ?: page.mediaBox ?: PDRectangle.A4
 
-            onProgress(0.55f, "Embedding vector signature...")
+            onProgress(0.55f, "Embedding signature...")
             val pdSignature = LosslessFactory.createFromImage(doc, signatureBitmap)
-            val targetW = (box.width * 0.28f).coerceIn(110f, 220f)
             val aspect = signatureBitmap.height.toFloat() / max(1, signatureBitmap.width).toFloat()
-            val targetH = targetW * aspect
-            val margin = 36f
-
-            val (x, y) = when (placement) {
-                SignaturePlacement.BOTTOM_RIGHT ->
-                    (box.upperRightX - targetW - margin) to (box.lowerLeftY + margin)
-                SignaturePlacement.BOTTOM_CENTER ->
-                    (box.lowerLeftX + (box.width - targetW) / 2f) to (box.lowerLeftY + margin)
-                SignaturePlacement.BOTTOM_LEFT ->
-                    (box.lowerLeftX + margin) to (box.lowerLeftY + margin)
-                SignaturePlacement.CENTER ->
-                    (box.lowerLeftX + (box.width - targetW) / 2f) to
-                        (box.lowerLeftY + (box.height - targetH) / 2f)
+            var targetW = box.width * widthFraction.coerceIn(0.10f, 0.78f)
+            var targetH = targetW * aspect
+            val maxH = box.height * 0.65f
+            if (targetH > maxH) {
+                targetH = maxH
+                targetW = targetH / max(0.01f, aspect)
             }
+
+            val minX = box.lowerLeftX
+            val maxX = (box.upperRightX - targetW).coerceAtLeast(minX)
+            val minY = box.lowerLeftY
+            val maxY = (box.upperRightY - targetH).coerceAtLeast(minY)
+
+            val x = (box.lowerLeftX + centerXNorm * box.width - targetW / 2f).coerceIn(minX, maxX)
+            val y = (box.lowerLeftY + (1f - centerYNorm) * box.height - targetH / 2f).coerceIn(minY, maxY)
 
             PDPageContentStream(
                 doc,
@@ -401,6 +434,52 @@ class PdfEngine(private val context: Context) {
             sizeBytes = outFile.length(),
             originalSizeBytes = file.sizeBytes,
             operationTag = "Signed"
+        )
+    }
+
+    suspend fun lockPdf(
+        file: PickedPdfInfo,
+        password: String,
+        outputName: String,
+        onProgress: (Float, String) -> Unit
+    ): PdfRecordEntity = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        require(password.length >= 4) { "Enter a password with at least 4 characters." }
+        val srcFile = File(file.localPath)
+        require(srcFile.exists()) { "Source PDF not found." }
+
+        val baseName = outputName.ifBlank {
+            file.displayName.removeSuffix(".pdf") + "_locked"
+        }
+        val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
+
+        onProgress(0.20f, "Loading PDF structure...")
+        var totalPages = file.pageCount
+        try {
+            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                totalPages = doc.numberOfPages
+                onProgress(0.55f, "Encrypting with 128-bit password protection...")
+                val accessPermission = AccessPermission()
+                val policy = StandardProtectionPolicy(password, password, accessPermission).apply {
+                    encryptionKeyLength = 128
+                }
+                doc.protect(policy)
+                onProgress(0.88f, "Saving locked PDF...")
+                doc.save(outFile)
+            }
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is already password-protected.", e)
+        }
+
+        onProgress(1f, "PDF locked")
+        PdfRecordEntity(
+            displayName = outFile.name,
+            filePath = outFile.absolutePath,
+            pageCount = totalPages,
+            sizeBytes = outFile.length(),
+            originalSizeBytes = file.sizeBytes,
+            operationTag = "Locked"
         )
     }
 
@@ -636,14 +715,40 @@ class PdfEngine(private val context: Context) {
         } ?: throw IllegalStateException("Could not open destination for saving.")
     }
 
-    fun createScanTempUri(): Uri {
+    fun createScanTempFile(): File {
         val scansDir = File(context.cacheDir, "scans").apply { mkdirs() }
-        val file = File(scansDir, "scan_${System.currentTimeMillis()}.jpg")
+        return File(scansDir, "scan_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(6)}.jpg")
+    }
+
+    fun fileToProviderUri(file: File): Uri {
         return androidx.core.content.FileProvider.getUriForFile(
             context,
             "${context.packageName}.fileprovider",
             file
         )
+    }
+
+    fun createScanTempUri(): Uri {
+        return fileToProviderUri(createScanTempFile())
+    }
+
+    suspend fun importScanUris(uris: List<Uri>): List<Uri> = withContext(Dispatchers.IO) {
+        uris.mapNotNull { sourceUri ->
+            runCatching {
+                val destFile = createScanTempFile()
+                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                } ?: return@runCatching null
+                if (destFile.length() <= 0L) {
+                    destFile.delete()
+                    null
+                } else {
+                    fileToProviderUri(destFile)
+                }
+            }.getOrNull()
+        }
     }
 
     fun getShareUri(filePath: String): Uri {

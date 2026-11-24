@@ -55,6 +55,11 @@ data class WorkspaceUiState(
     val scanEnhanceContrast: Boolean = true,
     val signTargetPage: Int = 1,
     val signPlacement: SignaturePlacement = SignaturePlacement.BOTTOM_RIGHT,
+    val signCenterXNorm: Float = 0.72f,
+    val signCenterYNorm: Float = 0.80f,
+    val signWidthFraction: Float = 0.28f,
+    val lockPassword: String = "",
+    val lockConfirmPassword: String = "",
     val outputFileName: String = "",
     val previewThumbnail: Bitmap? = null,
     val processing: ProcessingState = ProcessingState()
@@ -64,6 +69,7 @@ data class ProSheetUiState(
     val visible: Boolean = false,
     val triggeredByTool: PdfToolType? = null,
     val navigateOnUnlock: Boolean = true,
+    val preloadedRecord: PdfRecordEntity? = null,
     val isLoadingRewardedAd: Boolean = false,
     val rewardedError: String? = null
 )
@@ -151,6 +157,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _snackbarMessage = MutableStateFlow<String?>(null)
     val snackbarMessage: StateFlow<String?> = _snackbarMessage.asStateFlow()
 
+    private val _shouldRequestInAppReview = MutableStateFlow(false)
+    val shouldRequestInAppReview: StateFlow<Boolean> = _shouldRequestInAppReview.asStateFlow()
+
     private var aiJob: Job? = null
 
     fun toggleDarkMode() {
@@ -211,7 +220,11 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _snackbarMessage.value = message
     }
 
-    fun prepareToolWorkspace(tool: PdfToolType) {
+    fun consumeInAppReviewTrigger() {
+        _shouldRequestInAppReview.value = false
+    }
+
+    fun prepareToolWorkspace(tool: PdfToolType, preloadedRecord: PdfRecordEntity? = null) {
         val currentCompression = defaultCompression.value
         aiJob?.cancel()
         _aiSummaryState.value = AiSummaryUiState.Idle
@@ -224,9 +237,57 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 PdfToolType.COMPRESS -> "Paperly_Compressed"
                 PdfToolType.SCAN -> "Paperly_Scan"
                 PdfToolType.SIGN -> "Paperly_Signed"
+                PdfToolType.LOCK -> "Paperly_Locked"
                 PdfToolType.AI_SUMMARIZE -> ""
             }
         )
+        if (preloadedRecord != null) {
+            selectExistingRecord(preloadedRecord)
+        }
+    }
+
+    fun openToolWithRecord(
+        tool: PdfToolType,
+        record: PdfRecordEntity,
+        onNavigateToWorkspace: () -> Unit
+    ) {
+        if (tool == PdfToolType.AI_SUMMARIZE && !isAppIntegrityTrusted) {
+            _snackbarMessage.value = "AI Summarize requires the official Google Play release of Paperly."
+            return
+        }
+        val canProceed = when (tool) {
+            PdfToolType.AI_SUMMARIZE -> isPro.value || aiSummaryCredits.value > 0
+            PdfToolType.SCAN, PdfToolType.SIGN -> isRewardUnlockedForSession.value
+            else -> true
+        }
+        if (canProceed) {
+            prepareToolWorkspace(tool, preloadedRecord = record)
+            onNavigateToWorkspace()
+        } else {
+            adManager.preloadRewardedAd()
+            billingManager.clearStatusMessage()
+            _proSheetState.value = ProSheetUiState(
+                visible = true,
+                triggeredByTool = tool,
+                navigateOnUnlock = true,
+                preloadedRecord = record
+            )
+        }
+    }
+
+    fun handleIncomingExternalPdf(uri: Uri, onOpenedRecord: (Long) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val record = pdfEngine.importExternalPdfRecord(uri)
+                val id = recordRepository.insert(record)
+                onOpenedRecord(id)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open external PDF", e)
+                _snackbarMessage.value = e.localizedMessage ?: "Could not open this PDF file."
+            }
+        }
     }
 
     fun openRewardedGateOrProceed(tool: PdfToolType, onNavigateToWorkspace: () -> Unit) {
@@ -236,7 +297,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
         val canProceed = when (tool) {
             PdfToolType.AI_SUMMARIZE -> isPro.value || aiSummaryCredits.value > 0
-            PdfToolType.SCAN -> isRewardUnlockedForSession.value
+            PdfToolType.SCAN, PdfToolType.SIGN -> isRewardUnlockedForSession.value
             else -> true
         }
         if (canProceed) {
@@ -244,7 +305,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             onNavigateToWorkspace()
         } else {
             // Trigger 1 (High-Intent Gate): Show the Pro paywall with 'Start 3-Day Free Trial' as primary
-            // and rewarded unlock CTA as a secondary text button below.
+            // and rewarded unlock CTA as a secondary button below.
             adManager.preloadRewardedAd()
             billingManager.clearStatusMessage()
             _proSheetState.value = ProSheetUiState(
@@ -267,11 +328,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     fun watchRewardedVideoFromProSheet(
         activity: Activity?,
-        onUnlocked: (PdfToolType, Boolean) -> Unit
+        onUnlocked: (PdfToolType, Boolean, PdfRecordEntity?) -> Unit
     ) {
         val currentSheet = _proSheetState.value
         val tool = currentSheet.triggeredByTool ?: return
         val shouldNavigate = currentSheet.navigateOnUnlock
+        val preloaded = currentSheet.preloadedRecord
         if (activity == null) {
             _proSheetState.update {
                 it.copy(isLoadingRewardedAd = false, rewardedError = "Unable to present video ad right now.")
@@ -291,9 +353,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     }
                     _proSheetState.value = ProSheetUiState(visible = false)
                     if (shouldNavigate) {
-                        prepareToolWorkspace(tool)
+                        prepareToolWorkspace(tool, preloadedRecord = preloaded)
                     }
-                    onUnlocked(tool, shouldNavigate)
+                    onUnlocked(tool, shouldNavigate, preloaded)
                 }
             },
             onDismissedWithoutReward = {
@@ -426,12 +488,58 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun importScanImageUris(uris: List<Uri>, fromSmartScan: Boolean = false) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val imported = pdfEngine.importScanUris(uris)
+            if (imported.isEmpty()) {
+                _snackbarMessage.value = "Could not load selected image(s)."
+                return@launch
+            }
+            _workspace.update { state ->
+                val shouldKeepNativeScanLook = fromSmartScan && state.scanImageUris.isEmpty()
+                state.copy(
+                    scanImageUris = state.scanImageUris + imported,
+                    scanEnhanceContrast = if (shouldKeepNativeScanLook) false else state.scanEnhanceContrast,
+                    processing = state.processing.copy(errorMessage = null)
+                )
+            }
+        }
+    }
+
+    fun moveScanImageLeft(index: Int) {
+        if (index <= 0) return
+        _workspace.update { state ->
+            val mutable = state.scanImageUris.toMutableList()
+            if (index in mutable.indices) {
+                val item = mutable.removeAt(index)
+                mutable.add(index - 1, item)
+            }
+            state.copy(scanImageUris = mutable)
+        }
+    }
+
+    fun moveScanImageRight(index: Int) {
+        _workspace.update { state ->
+            val mutable = state.scanImageUris.toMutableList()
+            if (index in 0 until mutable.lastIndex) {
+                val item = mutable.removeAt(index)
+                mutable.add(index + 1, item)
+            }
+            state.copy(scanImageUris = mutable)
+        }
+    }
+
     fun removeScanImageAt(index: Int) {
         _workspace.update { state ->
             val mutable = state.scanImageUris.toMutableList()
             if (index in mutable.indices) mutable.removeAt(index)
             state.copy(scanImageUris = mutable)
         }
+    }
+
+    fun clearScanImages() {
+        _workspace.update { it.copy(scanImageUris = emptyList()) }
     }
 
     fun toggleScanEnhance(enabled: Boolean) {
@@ -450,7 +558,41 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun updateSignPlacement(placement: SignaturePlacement) {
-        _workspace.update { it.copy(signPlacement = placement) }
+        val (cx, cy) = when (placement) {
+            SignaturePlacement.BOTTOM_RIGHT -> 0.75f to 0.84f
+            SignaturePlacement.BOTTOM_CENTER -> 0.50f to 0.84f
+            SignaturePlacement.BOTTOM_LEFT -> 0.25f to 0.84f
+            SignaturePlacement.CENTER -> 0.50f to 0.50f
+        }
+        _workspace.update {
+            it.copy(
+                signPlacement = placement,
+                signCenterXNorm = cx,
+                signCenterYNorm = cy
+            )
+        }
+    }
+
+    fun updateSignTransform(centerXNorm: Float, centerYNorm: Float, widthFraction: Float) {
+        _workspace.update {
+            it.copy(
+                signCenterXNorm = centerXNorm.coerceIn(0.08f, 0.92f),
+                signCenterYNorm = centerYNorm.coerceIn(0.08f, 0.92f),
+                signWidthFraction = widthFraction.coerceIn(0.12f, 0.75f)
+            )
+        }
+    }
+
+    fun updateLockPassword(password: String) {
+        _workspace.update {
+            it.copy(lockPassword = password, processing = it.processing.copy(errorMessage = null))
+        }
+    }
+
+    fun updateLockConfirmPassword(confirm: String) {
+        _workspace.update {
+            it.copy(lockConfirmPassword = confirm, processing = it.processing.copy(errorMessage = null))
+        }
     }
 
     fun processActiveTool(
@@ -499,7 +641,26 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                             file = file,
                             signatureBitmap = sig,
                             targetPageOneBased = state.signTargetPage,
-                            placement = state.signPlacement,
+                            centerXNorm = state.signCenterXNorm,
+                            centerYNorm = state.signCenterYNorm,
+                            widthFraction = state.signWidthFraction,
+                            outputName = state.outputFileName
+                        ) { p, msg ->
+                            _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
+                        }
+                    }
+                    PdfToolType.LOCK -> {
+                        val file = state.selectedPdfs.firstOrNull()
+                            ?: throw IllegalStateException("Select a PDF file first.")
+                        if (state.lockPassword.length < 4) {
+                            throw IllegalStateException("Enter a password with at least 4 characters.")
+                        }
+                        if (state.lockPassword != state.lockConfirmPassword) {
+                            throw IllegalStateException("Passwords do not match.")
+                        }
+                        pdfEngine.lockPdf(
+                            file = file,
+                            password = state.lockPassword,
                             outputName = state.outputFileName
                         ) { p, msg ->
                             _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
@@ -511,7 +672,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val id = recordRepository.insert(record)
                 if (state.activeTool == PdfToolType.MERGE ||
                     state.activeTool == PdfToolType.SPLIT ||
-                    state.activeTool == PdfToolType.COMPRESS
+                    state.activeTool == PdfToolType.COMPRESS ||
+                    state.activeTool == PdfToolType.LOCK
                 ) {
                     prefsRepository.incrementCompletedCorePdfOps()
                 }
@@ -607,11 +769,17 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     suspend fun loadRecordById(id: Long): PdfRecordEntity? = recordRepository.getById(id)
 
-    fun saveRecordToUri(filePath: String, destinationUri: Uri) {
+    fun saveRecordToUri(filePath: String, destinationUri: Uri, trackForReview: Boolean = false) {
         viewModelScope.launch {
             try {
                 pdfEngine.saveToUserUri(filePath, destinationUri)
                 _snackbarMessage.value = "Saved to device successfully"
+                if (trackForReview) {
+                    val promptReview = prefsRepository.incrementSavedPdfCountAndShouldPromptReview()
+                    if (promptReview) {
+                        _shouldRequestInAppReview.value = true
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

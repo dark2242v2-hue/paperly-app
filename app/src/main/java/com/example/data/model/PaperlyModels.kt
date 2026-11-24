@@ -8,7 +8,8 @@ enum class PdfToolType(val routeArg: String) {
     COMPRESS("compress"),
     SCAN("scan"),
     AI_SUMMARIZE("ai_summarize"),
-    SIGN("sign");
+    SIGN("sign"),
+    LOCK("lock");
 
     companion object {
         fun fromRouteArg(arg: String?): PdfToolType =

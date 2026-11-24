@@ -7,6 +7,7 @@ object PaperlyRoutes {
     const val FILES = "files"
     const val SETTINGS = "settings"
     const val TOOL_WORKSPACE = "tool_workspace/{toolType}"
+    const val MULTI_SHOT_CAMERA = "multi_shot_camera"
     const val DOWNLOAD_READY = "download_ready/{recordId}"
     const val PDF_VIEWER = "pdf_viewer/{recordId}"
 

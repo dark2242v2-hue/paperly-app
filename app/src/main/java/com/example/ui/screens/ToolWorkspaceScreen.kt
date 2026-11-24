@@ -1,11 +1,13 @@
 package com.example.ui.screens
 
+import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -13,8 +15,11 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -24,7 +29,9 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -37,8 +44,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CameraAlt
@@ -46,12 +57,17 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -67,9 +83,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -86,20 +104,27 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
+import com.example.ads.findActivity
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.AiSummaryUiState
@@ -114,6 +139,9 @@ import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.theme.PaperlyViolet
 import com.example.ui.viewmodel.PaperlyViewModel
 import com.example.ui.viewmodel.WorkspaceUiState
+import com.google.mlkit.vision.documentscanner.GmsDocumentScannerOptions
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanning
+import com.google.mlkit.vision.documentscanner.GmsDocumentScanningResult
 import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -125,16 +153,18 @@ fun ToolWorkspaceScreen(
     isPro: Boolean,
     aiSummaryCredits: Int,
     onUpgradeProClick: () -> Unit,
+    onOpenMultiShotCamera: () -> Unit,
     viewModel: PaperlyViewModel,
     onBack: () -> Unit,
     onProcessingComplete: (Long) -> Unit
 ) {
     val context = LocalContext.current
+    val activity = remember(context) { context.findActivity() }
     val tool = workspace.activeTool
 
     val signatureStrokes = remember { mutableStateListOf<List<Offset>>() }
     var signatureCanvasSize by remember { mutableStateOf(IntSize.Zero) }
-    var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
+    var isLaunchingSmartScanner by remember { mutableStateOf(false) }
 
     val openMultiplePdfsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenMultipleDocuments()
@@ -153,16 +183,45 @@ fun ToolWorkspaceScreen(
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20)
     ) { uris ->
-        viewModel.addScanImageUris(uris)
+        viewModel.importScanImageUris(uris, fromSmartScan = false)
     }
 
-    val takePictureLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.TakePicture()
-    ) { saved ->
-        val captured = pendingCameraUri
-        if (saved && captured != null) {
-            viewModel.addScanImageUris(listOf(captured))
+    val smartScannerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        isLaunchingSmartScanner = false
+        if (result.resultCode == Activity.RESULT_OK) {
+            val scanResult = GmsDocumentScanningResult.fromActivityResultIntent(result.data)
+            val pageUris = scanResult?.pages?.map { it.imageUri }.orEmpty()
+            if (pageUris.isNotEmpty()) {
+                viewModel.importScanImageUris(pageUris, fromSmartScan = true)
+            }
         }
+    }
+
+    fun launchSmartDocumentScanner() {
+        val hostActivity = activity
+        if (hostActivity == null) {
+            viewModel.postMessage("Unable to launch Smart Scanner right now.")
+            return
+        }
+        isLaunchingSmartScanner = true
+        val options = GmsDocumentScannerOptions.Builder()
+            .setGalleryImportAllowed(true)
+            .setScannerMode(GmsDocumentScannerOptions.SCANNER_MODE_FULL)
+            .setResultFormats(GmsDocumentScannerOptions.RESULT_FORMAT_JPEG)
+            .build()
+        val scanner = GmsDocumentScanning.getClient(options)
+        scanner.getStartScanIntent(hostActivity)
+            .addOnSuccessListener { intentSender ->
+                smartScannerLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+            }
+            .addOnFailureListener { err ->
+                isLaunchingSmartScanner = false
+                viewModel.postMessage(
+                    err.localizedMessage ?: "Smart Document Scanner is unavailable on this device. Try Normal Photo mode."
+                )
+            }
     }
 
     val toolTitle = when (tool) {
@@ -172,6 +231,7 @@ fun ToolWorkspaceScreen(
         PdfToolType.SCAN -> stringResource(R.string.tool_scan_title)
         PdfToolType.AI_SUMMARIZE -> stringResource(R.string.tool_ai_title)
         PdfToolType.SIGN -> stringResource(R.string.tool_sign_title)
+        PdfToolType.LOCK -> stringResource(R.string.tool_lock_title)
     }
 
     val canProcess = when (tool) {
@@ -180,6 +240,9 @@ fun ToolWorkspaceScreen(
         PdfToolType.COMPRESS -> workspace.selectedPdfs.isNotEmpty()
         PdfToolType.SCAN -> workspace.scanImageUris.isNotEmpty()
         PdfToolType.SIGN -> workspace.selectedPdfs.isNotEmpty() && signatureStrokes.isNotEmpty()
+        PdfToolType.LOCK -> workspace.selectedPdfs.isNotEmpty() &&
+            workspace.lockPassword.length >= 4 &&
+            workspace.lockPassword == workspace.lockConfirmPassword
         PdfToolType.AI_SUMMARIZE -> workspace.selectedPdfs.isNotEmpty()
     } && !workspace.processing.isProcessing
 
@@ -344,23 +407,24 @@ fun ToolWorkspaceScreen(
                 }
 
                 if (tool == PdfToolType.SCAN) {
-                    // Scan to PDF workspace
+                    // Scan to PDF workspace with Smart Scan + Normal Photo Multi-Shot mode selector
                     item {
                         ScanWorkspaceContent(
                             imageUris = workspace.scanImageUris,
                             enhanceContrast = workspace.scanEnhanceContrast,
                             outputName = workspace.outputFileName,
+                            isLaunchingSmartScanner = isLaunchingSmartScanner,
+                            onSmartScan = { launchSmartDocumentScanner() },
+                            onOpenMultiShotCamera = onOpenMultiShotCamera,
                             onPickPhotos = {
                                 photoPickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
                             },
-                            onTakePhoto = {
-                                val uri = viewModel.pdfEngine.createScanTempUri()
-                                pendingCameraUri = uri
-                                takePictureLauncher.launch(uri)
-                            },
+                            onMoveLeft = viewModel::moveScanImageLeft,
+                            onMoveRight = viewModel::moveScanImageRight,
                             onRemoveImage = viewModel::removeScanImageAt,
+                            onClearAll = viewModel::clearScanImages,
                             onToggleEnhance = viewModel::toggleScanEnhance,
                             onOutputNameChange = viewModel::updateOutputFileName
                         )
@@ -444,11 +508,28 @@ fun ToolWorkspaceScreen(
                                         pdf = pdf,
                                         workspace = workspace,
                                         strokes = signatureStrokes,
+                                        canvasSize = signatureCanvasSize,
                                         onPageChange = viewModel::updateSignTargetPage,
                                         onPlacementChange = viewModel::updateSignPlacement,
+                                        onTransformChange = viewModel::updateSignTransform,
                                         onStrokeAdded = { signatureStrokes.add(it) },
                                         onClearStrokes = { signatureStrokes.clear() },
                                         onCanvasSizeChanged = { signatureCanvasSize = it },
+                                        onOutputNameChange = viewModel::updateOutputFileName
+                                    )
+                                }
+                            }
+                        }
+
+                        PdfToolType.LOCK -> {
+                            workspace.selectedPdfs.firstOrNull()?.let { _ ->
+                                item {
+                                    LockControlsCard(
+                                        password = workspace.lockPassword,
+                                        confirmPassword = workspace.lockConfirmPassword,
+                                        outputName = workspace.outputFileName,
+                                        onPasswordChange = viewModel::updateLockPassword,
+                                        onConfirmPasswordChange = viewModel::updateLockConfirmPassword,
                                         onOutputNameChange = viewModel::updateOutputFileName
                                     )
                                 }
@@ -829,58 +910,87 @@ private fun ScanWorkspaceContent(
     imageUris: List<Uri>,
     enhanceContrast: Boolean,
     outputName: String,
+    isLaunchingSmartScanner: Boolean,
+    onSmartScan: () -> Unit,
+    onOpenMultiShotCamera: () -> Unit,
     onPickPhotos: () -> Unit,
-    onTakePhoto: () -> Unit,
+    onMoveLeft: (Int) -> Unit,
+    onMoveRight: (Int) -> Unit,
     onRemoveImage: (Int) -> Unit,
+    onClearAll: () -> Unit,
     onToggleEnhance: (Boolean) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text(
+            text = if (imageUris.isEmpty()) "Choose Scan Mode" else "Add More Pages",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onBackground
+        )
+
+        // Mode 1: Smart Document Scan (Auto-Crop & Clean) — Official Google ML Kit Document Scanner
         Card(
+            onClick = onSmartScan,
+            enabled = !isLaunchingSmartScanner,
             shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.65f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("scan_mode_smart_card")
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Text("Capture or Pick Pages", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    text = "Add photos from your library using Android Photo Picker or snap a document with your camera.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
-                        onClick = onPickPhotos,
+                    Box(
                         modifier = Modifier
-                            .weight(1f)
-                            .height(50.dp)
-                            .testTag("scan_pick_photos_button"),
-                        shape = RoundedCornerShape(12.dp)
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Photos")
+                        Icon(
+                            imageVector = Icons.Filled.DocumentScanner,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(24.dp)
+                        )
                     }
 
-                    OutlinedButton(
-                        onClick = onTakePhoto,
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(50.dp)
-                            .testTag("scan_take_photo_button"),
-                        shape = RoundedCornerShape(12.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = PaperlyEmerald.copy(alpha = 0.15f)
                     ) {
-                        Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Camera")
+                        Text(
+                            text = stringResource(R.string.scan_mode_smart_badge),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PaperlyEmerald,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
                     }
+                }
+
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = stringResource(R.string.scan_mode_smart_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.scan_mode_smart_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
 
                 Row(
@@ -888,19 +998,105 @@ private fun ScanWorkspaceContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Text(
+                        text = if (isLaunchingSmartScanner) "Opening Smart Scanner…" else "Auto-crop • Filters • Clean",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    if (isLaunchingSmartScanner) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Mode 2: Normal Photo / Gallery (Multi-Shot)
+        Card(
+            onClick = onOpenMultiShotCamera,
+            shape = RoundedCornerShape(20.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("scan_mode_normal_card")
+        ) {
+            Column(
+                modifier = Modifier.padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.secondaryContainer),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CameraAlt,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(23.dp)
+                        )
+                    }
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Enhance Document Contrast", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            text = "Crisp B&W high-contrast scan filter",
+                            text = stringResource(R.string.scan_mode_normal_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = stringResource(R.string.scan_mode_normal_desc),
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    Switch(
-                        checked = enhanceContrast,
-                        onCheckedChange = onToggleEnhance,
-                        modifier = Modifier.testTag("scan_enhance_switch")
-                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Button(
+                        onClick = onOpenMultiShotCamera,
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("scan_take_photo_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Multi-Shot Camera")
+                    }
+
+                    OutlinedButton(
+                        onClick = onPickPhotos,
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("scan_pick_photos_button"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Gallery")
+                    }
                 }
             }
         }
@@ -915,43 +1111,164 @@ private fun ScanWorkspaceContent(
                     modifier = Modifier.padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    Text(
-                        text = "${imageUris.size} page(s) ready",
-                        style = MaterialTheme.typography.titleSmall
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        itemsIndexed(imageUris) { idx, uri ->
-                            Box(
-                                modifier = Modifier
-                                    .size(width = 104.dp, height = 136.dp)
-                                    .clip(RoundedCornerShape(12.dp))
-                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "${imageUris.size} page(s) ready",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Reorder, remove, or add more pages before creating your PDF",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        TextButton(
+                            onClick = onClearAll,
+                            modifier = Modifier
+                                .heightIn(min = 48.dp)
+                                .testTag("scan_clear_all_button")
+                        ) {
+                            Text("Clear all")
+                        }
+                    }
+
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        itemsIndexed(
+                            items = imageUris,
+                            key = { idx, uri -> "${uri}_$idx" }
+                        ) { idx, uri ->
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                AsyncImage(
-                                    model = uri,
-                                    contentDescription = "Scanned page ${idx + 1}",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                                Surface(
-                                    onClick = { onRemoveImage(idx) },
-                                    shape = CircleShape,
-                                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.9f),
+                                Box(
                                     modifier = Modifier
-                                        .align(Alignment.TopEnd)
-                                        .padding(6.dp)
-                                        .size(28.dp)
+                                        .size(width = 114.dp, height = 152.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Close,
-                                            contentDescription = "Remove page ${idx + 1}",
-                                            modifier = Modifier.size(16.dp)
+                                    AsyncImage(
+                                        model = uri,
+                                        contentDescription = "Scanned page ${idx + 1}",
+                                        modifier = Modifier.fillMaxSize(),
+                                        contentScale = ContentScale.Crop
+                                    )
+                                    Surface(
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier
+                                            .align(Alignment.BottomStart)
+                                            .padding(6.dp)
+                                    ) {
+                                        Text(
+                                            text = "${idx + 1}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onPrimary,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
                                         )
+                                    }
+                                    IconButton(
+                                        onClick = { onRemoveImage(idx) },
+                                        modifier = Modifier
+                                            .align(Alignment.TopEnd)
+                                            .testTag("remove_scan_page_$idx")
+                                    ) {
+                                        Surface(
+                                            shape = CircleShape,
+                                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f),
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Icon(
+                                                    imageVector = Icons.Filled.Close,
+                                                    contentDescription = "Remove page ${idx + 1}",
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+
+                                Row(
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        onClick = { onMoveLeft(idx) },
+                                        enabled = idx > 0,
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("move_scan_left_$idx")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                                contentDescription = "Move page ${idx + 1} earlier",
+                                                modifier = Modifier.size(22.dp),
+                                                tint = if (idx > 0) {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                                }
+                                            )
+                                        }
+                                    }
+                                    Surface(
+                                        onClick = { onMoveRight(idx) },
+                                        enabled = idx < imageUris.lastIndex,
+                                        shape = CircleShape,
+                                        color = MaterialTheme.colorScheme.surfaceVariant,
+                                        modifier = Modifier
+                                            .size(48.dp)
+                                            .testTag("move_scan_right_$idx")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                                contentDescription = "Move page ${idx + 1} later",
+                                                modifier = Modifier.size(22.dp),
+                                                tint = if (idx < imageUris.lastIndex) {
+                                                    MaterialTheme.colorScheme.onSurface
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                                                }
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
+                    }
+
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Enhance B&W Contrast", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                text = "Apply crisp B&W scan filter when building PDF",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = enhanceContrast,
+                            onCheckedChange = onToggleEnhance,
+                            modifier = Modifier.testTag("scan_enhance_switch")
+                        )
                     }
 
                     OutputNameField(
@@ -970,13 +1287,19 @@ private fun SignControlsCard(
     pdf: PickedPdfInfo,
     workspace: WorkspaceUiState,
     strokes: List<List<Offset>>,
+    canvasSize: IntSize,
     onPageChange: (Int) -> Unit,
     onPlacementChange: (SignaturePlacement) -> Unit,
+    onTransformChange: (Float, Float, Float) -> Unit,
     onStrokeAdded: (List<Offset>) -> Unit,
     onClearStrokes: () -> Unit,
     onCanvasSizeChanged: (IntSize) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
+    val signaturePreviewBmp = remember(strokes.toList(), canvasSize) {
+        renderSignatureBitmap(strokes, canvasSize)
+    }
+
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -986,15 +1309,35 @@ private fun SignControlsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            SignaturePad(
+                strokes = strokes,
+                onStrokeAdded = onStrokeAdded,
+                onClear = onClearStrokes,
+                onSizeChanged = onCanvasSizeChanged
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Target Page", style = MaterialTheme.typography.titleSmall)
+                Column {
+                    Text("Position & Resize on Page", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = if (signaturePreviewBmp != null) {
+                            "Drag signature box or corner handle on preview"
+                        } else {
+                            "Draw your signature above, then drag to place"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     OutlinedButton(
                         onClick = { onPageChange(workspace.signTargetPage - 1) },
@@ -1004,7 +1347,7 @@ private fun SignControlsCard(
                         Text("-")
                     }
                     Text(
-                        text = "${workspace.signTargetPage} / ${pdf.pageCount}",
+                        text = "${workspace.signTargetPage}/${pdf.pageCount}",
                         style = MaterialTheme.typography.labelLarge
                     )
                     OutlinedButton(
@@ -1018,20 +1361,144 @@ private fun SignControlsCard(
             }
 
             workspace.previewThumbnail?.let { bmp ->
-                Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = "Target page preview",
+                val pageAspect = bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
+                BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(160.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentScale = ContentScale.Fit
+                        .aspectRatio(pageAspect.coerceIn(0.55f, 1.6f))
+                        .clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp))
+                        .background(Color.White)
+                ) {
+                    val density = LocalDensity.current
+                    val pageW = with(density) { maxWidth.toPx() }
+                    val pageH = with(density) { maxHeight.toPx() }
+
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Target page preview",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.FillBounds
+                    )
+
+                    if (signaturePreviewBmp != null) {
+                        val sigAspect = signaturePreviewBmp.height.toFloat() /
+                            signaturePreviewBmp.width.coerceAtLeast(1).toFloat()
+                        val sigW = pageW * workspace.signWidthFraction.coerceIn(0.12f, 0.75f)
+                        val sigH = (sigW * sigAspect).coerceAtMost(pageH * 0.65f)
+                        val finalSigW = sigH / sigAspect.coerceAtLeast(0.01f)
+
+                        val centerX = (workspace.signCenterXNorm * pageW)
+                            .coerceIn(finalSigW / 2f, (pageW - finalSigW / 2f).coerceAtLeast(finalSigW / 2f))
+                        val centerY = (workspace.signCenterYNorm * pageH)
+                            .coerceIn(sigH / 2f, (pageH - sigH / 2f).coerceAtLeast(sigH / 2f))
+
+                        val topLeftX = (centerX - finalSigW / 2f).roundToInt()
+                        val topLeftY = (centerY - sigH / 2f).roundToInt()
+
+                        Box(
+                            modifier = Modifier
+                                .offset { IntOffset(topLeftX, topLeftY) }
+                                .size(
+                                    width = with(density) { finalSigW.toDp() },
+                                    height = with(density) { sigH.toDp() }
+                                )
+                                .border(
+                                    width = 1.5.dp,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .background(
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.08f),
+                                    shape = RoundedCornerShape(6.dp)
+                                )
+                                .pointerInput(pageW, pageH, workspace.signWidthFraction) {
+                                    detectDragGestures { change, dragAmount ->
+                                        change.consume()
+                                        val nextX = (workspace.signCenterXNorm + dragAmount.x / pageW)
+                                            .coerceIn(0.08f, 0.92f)
+                                        val nextY = (workspace.signCenterYNorm + dragAmount.y / pageH)
+                                            .coerceIn(0.08f, 0.92f)
+                                        onTransformChange(nextX, nextY, workspace.signWidthFraction)
+                                    }
+                                }
+                                .testTag("draggable_signature_box")
+                        ) {
+                            Image(
+                                bitmap = signaturePreviewBmp.asImageBitmap(),
+                                contentDescription = "Draggable signature",
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(4.dp),
+                                contentScale = ContentScale.Fit
+                            )
+
+                            // Bottom-right resize handle
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(22.dp)
+                                    .pointerInput(pageW) {
+                                        detectDragGestures { change, dragAmount ->
+                                            change.consume()
+                                            val deltaFrac = dragAmount.x / pageW
+                                            val nextWidth = (workspace.signWidthFraction + deltaFrac)
+                                                .coerceIn(0.12f, 0.72f)
+                                            onTransformChange(
+                                                workspace.signCenterXNorm,
+                                                workspace.signCenterYNorm,
+                                                nextWidth
+                                            )
+                                        }
+                                    }
+                                    .testTag("signature_resize_handle")
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.OpenWith,
+                                        contentDescription = "Resize signature",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Accessible size slider & quick snap presets
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Signature Size",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${(workspace.signWidthFraction * 100).roundToInt()}% page width",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+                Slider(
+                    value = workspace.signWidthFraction,
+                    onValueChange = { newWidth ->
+                        onTransformChange(workspace.signCenterXNorm, workspace.signCenterYNorm, newWidth)
+                    },
+                    valueRange = 0.12f..0.72f,
+                    modifier = Modifier.testTag("signature_size_slider")
                 )
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Signature Placement", style = MaterialTheme.typography.titleSmall)
+                Text("Quick Snap Position", style = MaterialTheme.typography.labelMedium)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(SignaturePlacement.entries) { placement ->
                         FilterChip(
@@ -1043,17 +1510,119 @@ private fun SignControlsCard(
                 }
             }
 
-            SignaturePad(
-                strokes = strokes,
-                onStrokeAdded = onStrokeAdded,
-                onClear = onClearStrokes,
-                onSizeChanged = onCanvasSizeChanged
-            )
-
             OutputNameField(
                 value = workspace.outputFileName,
                 onValueChange = onOutputNameChange,
                 helper = null
+            )
+        }
+    }
+}
+
+@Composable
+private fun LockControlsCard(
+    password: String,
+    confirmPassword: String,
+    outputName: String,
+    onPasswordChange: (String) -> Unit,
+    onConfirmPasswordChange: (String) -> Unit,
+    onOutputNameChange: (String) -> Unit
+) {
+    var passwordVisible by remember { mutableStateOf(false) }
+    var confirmVisible by remember { mutableStateOf(false) }
+    val hasMismatch = confirmPassword.isNotEmpty() && password != confirmPassword
+    val tooShort = password.isNotEmpty() && password.length < 4
+
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(PaperlyEmerald.copy(alpha = 0.14f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Lock,
+                        contentDescription = null,
+                        tint = PaperlyEmerald,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Column {
+                    Text("Set PDF Password", style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        text = "128-bit encryption • Processed 100% locally",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            OutlinedTextField(
+                value = password,
+                onValueChange = onPasswordChange,
+                label = { Text("Password (min 4 characters)") },
+                singleLine = true,
+                isError = tooShort,
+                visualTransformation = if (passwordVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { passwordVisible = !passwordVisible }) {
+                        Icon(
+                            imageVector = if (passwordVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("lock_password_input")
+            )
+
+            OutlinedTextField(
+                value = confirmPassword,
+                onValueChange = onConfirmPasswordChange,
+                label = { Text("Confirm password") },
+                singleLine = true,
+                isError = hasMismatch,
+                supportingText = when {
+                    tooShort -> { { Text("Use at least 4 characters") } }
+                    hasMismatch -> { { Text("Passwords do not match") } }
+                    else -> null
+                },
+                visualTransformation = if (confirmVisible) VisualTransformation.None else PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                trailingIcon = {
+                    IconButton(onClick = { confirmVisible = !confirmVisible }) {
+                        Icon(
+                            imageVector = if (confirmVisible) Icons.Filled.VisibilityOff else Icons.Filled.Visibility,
+                            contentDescription = if (confirmVisible) "Hide confirm password" else "Show confirm password"
+                        )
+                    }
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("lock_confirm_password_input")
+            )
+
+            OutputNameField(
+                value = outputName,
+                onValueChange = onOutputNameChange,
+                helper = "Anyone opening this PDF will be prompted for your password."
             )
         }
     }

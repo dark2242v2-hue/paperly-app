@@ -489,6 +489,7 @@ fun PaperlyProSheet(
     val triggeredToolLabel = when (state.triggeredByTool) {
         PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
         PdfToolType.SCAN -> "Unlock Scan to PDF"
+        PdfToolType.SIGN -> "Unlock E-Sign PDF"
         else -> null
     }
 
@@ -1159,8 +1160,29 @@ fun SignaturePad(
 }
 
 fun renderSignatureBitmap(strokes: List<List<Offset>>, canvasSize: IntSize): Bitmap? {
-    if (strokes.isEmpty() || canvasSize.width <= 0 || canvasSize.height <= 0) return null
-    val bitmap = Bitmap.createBitmap(canvasSize.width, canvasSize.height, Bitmap.Config.ARGB_8888)
+    val allPoints = strokes.flatten()
+    if (allPoints.size < 2 || canvasSize.width <= 0 || canvasSize.height <= 0) return null
+
+    var minX = Float.MAX_VALUE
+    var minY = Float.MAX_VALUE
+    var maxX = Float.MIN_VALUE
+    var maxY = Float.MIN_VALUE
+    allPoints.forEach { pt ->
+        if (pt.x < minX) minX = pt.x
+        if (pt.y < minY) minY = pt.y
+        if (pt.x > maxX) maxX = pt.x
+        if (pt.y > maxY) maxY = pt.y
+    }
+
+    val pad = 14f
+    val left = (minX - pad).coerceAtLeast(0f)
+    val top = (minY - pad).coerceAtLeast(0f)
+    val right = (maxX + pad).coerceAtMost(canvasSize.width.toFloat())
+    val bottom = (maxY + pad).coerceAtMost(canvasSize.height.toFloat())
+    val outW = (right - left).toInt().coerceAtLeast(24)
+    val outH = (bottom - top).toInt().coerceAtLeast(24)
+
+    val bitmap = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888)
     val canvas = AndroidCanvas(bitmap)
     val paint = AndroidPaint().apply {
         color = AndroidColor.parseColor("#0F172A")
@@ -1173,9 +1195,9 @@ fun renderSignatureBitmap(strokes: List<List<Offset>>, canvasSize: IntSize): Bit
     strokes.forEach { pts ->
         if (pts.size >= 2) {
             val path = AndroidPath().apply {
-                moveTo(pts.first().x, pts.first().y)
+                moveTo(pts.first().x - left, pts.first().y - top)
                 for (i in 1 until pts.size) {
-                    lineTo(pts[i].x, pts[i].y)
+                    lineTo(pts[i].x - left, pts[i].y - top)
                 }
             }
             canvas.drawPath(path, paint)

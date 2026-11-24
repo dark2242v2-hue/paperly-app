@@ -1,10 +1,13 @@
 package com.example
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.core.content.IntentCompat
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -18,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -44,6 +48,7 @@ import com.example.ui.navigation.PaperlyRoutes
 import com.example.ui.screens.DownloadReadyScreen
 import com.example.ui.screens.FilesScreen
 import com.example.ui.screens.HomeScreen
+import com.example.ui.screens.MultiShotCameraScreen
 import com.example.ui.screens.PdfViewerScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.screens.ToolWorkspaceScreen
@@ -51,14 +56,23 @@ import com.example.ui.theme.PaperlyTheme
 import com.example.ui.viewmodel.PaperlyViewModel
 
 class MainActivity : ComponentActivity() {
+    private val pendingExternalPdfUriState = mutableStateOf<Uri?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        if (savedInstanceState == null) {
+            extractIncomingPdfUri(intent)?.let { uri ->
+                pendingExternalPdfUriState.value = uri
+            }
+        }
 
         enableEdgeToEdge()
 
         setContent {
             val viewModel: PaperlyViewModel = viewModel()
             val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
+            val pendingExternalPdfUri by pendingExternalPdfUriState
 
             LaunchedEffect(isDarkMode) {
                 enableEdgeToEdge(
@@ -76,14 +90,42 @@ class MainActivity : ComponentActivity() {
             }
 
             PaperlyTheme(darkTheme = isDarkMode) {
-                PaperlyApp(viewModel = viewModel)
+                PaperlyApp(
+                    viewModel = viewModel,
+                    pendingExternalPdfUri = pendingExternalPdfUri,
+                    onConsumeExternalPdfUri = { pendingExternalPdfUriState.value = null }
+                )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        extractIncomingPdfUri(intent)?.let { uri ->
+            pendingExternalPdfUriState.value = uri
+        }
+    }
+
+    private fun extractIncomingPdfUri(intent: Intent?): Uri? {
+        if (intent == null) return null
+        return when (intent.action) {
+            Intent.ACTION_VIEW -> intent.data
+            Intent.ACTION_SEND -> {
+                IntentCompat.getParcelableExtra(intent, Intent.EXTRA_STREAM, Uri::class.java)
+                    ?: intent.clipData?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.uri
+            }
+            else -> null
         }
     }
 }
 
 @Composable
-fun PaperlyApp(viewModel: PaperlyViewModel) {
+fun PaperlyApp(
+    viewModel: PaperlyViewModel,
+    pendingExternalPdfUri: Uri? = null,
+    onConsumeExternalPdfUri: () -> Unit = {}
+) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
@@ -126,13 +168,26 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
         }
     }
 
+    LaunchedEffect(pendingExternalPdfUri) {
+        val externalUri = pendingExternalPdfUri
+        if (externalUri != null) {
+            onConsumeExternalPdfUri()
+            viewModel.handleIncomingExternalPdf(externalUri) { openedRecordId ->
+                navController.navigate(PaperlyRoutes.pdfViewer(openedRecordId)) {
+                    launchSingleTop = true
+                }
+            }
+        }
+    }
+
     LaunchedEffect(isPro) {
         val pendingTool = proSheetState.triggeredByTool
         if (isPro && proSheetState.visible && pendingTool != null) {
             val shouldNavigate = proSheetState.navigateOnUnlock
+            val preloaded = proSheetState.preloadedRecord
             viewModel.dismissProSheet()
             if (shouldNavigate) {
-                viewModel.prepareToolWorkspace(pendingTool)
+                viewModel.prepareToolWorkspace(pendingTool, preloadedRecord = preloaded)
                 navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
             } else if (pendingTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
                 viewModel.summarizeSelectedPdf()
@@ -192,7 +247,10 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                     HomeScreen(
                         recentRecords = recentRecords,
                         onToolSelected = { tool ->
-                            if (tool == PdfToolType.AI_SUMMARIZE || tool == PdfToolType.SCAN) {
+                            if (tool == PdfToolType.AI_SUMMARIZE ||
+                                tool == PdfToolType.SCAN ||
+                                tool == PdfToolType.SIGN
+                            ) {
                                 viewModel.openRewardedGateOrProceed(tool) {
                                     navController.navigate(PaperlyRoutes.toolWorkspace(tool))
                                 }
@@ -254,6 +312,9 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                         isPro = isPro,
                         aiSummaryCredits = aiSummaryCredits,
                         onUpgradeProClick = viewModel::openProSheet,
+                        onOpenMultiShotCamera = {
+                            navController.navigate(PaperlyRoutes.MULTI_SHOT_CAMERA)
+                        },
                         viewModel = viewModel,
                         onBack = { navController.popBackStack() },
                         onProcessingComplete = { recordId ->
@@ -261,6 +322,19 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                                 popUpTo(PaperlyRoutes.HOME)
                             }
                         }
+                    )
+                }
+
+                composable(PaperlyRoutes.MULTI_SHOT_CAMERA) {
+                    MultiShotCameraScreen(
+                        capturedUris = workspace.scanImageUris,
+                        createOutputFile = viewModel.pdfEngine::createScanTempFile,
+                        fileToUri = viewModel.pdfEngine::fileToProviderUri,
+                        onImageCaptured = { uri -> viewModel.addScanImageUris(listOf(uri)) },
+                        onGalleryImagesPicked = { uris -> viewModel.importScanImageUris(uris, fromSmartScan = false) },
+                        onRemoveCapturedAt = viewModel::removeScanImageAt,
+                        onDone = { navController.popBackStack() },
+                        onClose = { navController.popBackStack() }
                     )
                 }
 
@@ -293,6 +367,11 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                     PdfViewerScreen(
                         recordId = recordId,
                         viewModel = viewModel,
+                        onQuickAction = { tool, rec ->
+                            viewModel.openToolWithRecord(tool, rec) {
+                                navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                            }
+                        },
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -309,7 +388,7 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
             viewModel.subscribeToPlan(activity, planType)
         },
         onWatchRewardedVideo = {
-            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool, shouldNavigate ->
+            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool, shouldNavigate, _ ->
                 if (shouldNavigate) {
                     navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
                 } else if (unlockedTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {

@@ -25,8 +25,10 @@
     <string name="tool_scan_desc">Camera or photos to PDF</string>
     <string name="tool_ai_title">AI Summarize</string>
     <string name="tool_ai_desc">Instant Gemini insights</string>
-    <string name="tool_sign_title">Sign PDF</string>
-    <string name="tool_sign_desc">Draw &amp; place signature</string>
+    <string name="tool_sign_title">E-Sign PDF</string>
+    <string name="tool_sign_desc">Draw, drag &amp; resize</string>
+    <string name="tool_lock_title">Lock PDF</string>
+    <string name="tool_lock_desc">Password-protect locally</string>
 
     <string name="banner_ad_label">Ad</string>
     <string name="banner_ad_copy">Paperly Pro — Remove all ads &amp; unlock unlimited AI</string>
@@ -57,4 +59,14 @@
     <string name="ai_modal_skip">Skip for now</string>
     <string name="ai_watching_video_title">Sponsor Preview</string>
     <string name="ai_watching_video_skip">Skip Preview</string>
+
+    <string name="scan_mode_smart_title">Smart Document Scan (Auto-Crop &amp; Clean)</string>
+    <string name="scan_mode_smart_desc">Google Drive-style scanner with auto edge detection, perspective straighten, Enhance, Filters &amp; Clean.</string>
+    <string name="scan_mode_smart_badge">Recommended</string>
+    <string name="scan_mode_normal_title">Normal Photo / Gallery (Multi-Shot)</string>
+    <string name="scan_mode_normal_desc">Continuous multi-shot camera with live bottom thumbnail strip, or import photos directly from Gallery.</string>
+    <string name="scan_camera_permission_title">Camera Access Needed</string>
+    <string name="scan_camera_permission_desc">Allow camera access to capture continuous multi-shot document photos, or import existing photos from your Gallery.</string>
+    <string name="scan_camera_grant_button">Allow Camera</string>
+    <string name="scan_camera_done">Done</string>
 </resources>

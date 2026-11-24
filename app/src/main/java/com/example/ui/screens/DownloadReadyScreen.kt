@@ -66,17 +66,21 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.font.FontWeight
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.ads.findActivity
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.data.local.PdfRecordEntity
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
+import com.google.android.play.core.review.ReviewManagerFactory
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -96,6 +100,23 @@ fun DownloadReadyScreen(
     var isLoading by remember { mutableStateOf(true) }
     var ahaBannerDismissed by rememberSaveable(recordId) { mutableStateOf(false) }
 
+    val shouldRequestInAppReview by viewModel.shouldRequestInAppReview.collectAsStateWithLifecycle()
+
+    LaunchedEffect(shouldRequestInAppReview) {
+        if (shouldRequestInAppReview) {
+            viewModel.consumeInAppReviewTrigger()
+            val hostActivity = context.findActivity() ?: return@LaunchedEffect
+            runCatching {
+                val manager = ReviewManagerFactory.create(hostActivity)
+                manager.requestReviewFlow().addOnCompleteListener { task ->
+                    if (task.isSuccessful) {
+                        manager.launchReviewFlow(hostActivity, task.result)
+                    }
+                }
+            }
+        }
+    }
+
     LaunchedEffect(recordId) {
         isLoading = true
         val loaded = viewModel.loadRecordById(recordId)
@@ -111,7 +132,7 @@ fun DownloadReadyScreen(
     ) { destUri ->
         val current = record
         if (destUri != null && current != null) {
-            viewModel.saveRecordToUri(current.filePath, destUri)
+            viewModel.saveRecordToUri(current.filePath, destUri, trackForReview = true)
         }
     }
 
@@ -246,6 +267,13 @@ fun DownloadReadyScreen(
                                                 contentDescription = "PDF first page preview",
                                                 modifier = Modifier.fillMaxSize(),
                                                 contentScale = ContentScale.Crop
+                                            )
+                                        } else if (current.operationTag == "Locked") {
+                                            Icon(
+                                                imageVector = Icons.Filled.Lock,
+                                                contentDescription = "Locked PDF",
+                                                tint = PaperlyEmerald,
+                                                modifier = Modifier.size(30.dp)
                                             )
                                         } else {
                                             Text("PDF", style = MaterialTheme.typography.labelLarge)
