@@ -27,6 +27,7 @@ class UserPreferencesRepository(private val context: Context) {
         val COMPRESSION_LEVEL = stringPreferencesKey("compression_level")
         val AI_UNLOCKED_UNTIL = longPreferencesKey("ai_unlocked_until")
         val COMPLETED_CORE_PDF_OPS = intPreferencesKey("completed_core_pdf_ops")
+        val AI_SUMMARY_CREDITS = intPreferencesKey("ai_summary_credits")
     }
 
     val isDarkMode: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
@@ -58,6 +59,10 @@ class UserPreferencesRepository(private val context: Context) {
         prefs[Keys.COMPLETED_CORE_PDF_OPS] ?: 0
     }
 
+    val aiSummaryCredits: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
+        prefs[Keys.AI_SUMMARY_CREDITS] ?: 0
+    }
+
     suspend fun setDarkMode(enabled: Boolean) {
         context.paperlyDataStore.edit { it[Keys.DARK_MODE] = enabled }
     }
@@ -84,6 +89,20 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun grantAiSessionUnlock(durationMillis: Long = 30 * 60 * 1000L) {
         context.paperlyDataStore.edit {
             it[Keys.AI_UNLOCKED_UNTIL] = System.currentTimeMillis() + durationMillis
+        }
+    }
+
+    suspend fun grantAiSummaryCredit(amount: Int = 1) {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.AI_SUMMARY_CREDITS] ?: 0
+            it[Keys.AI_SUMMARY_CREDITS] = current + amount
+        }
+    }
+
+    suspend fun consumeAiSummaryCredit() {
+        context.paperlyDataStore.edit {
+            val current = it[Keys.AI_SUMMARY_CREDITS] ?: 0
+            it[Keys.AI_SUMMARY_CREDITS] = (current - 1).coerceAtLeast(0)
         }
     }
 

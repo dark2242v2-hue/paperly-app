@@ -56,14 +56,21 @@ data class PdfAiPayload(
     val displayName: String,
     val pageCount: Int,
     val extractedText: String,
-    val fallbackBitmaps: List<Bitmap>
+    val fallbackBitmaps: List<Bitmap>,
+    val wasTruncated: Boolean = false
 )
 
 sealed interface AiSummaryUiState {
     data object Idle : AiSummaryUiState
     data object Extracting : AiSummaryUiState
     data object Loading : AiSummaryUiState
+    data object Formatting : AiSummaryUiState
     data class Streaming(val text: String, val fileName: String, val pageCount: Int) : AiSummaryUiState
-    data class Success(val text: String, val fileName: String, val pageCount: Int) : AiSummaryUiState
+    data class Success(
+        val text: String,
+        val fileName: String,
+        val pageCount: Int,
+        val wasTruncated: Boolean = false
+    ) : AiSummaryUiState
     data class Error(val message: String) : AiSummaryUiState
 }

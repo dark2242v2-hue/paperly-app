@@ -27,6 +27,7 @@ import com.example.security.SecurityGuard
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -62,6 +63,7 @@ data class WorkspaceUiState(
 data class ProSheetUiState(
     val visible: Boolean = false,
     val triggeredByTool: PdfToolType? = null,
+    val navigateOnUnlock: Boolean = true,
     val isLoadingRewardedAd: Boolean = false,
     val rewardedError: String? = null
 )
@@ -125,6 +127,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), CompressionLevel.BALANCED)
 
     val completedCorePdfOps: StateFlow<Int> = prefsRepository.completedCorePdfOps
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
+
+    val aiSummaryCredits: StateFlow<Int> = prefsRepository.aiSummaryCredits
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), 0)
 
     val isRewardUnlockedForSession: StateFlow<Boolean> = combine(
@@ -229,26 +234,44 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             _snackbarMessage.value = "AI Summarize requires the official Google Play release of Paperly."
             return
         }
-        if (isRewardUnlockedForSession.value) {
+        val canProceed = when (tool) {
+            PdfToolType.AI_SUMMARIZE -> isPro.value || aiSummaryCredits.value > 0
+            PdfToolType.SCAN -> isRewardUnlockedForSession.value
+            else -> true
+        }
+        if (canProceed) {
             prepareToolWorkspace(tool)
             onNavigateToWorkspace()
         } else {
             // Trigger 1 (High-Intent Gate): Show the Pro paywall with 'Start 3-Day Free Trial' as primary
-            // and 'Watch a short video to unlock this session free' as a secondary text button below.
+            // and rewarded unlock CTA as a secondary text button below.
             adManager.preloadRewardedAd()
             billingManager.clearStatusMessage()
             _proSheetState.value = ProSheetUiState(
                 visible = true,
-                triggeredByTool = tool
+                triggeredByTool = tool,
+                navigateOnUnlock = true
             )
         }
     }
 
+    fun openAiSummaryPaywallInWorkspace() {
+        adManager.preloadRewardedAd()
+        billingManager.clearStatusMessage()
+        _proSheetState.value = ProSheetUiState(
+            visible = true,
+            triggeredByTool = PdfToolType.AI_SUMMARIZE,
+            navigateOnUnlock = false
+        )
+    }
+
     fun watchRewardedVideoFromProSheet(
         activity: Activity?,
-        onUnlocked: (PdfToolType) -> Unit
+        onUnlocked: (PdfToolType, Boolean) -> Unit
     ) {
-        val tool = _proSheetState.value.triggeredByTool ?: return
+        val currentSheet = _proSheetState.value
+        val tool = currentSheet.triggeredByTool ?: return
+        val shouldNavigate = currentSheet.navigateOnUnlock
         if (activity == null) {
             _proSheetState.update {
                 it.copy(isLoadingRewardedAd = false, rewardedError = "Unable to present video ad right now.")
@@ -261,17 +284,28 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             activity = activity,
             onUserEarnedReward = {
                 viewModelScope.launch {
-                    prefsRepository.grantAiSessionUnlock()
+                    if (tool == PdfToolType.AI_SUMMARIZE) {
+                        prefsRepository.grantAiSummaryCredit(1)
+                    } else {
+                        prefsRepository.grantAiSessionUnlock()
+                    }
                     _proSheetState.value = ProSheetUiState(visible = false)
-                    prepareToolWorkspace(tool)
-                    onUnlocked(tool)
+                    if (shouldNavigate) {
+                        prepareToolWorkspace(tool)
+                    }
+                    onUnlocked(tool, shouldNavigate)
                 }
             },
             onDismissedWithoutReward = {
+                val errorText = if (tool == PdfToolType.AI_SUMMARIZE) {
+                    "Finish watching the short video to unlock 1 free summary."
+                } else {
+                    "Finish watching the short video to unlock this session free."
+                }
                 _proSheetState.update {
                     it.copy(
                         isLoadingRewardedAd = false,
-                        rewardedError = "Finish watching the short video to unlock this session free."
+                        rewardedError = errorText
                     )
                 }
             },
@@ -508,6 +542,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             )
             return
         }
+        if (!isPro.value && aiSummaryCredits.value <= 0) {
+            openAiSummaryPaywallInWorkspace()
+            return
+        }
         val file = _workspace.value.selectedPdfs.firstOrNull()
         if (file == null) {
             _aiSummaryState.value = AiSummaryUiState.Error("Please select a PDF file first.")
@@ -521,15 +559,21 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val payload = pdfEngine.extractAiPayload(file)
                 _aiSummaryState.value = AiSummaryUiState.Loading
                 val summary = aiRepository.summarizePdf(payload)
+                _aiSummaryState.value = AiSummaryUiState.Formatting
+                delay(240L)
+                if (!isPro.value) {
+                    prefsRepository.consumeAiSummaryCredit()
+                }
                 _aiSummaryState.value = AiSummaryUiState.Success(
                     text = summary,
                     fileName = payload.displayName,
-                    pageCount = payload.pageCount
+                    pageCount = payload.pageCount,
+                    wasTruncated = payload.wasTruncated
                 )
             } catch (e: TimeoutCancellationException) {
                 Log.e(TAG, "AI summary timed out", e)
                 _aiSummaryState.value = AiSummaryUiState.Error(
-                    "Summarization timed out after 90 seconds. Please check your connection and try again."
+                    "Summarization timed out. Please check your connection and try again."
                 )
             } catch (e: CancellationException) {
                 throw e

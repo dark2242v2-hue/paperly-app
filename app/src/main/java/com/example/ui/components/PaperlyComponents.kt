@@ -785,7 +785,11 @@ fun PaperlyProSheet(
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "Watch a short video to unlock this session free",
+                                text = if (state.triggeredByTool == PdfToolType.AI_SUMMARIZE) {
+                                    "Watch a short video to unlock 1 summary free"
+                                } else {
+                                    "Watch a short video to unlock this session free"
+                                },
                                 style = MaterialTheme.typography.labelMedium,
                                 color = MaterialTheme.colorScheme.primary
                             )

@@ -21,65 +21,47 @@ class AiSummarizeRepository {
 
     companion object {
         private const val PRIMARY_ENDPOINT =
-            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.8-flash"
-        private const val FALLBACK_ENDPOINT =
             "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-3.5-flash-lite"
-        private const val MAX_RETRIES_PER_ENDPOINT = 2
-        private const val RETRY_DELAY_MS = 2_000L
+        private const val FALLBACK_ENDPOINT =
+            "https://" + "paperly-ai.dark2242v2.workers.dev" + "?model=gemini-2.5-flash-lite"
+        private const val FALLBACK_MAX_RETRIES = 1
+        private const val FALLBACK_RETRY_DELAY_MS = 1_000L
     }
 
     private class ProxyHttpException(
         val statusCode: Int,
         val errorMessage: String
     ) : IllegalStateException(errorMessage) {
-        val shouldFallbackImmediately: Boolean
-            get() = statusCode == 404
-
-        val isRateLimitedOrBusy: Boolean
-            get() = statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 ||
+        val isFallbackTrigger: Boolean
+            get() = statusCode == 404 || statusCode == 429 || statusCode == 502 || statusCode == 503 || statusCode == 504 ||
                 errorMessage.contains("high demand", ignoreCase = true) ||
                 errorMessage.contains("overloaded", ignoreCase = true) ||
                 errorMessage.contains("unavailable", ignoreCase = true) ||
                 errorMessage.contains("server busy", ignoreCase = true)
-
-        val shouldRetryWithFallback: Boolean
-            get() = shouldFallbackImmediately || isRateLimitedOrBusy
     }
 
-    suspend fun summarizePdf(payload: PdfAiPayload): String = withTimeout(90_000L) {
+    suspend fun summarizePdf(payload: PdfAiPayload): String = withTimeout(45_000L) {
         val requestBodyString = buildRequestPayload(payload).toString()
 
-        // 1. Send POST to paperly-ai.dark2242v2.workers.dev?model=gemini-3.8-flash with retries on 429/503
+        // 1. Primary fast route: ?model=gemini-3.5-flash-lite (2-4s typical response)
         var lastError: Exception? = null
-        for (attempt in 0..MAX_RETRIES_PER_ENDPOINT) {
-            try {
-                return@withTimeout executeGenerateContent(
-                    endpointUrl = PRIMARY_ENDPOINT,
-                    requestBodyString = requestBodyString
-                )
-            } catch (e: CancellationException) {
+        try {
+            return@withTimeout executeGenerateContent(
+                endpointUrl = PRIMARY_ENDPOINT,
+                requestBodyString = requestBodyString
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProxyHttpException) {
+            lastError = e
+            if (!e.isFallbackTrigger) {
                 throw e
-            } catch (e: ProxyHttpException) {
-                lastError = e
-                if (e.shouldFallbackImmediately) {
-                    Log.w(TAG, "$PRIMARY_ENDPOINT returned HTTP ${e.statusCode}, switching to fallback", e)
-                    break
-                } else if (e.isRateLimitedOrBusy) {
-                    Log.w(TAG, "$PRIMARY_ENDPOINT busy (HTTP ${e.statusCode}) on attempt ${attempt + 1}", e)
-                    if (attempt < MAX_RETRIES_PER_ENDPOINT) {
-                        delay(RETRY_DELAY_MS)
-                        continue
-                    }
-                    break
-                } else {
-                    throw e
-                }
             }
+            Log.w(TAG, "$PRIMARY_ENDPOINT failed (HTTP ${e.statusCode}), falling back immediately to $FALLBACK_ENDPOINT", e)
         }
 
-        // 2. Automatic fallback to ?model=gemini-3.5-flash-lite on HTTP 429, 404, or 503
-        Log.i(TAG, "Falling back to $FALLBACK_ENDPOINT due to primary failure (${(lastError as? ProxyHttpException)?.statusCode})")
-        for (attempt in 0..MAX_RETRIES_PER_ENDPOINT) {
+        // 2. Immediate fallback to ?model=gemini-2.5-flash-lite on HTTP 429, 404, or 503
+        for (attempt in 0..FALLBACK_MAX_RETRIES) {
             try {
                 return@withTimeout executeGenerateContent(
                     endpointUrl = FALLBACK_ENDPOINT,
@@ -89,9 +71,9 @@ class AiSummarizeRepository {
                 throw e
             } catch (e: ProxyHttpException) {
                 lastError = e
-                if (e.isRateLimitedOrBusy && attempt < MAX_RETRIES_PER_ENDPOINT) {
+                if (e.isFallbackTrigger && attempt < FALLBACK_MAX_RETRIES) {
                     Log.w(TAG, "$FALLBACK_ENDPOINT busy (HTTP ${e.statusCode}) on attempt ${attempt + 1}", e)
-                    delay(RETRY_DELAY_MS)
+                    delay(FALLBACK_RETRY_DELAY_MS)
                 } else {
                     throw e
                 }
@@ -104,40 +86,56 @@ class AiSummarizeRepository {
     private fun buildRequestPayload(payload: PdfAiPayload): JSONObject {
         val trimmedText = payload.extractedText.trim()
         val partsArray = JSONArray()
+        val truncationHint = if (payload.wasTruncated) {
+            "\nNote: This document is large; the text below was compressed and capped at the first 18,000 characters."
+        } else {
+            ""
+        }
+
+        val formattingGuidelines = """
+            Automatically identify the document type (e.g., study notes, contract/agreement, invoice/financial report, resume/CV, technical manual, research paper, or article) and adapt your terminology and focus accordingly.
+
+            Format your response strictly as a polished executive brief using EXACTLY these four Markdown section headings and concise bullet points with **bold key terms** (such as **important terms**, figures, dates, obligations, or formulas):
+
+            ## Executive Overview
+            Write a crisp 2-sentence core takeaway stating the identified document type and its primary purpose.
+
+            ## Key Facts, Clauses & Concepts
+            - Bullet points highlighting **bold key terms**, critical figures, dates, definitions, or core concepts tailored to this document type.
+
+            ## Critical Details & Comparisons
+            - Bullet points detailing important rules, obligations, clauses, formulas, pricing breakdowns, comparisons, or metrics specific to the document.
+
+            ## Action Items & Key Takeaways
+            - Top 3–5 concrete next steps, deadlines, warnings, or must-remember takeaways.
+
+            Keep the tone authoritative, clear, and concise. Use `- ` for bullets and `**bold**` only for high-signal terms. Do not include any preamble or closing chatter outside these four sections.
+        """.trimIndent()
 
         if (trimmedText.length >= 60) {
             val prompt = """
-                You are Paperly AI, a concise document assistant.
-                Summarize the PDF document "${payload.displayName}" (${payload.pageCount} pages).
-                Output a clean, well-structured bullet-point summary using plain bullet points (•).
-                Organize it into:
-                Overview:
-                • 1–2 concise bullets explaining what this document is about
+                You are Paperly AI, an expert executive document analyst.
+                Analyze the PDF "${payload.displayName}" (${payload.pageCount} pages).$truncationHint
 
-                Key Takeaways:
-                • 4–7 crisp bullet points covering the most important facts, figures, and conclusions
+                $formattingGuidelines
 
-                Action Items / Next Steps:
-                • Relevant actions, deadlines, or key topics (omit only if none apply)
-
-                Avoid markdown bolding clutter (no **asterisks**) so the bullet points read cleanly.
-
-                Document Text:
+                Document Content:
                 $trimmedText
             """.trimIndent()
             partsArray.put(JSONObject().put("text", prompt))
         } else {
             val prompt = """
-                You are Paperly AI, a concise document assistant.
+                You are Paperly AI, an expert executive document analyst.
                 This PDF ("${payload.displayName}", ${payload.pageCount} pages) appears scanned or image-based.
-                Read the attached page images and produce a clean bullet-point summary using plain bullet points (•) with Overview and Key Takeaways.
-                Avoid **markdown asterisks** so the summary reads cleanly.
+                Read the attached page images carefully and produce an executive-grade breakdown.
+
+                $formattingGuidelines
             """.trimIndent()
             partsArray.put(JSONObject().put("text", prompt))
 
             payload.fallbackBitmaps.forEach { bitmap ->
                 val baos = ByteArrayOutputStream()
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 82, baos)
+                bitmap.compress(Bitmap.CompressFormat.JPEG, 80, baos)
                 val base64Image = Base64.encodeToString(baos.toByteArray(), Base64.NO_WRAP)
                 partsArray.put(
                     JSONObject().put(
@@ -166,8 +164,8 @@ class AiSummarizeRepository {
             .put(
                 "generationConfig",
                 JSONObject()
-                    .put("temperature", 0.3)
-                    .put("maxOutputTokens", 1200)
+                    .put("temperature", 0.25)
+                    .put("maxOutputTokens", 1400)
             )
     }
 

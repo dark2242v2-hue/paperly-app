@@ -409,15 +409,33 @@ class PdfEngine(private val context: Context) {
         val srcFile = File(file.localPath)
         require(srcFile.exists()) { "PDF file not found." }
 
-        val extracted = PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+        val rawExtracted = PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
             val stripper = PDFTextStripper().apply {
                 startPage = 1
-                endPage = min(doc.numberOfPages, 25)
+                endPage = min(doc.numberOfPages, 40)
             }
-            stripper.getText(doc).orEmpty().take(28_000)
+            stripper.getText(doc).orEmpty()
         }
 
-        val fallbackBitmaps = if (extracted.trim().length < 80) {
+        val normalizedLines = rawExtracted
+            .replace("\r\n", "\n")
+            .replace('\r', '\n')
+            .lineSequence()
+            .map { line -> line.replace(Regex("[ \\t\\u00A0]+"), " ").trim() }
+            .filter { it.isNotEmpty() }
+            .joinToString("\n")
+
+        val maxChars = 18_000
+        val wasTruncated = normalizedLines.length > maxChars
+        val compressedText = if (wasTruncated) {
+            val slice = normalizedLines.take(maxChars)
+            val lastSpace = slice.lastIndexOf(' ')
+            if (lastSpace > maxChars - 400) slice.substring(0, lastSpace).trimEnd() else slice.trimEnd()
+        } else {
+            normalizedLines
+        }
+
+        val fallbackBitmaps = if (compressedText.length < 80) {
             renderPreviewPages(srcFile.absolutePath, maxPages = 3, maxWidth = 1024)
         } else {
             emptyList()
@@ -426,8 +444,9 @@ class PdfEngine(private val context: Context) {
         PdfAiPayload(
             displayName = file.displayName,
             pageCount = file.pageCount,
-            extractedText = extracted,
-            fallbackBitmaps = fallbackBitmaps
+            extractedText = compressedText,
+            fallbackBitmaps = fallbackBitmaps,
+            wasTruncated = wasTruncated
         )
     }
 
@@ -469,7 +488,19 @@ class PdfEngine(private val context: Context) {
             strokeWidth = 1f
         }
 
-        val normalizedBody = summaryText.replace("**", "").trim()
+        val normalizedBody = summaryText
+            .replace("**", "")
+            .lines()
+            .joinToString("\n") { rawLine ->
+                val trimmed = rawLine.trim()
+                when {
+                    trimmed.startsWith("#") -> "\n${trimmed.trimStart('#', ' ').uppercase()}"
+                    trimmed.startsWith("- ") -> "• ${trimmed.removePrefix("- ").trimStart()}"
+                    trimmed.startsWith("* ") -> "• ${trimmed.removePrefix("* ").trimStart()}"
+                    else -> rawLine
+                }
+            }
+            .trim()
         val bodyLayout = StaticLayout.Builder
             .obtain(normalizedBody, 0, normalizedBody.length, bodyPaint, contentWidth)
             .setAlignment(Layout.Alignment.ALIGN_NORMAL)

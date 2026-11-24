@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -82,12 +83,19 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
@@ -102,6 +110,8 @@ import com.example.data.model.SignaturePlacement
 import com.example.ui.components.SignaturePad
 import com.example.ui.components.renderSignatureBitmap
 import com.example.ui.theme.PaperlyEmerald
+import com.example.ui.theme.PaperlyIndigo
+import com.example.ui.theme.PaperlyViolet
 import com.example.ui.viewmodel.PaperlyViewModel
 import com.example.ui.viewmodel.WorkspaceUiState
 import kotlin.math.roundToInt
@@ -112,6 +122,9 @@ fun ToolWorkspaceScreen(
     workspace: WorkspaceUiState,
     recentRecords: List<PdfRecordEntity>,
     aiSummaryState: AiSummaryUiState,
+    isPro: Boolean,
+    aiSummaryCredits: Int,
+    onUpgradeProClick: () -> Unit,
     viewModel: PaperlyViewModel,
     onBack: () -> Unit,
     onProcessingComplete: (Long) -> Unit
@@ -447,10 +460,18 @@ fun ToolWorkspaceScreen(
                                 AiSummarizeWorkspaceSection(
                                     selectedPdf = workspace.selectedPdfs.firstOrNull(),
                                     aiState = aiSummaryState,
+                                    isPro = isPro,
+                                    aiSummaryCredits = aiSummaryCredits,
                                     onSummarizeClick = viewModel::summarizeSelectedPdf,
+                                    onUpgradeProClick = onUpgradeProClick,
                                     onCopySummary = { summaryText ->
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                        clipboard.setPrimaryClip(ClipData.newPlainText("Paperly AI Summary", summaryText))
+                                        clipboard.setPrimaryClip(
+                                            ClipData.newPlainText(
+                                                "Paperly AI Summary",
+                                                stripMarkdownForPlainText(summaryText)
+                                            )
+                                        )
                                         viewModel.postMessage("Summary copied to clipboard")
                                     },
                                     onExportPdf = { fileName, summaryText ->
@@ -1038,18 +1059,135 @@ private fun SignControlsCard(
     }
 }
 
+private sealed interface SummaryBlock {
+    data class Heading(val title: String) : SummaryBlock
+    data class Bullet(val content: String) : SummaryBlock
+    data class Numbered(val prefix: String, val content: String) : SummaryBlock
+    data class Paragraph(val content: String) : SummaryBlock
+}
+
+private val NUMBERED_ITEM_REGEX = Regex("^(\\d+[.)])\\s+(.*)$")
+private val BOLD_SEGMENT_REGEX = Regex("\\*\\*(.+?)\\*\\*")
+
+private fun parseSummaryBlocks(raw: String): List<SummaryBlock> {
+    return raw.lines()
+        .map { it.trim() }
+        .filter { it.isNotEmpty() }
+        .map { line ->
+            val numberedMatch = NUMBERED_ITEM_REGEX.matchEntire(line)
+            val looksLikePlainHeading = line.endsWith(":") &&
+                !line.startsWith("•") &&
+                !line.startsWith("- ") &&
+                !line.startsWith("* ") &&
+                numberedMatch == null &&
+                line.length <= 64
+            when {
+                line.startsWith("#") || looksLikePlainHeading -> {
+                    val cleanTitle = line.trimStart('#', ' ')
+                        .replace("**", "")
+                        .trim()
+                    SummaryBlock.Heading(cleanTitle)
+                }
+                line.startsWith("- ") || line.startsWith("* ") || line.startsWith("•") -> {
+                    val body = line.removePrefix("- ")
+                        .removePrefix("* ")
+                        .removePrefix("•")
+                        .trim()
+                    SummaryBlock.Bullet(body)
+                }
+                numberedMatch != null -> {
+                    SummaryBlock.Numbered(
+                        prefix = numberedMatch.groupValues[1],
+                        content = numberedMatch.groupValues[2].trim()
+                    )
+                }
+                else -> SummaryBlock.Paragraph(line)
+            }
+        }
+}
+
+private fun parseBoldMarkdown(text: String, boldColor: Color): AnnotatedString {
+    return buildAnnotatedString {
+        var cursor = 0
+        for (match in BOLD_SEGMENT_REGEX.findAll(text)) {
+            if (match.range.first > cursor) {
+                append(text.substring(cursor, match.range.first).replace("**", ""))
+            }
+            withStyle(SpanStyle(fontWeight = FontWeight.Bold, color = boldColor)) {
+                append(match.groupValues[1])
+            }
+            cursor = match.range.last + 1
+        }
+        if (cursor < text.length) {
+            append(text.substring(cursor).replace("**", ""))
+        }
+    }
+}
+
+private fun stripMarkdownForPlainText(raw: String): String {
+    return raw.replace("**", "")
+        .lines()
+        .joinToString("\n") { line ->
+            val trimmed = line.trim()
+            if (trimmed.startsWith("#")) trimmed.trimStart('#', ' ') else line
+        }
+        .trim()
+}
+
 @Composable
 private fun AiSummarizeWorkspaceSection(
     selectedPdf: PickedPdfInfo?,
     aiState: AiSummaryUiState,
+    isPro: Boolean,
+    aiSummaryCredits: Int,
     onSummarizeClick: () -> Unit,
+    onUpgradeProClick: () -> Unit,
     onCopySummary: (String) -> Unit,
     onExportPdf: (String, String) -> Unit
 ) {
+    val isBusy = aiState is AiSummaryUiState.Extracting ||
+        aiState is AiSummaryUiState.Loading ||
+        aiState is AiSummaryUiState.Formatting
+
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        if (!isPro) {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = if (aiSummaryCredits > 0) {
+                    PaperlyEmerald.copy(alpha = 0.10f)
+                } else {
+                    MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f)
+                },
+                border = BorderStroke(
+                    1.dp,
+                    if (aiSummaryCredits > 0) PaperlyEmerald.copy(alpha = 0.35f)
+                    else MaterialTheme.colorScheme.outline
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("ai_summary_credit_banner")
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = when {
+                            aiSummaryCredits == 1 -> "1 free summary credit ready"
+                            aiSummaryCredits > 1 -> "$aiSummaryCredits free summary credits ready"
+                            else -> "Watch a short video or start a 3-day trial to summarize"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (aiSummaryCredits > 0) PaperlyEmerald else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+
         Button(
             onClick = onSummarizeClick,
-            enabled = selectedPdf != null && aiState !is AiSummaryUiState.Extracting && aiState !is AiSummaryUiState.Loading,
+            enabled = selectedPdf != null && !isBusy,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(54.dp)
@@ -1061,8 +1199,9 @@ private fun AiSummarizeWorkspaceSection(
             Text(
                 text = when (aiState) {
                     is AiSummaryUiState.Extracting -> "Extracting PDF text..."
-                    is AiSummaryUiState.Loading -> "Summarizing with Gemini..."
-                    is AiSummaryUiState.Streaming -> "Summarizing..."
+                    is AiSummaryUiState.Loading -> "Analyzing document..."
+                    is AiSummaryUiState.Formatting -> "Formatting summary..."
+                    is AiSummaryUiState.Streaming -> "Analyzing document..."
                     else -> "Summarize with Gemini AI"
                 },
                 style = MaterialTheme.typography.labelLarge
@@ -1071,34 +1210,90 @@ private fun AiSummarizeWorkspaceSection(
 
         when (aiState) {
             AiSummaryUiState.Idle -> Unit
-            AiSummaryUiState.Extracting, AiSummaryUiState.Loading -> {
+            AiSummaryUiState.Extracting, AiSummaryUiState.Loading, AiSummaryUiState.Formatting -> {
+                val activeStepIndex = when (aiState) {
+                    AiSummaryUiState.Extracting -> 0
+                    AiSummaryUiState.Loading -> 1
+                    AiSummaryUiState.Formatting -> 2
+                    else -> 0
+                }
+                val stepTitle = when (aiState) {
+                    AiSummaryUiState.Extracting -> "Extracting PDF text..."
+                    AiSummaryUiState.Loading -> "Analyzing document..."
+                    AiSummaryUiState.Formatting -> "Formatting summary..."
+                    else -> "Analyzing document..."
+                }
+                val stepSubtitle = when (aiState) {
+                    AiSummaryUiState.Extracting -> "Cleaning and compressing text for fast upload"
+                    AiSummaryUiState.Loading -> "Detecting document type & key insights"
+                    AiSummaryUiState.Formatting -> "Structuring executive brief & highlights"
+                    else -> ""
+                }
+
                 Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("ai_summary_progress_card"),
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                 ) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(20.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            .padding(18.dp),
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp))
-                        Column {
-                            Text(
-                                text = if (aiState is AiSummaryUiState.Extracting) {
-                                    "Extracting PDF text on-device..."
-                                } else {
-                                    "Generating bullet-point summary..."
-                                },
-                                style = MaterialTheme.typography.titleSmall
-                            )
-                            Text(
-                                text = "Sending request to Paperly AI service",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 3.dp)
+                            Column {
+                                Text(
+                                    text = stepTitle,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = stepSubtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            listOf("Extract", "Analyze", "Format").forEachIndexed { idx, label ->
+                                val isActive = idx == activeStepIndex
+                                val isCompleted = idx < activeStepIndex
+                                Surface(
+                                    modifier = Modifier.weight(1f),
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = when {
+                                        isActive -> MaterialTheme.colorScheme.primaryContainer
+                                        isCompleted -> PaperlyEmerald.copy(alpha = 0.14f)
+                                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    }
+                                ) {
+                                    Text(
+                                        text = "${idx + 1}. $label",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = if (isActive) FontWeight.Bold else FontWeight.Medium,
+                                        color = when {
+                                            isActive -> MaterialTheme.colorScheme.primary
+                                            isCompleted -> PaperlyEmerald
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -1115,13 +1310,10 @@ private fun AiSummarizeWorkspaceSection(
                     is AiSummaryUiState.Success -> aiState.fileName
                     else -> ""
                 }
+                val wasTruncated = (aiState as? AiSummaryUiState.Success)?.wasTruncated == true
                 val isDone = aiState is AiSummaryUiState.Success
-                val cleanedLines = remember(summaryText) {
-                    summaryText.replace("**", "")
-                        .lines()
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                }
+                val blocks = remember(summaryText) { parseSummaryBlocks(summaryText) }
+                val boldTextColor = MaterialTheme.colorScheme.onSurface
 
                 Card(
                     modifier = Modifier
@@ -1152,8 +1344,9 @@ private fun AiSummarizeWorkspaceSection(
                                     modifier = Modifier.size(18.dp)
                                 )
                                 Text(
-                                    text = "Summary • $fileName",
+                                    text = "Executive Brief • $fileName",
                                     style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
@@ -1168,24 +1361,42 @@ private fun AiSummarizeWorkspaceSection(
                             }
                         }
 
+                        if (wasTruncated) {
+                            Text(
+                                text = "Summarized the first 18,000 cleaned characters for rapid 2–4s delivery.",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
                         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
 
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            cleanedLines.forEach { line ->
-                                val isHeading = (line.endsWith(":") && !line.startsWith("•") && !line.startsWith("-")) ||
-                                    line.startsWith("#")
-                                val isBullet = line.startsWith("•") || line.startsWith("- ") || line.startsWith("* ")
-                                when {
-                                    isHeading -> {
-                                        Text(
-                                            text = line.trimStart('#', ' '),
-                                            style = MaterialTheme.typography.titleSmall,
-                                            color = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.padding(top = 4.dp)
-                                        )
+                            blocks.forEachIndexed { index, block ->
+                                when (block) {
+                                    is SummaryBlock.Heading -> {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            modifier = Modifier.padding(top = if (index == 0) 2.dp else 8.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .width(3.dp)
+                                                    .height(16.dp)
+                                                    .clip(CircleShape)
+                                                    .background(MaterialTheme.colorScheme.primary)
+                                            )
+                                            Text(
+                                                text = block.title,
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
                                     }
-                                    isBullet -> {
-                                        val bulletBody = line.removePrefix("•").removePrefix("-").removePrefix("*").trim()
+
+                                    is SummaryBlock.Bullet -> {
                                         Row(
                                             horizontalArrangement = Arrangement.spacedBy(10.dp),
                                             verticalAlignment = Alignment.Top
@@ -1193,18 +1404,39 @@ private fun AiSummarizeWorkspaceSection(
                                             Text(
                                                 text = "•",
                                                 style = MaterialTheme.typography.bodyLarge,
+                                                fontWeight = FontWeight.Bold,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
                                             Text(
-                                                text = bulletBody,
+                                                text = parseBoldMarkdown(block.content, boldTextColor),
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurface
                                             )
                                         }
                                     }
-                                    else -> {
+
+                                    is SummaryBlock.Numbered -> {
+                                        Row(
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.Top
+                                        ) {
+                                            Text(
+                                                text = block.prefix,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                            Text(
+                                                text = parseBoldMarkdown(block.content, boldTextColor),
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                        }
+                                    }
+
+                                    is SummaryBlock.Paragraph -> {
                                         Text(
-                                            text = line,
+                                            text = parseBoldMarkdown(block.content, boldTextColor),
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
@@ -1242,6 +1474,49 @@ private fun AiSummarizeWorkspaceSection(
                                     Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
                                     Text("Export as PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+
+                            if (!isPro) {
+                                Surface(
+                                    onClick = onUpgradeProClick,
+                                    shape = RoundedCornerShape(50),
+                                    color = PaperlyIndigo.copy(alpha = 0.08f),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        Brush.horizontalGradient(
+                                            listOf(
+                                                PaperlyIndigo.copy(alpha = 0.35f),
+                                                PaperlyViolet.copy(alpha = 0.35f)
+                                            )
+                                        )
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("summary_upgrade_pro_pill")
+                                ) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(horizontal = 14.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.WorkspacePremium,
+                                            contentDescription = null,
+                                            tint = PaperlyIndigo,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                            text = "Upgrade to Pro for unlimited instant summaries without ads →",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = PaperlyIndigo
+                                        )
+                                    }
                                 }
                             }
                         }

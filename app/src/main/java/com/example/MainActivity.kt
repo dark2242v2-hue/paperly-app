@@ -95,6 +95,7 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
     val billingState by viewModel.billingState.collectAsStateWithLifecycle()
     val defaultCompression by viewModel.defaultCompression.collectAsStateWithLifecycle()
     val completedCorePdfOps by viewModel.completedCorePdfOps.collectAsStateWithLifecycle()
+    val aiSummaryCredits by viewModel.aiSummaryCredits.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val aiSummaryState by viewModel.aiSummaryState.collectAsStateWithLifecycle()
@@ -128,9 +129,14 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
     LaunchedEffect(isPro) {
         val pendingTool = proSheetState.triggeredByTool
         if (isPro && proSheetState.visible && pendingTool != null) {
+            val shouldNavigate = proSheetState.navigateOnUnlock
             viewModel.dismissProSheet()
-            viewModel.prepareToolWorkspace(pendingTool)
-            navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
+            if (shouldNavigate) {
+                viewModel.prepareToolWorkspace(pendingTool)
+                navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
+            } else if (pendingTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
+                viewModel.summarizeSelectedPdf()
+            }
         }
     }
 
@@ -245,6 +251,9 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
                         workspace = workspace,
                         recentRecords = recentRecords,
                         aiSummaryState = aiSummaryState,
+                        isPro = isPro,
+                        aiSummaryCredits = aiSummaryCredits,
+                        onUpgradeProClick = viewModel::openProSheet,
                         viewModel = viewModel,
                         onBack = { navController.popBackStack() },
                         onProcessingComplete = { recordId ->
@@ -300,8 +309,12 @@ fun PaperlyApp(viewModel: PaperlyViewModel) {
             viewModel.subscribeToPlan(activity, planType)
         },
         onWatchRewardedVideo = {
-            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool ->
-                navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
+            viewModel.watchRewardedVideoFromProSheet(activity) { unlockedTool, shouldNavigate ->
+                if (shouldNavigate) {
+                    navController.navigate(PaperlyRoutes.toolWorkspace(unlockedTool))
+                } else if (unlockedTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
+                    viewModel.summarizeSelectedPdf()
+                }
             }
         },
         onRestorePurchases = viewModel::restorePurchases,
