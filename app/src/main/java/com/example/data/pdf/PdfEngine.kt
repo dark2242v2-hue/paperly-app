@@ -48,6 +48,11 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+data class UnlockedPdfResult(
+    val unlockedFilePath: String,
+    val pageCount: Int
+)
+
 class PdfEngine(private val context: Context) {
 
     val pdfsDir: File by lazy {
@@ -105,19 +110,75 @@ class PdfEngine(private val context: Context) {
         } ?: throw IllegalStateException("Unable to read opened PDF file.")
 
         val pageCount = countPages(outFile)
-        if (pageCount <= 0) {
-            outFile.delete()
-            throw IllegalStateException("Opened file is not a valid PDF or is password-protected.")
+        if (pageCount > 0) {
+            return@withContext PdfRecordEntity(
+                displayName = outFile.name,
+                filePath = outFile.absolutePath,
+                pageCount = pageCount,
+                sizeBytes = outFile.length(),
+                originalSizeBytes = null,
+                operationTag = "Opened"
+            )
         }
 
-        PdfRecordEntity(
-            displayName = outFile.name,
-            filePath = outFile.absolutePath,
-            pageCount = pageCount,
-            sizeBytes = outFile.length(),
-            originalSizeBytes = null,
-            operationTag = "Opened"
-        )
+        if (requiresPasswordSync(outFile)) {
+            return@withContext PdfRecordEntity(
+                displayName = outFile.name,
+                filePath = outFile.absolutePath,
+                pageCount = 0,
+                sizeBytes = outFile.length(),
+                originalSizeBytes = null,
+                operationTag = "Locked"
+            )
+        }
+
+        outFile.delete()
+        throw IllegalStateException("Opened file is not a valid PDF.")
+    }
+
+    suspend fun requiresPassword(filePath: String): Boolean = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        requiresPasswordSync(File(filePath))
+    }
+
+    suspend fun unlockPdfForViewing(filePath: String, password: String): UnlockedPdfResult = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        val srcFile = File(filePath)
+        require(srcFile.exists()) { "PDF file not found." }
+        if (password.isEmpty()) {
+            throw IllegalArgumentException("Incorrect password, please try again")
+        }
+
+        val unlockedDir = File(context.cacheDir, "unlocked_view").apply { mkdirs() }
+        val outFile = File(unlockedDir, "view_${UUID.randomUUID()}.pdf")
+        try {
+            PDDocument.load(srcFile, password, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                val pages = doc.numberOfPages
+                doc.isAllSecurityToBeRemoved = true
+                doc.save(outFile)
+                UnlockedPdfResult(
+                    unlockedFilePath = outFile.absolutePath,
+                    pageCount = pages
+                )
+            }
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalArgumentException("Incorrect password, please try again", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
+        }
+    }
+
+    private fun requiresPasswordSync(file: File): Boolean {
+        if (!file.exists()) return false
+        return try {
+            PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { false }
+        } catch (_: InvalidPasswordException) {
+            true
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun fromExistingRecord(record: PdfRecordEntity): PickedPdfInfo {

@@ -248,7 +248,6 @@ fun PaperlyApp(
                         recentRecords = recentRecords,
                         onToolSelected = { tool ->
                             if (tool == PdfToolType.AI_SUMMARIZE ||
-                                tool == PdfToolType.SCAN ||
                                 tool == PdfToolType.SIGN
                             ) {
                                 viewModel.openRewardedGateOrProceed(tool) {

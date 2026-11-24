@@ -69,11 +69,26 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.filled.LockOpen
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.PdfToolType
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,11 +99,58 @@ fun PdfViewerScreen(
     onBack: () -> Unit
 ) {
     val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
+    var unlockedRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
+    var isPasswordProtected by remember { mutableStateOf(false) }
+    var passwordInput by remember { mutableStateOf("") }
+    var passwordVisible by remember { mutableStateOf(false) }
+    var isUnlocking by remember { mutableStateOf(false) }
+    var passwordError by remember { mutableStateOf<String?>(null) }
 
     LaunchedEffect(recordId) {
-        record = viewModel.loadRecordById(recordId)
+        val loaded = viewModel.loadRecordById(recordId)
+        record = loaded
+        unlockedRecord = null
+        passwordInput = ""
+        passwordError = null
+        isUnlocking = false
+        isPasswordProtected = if (loaded != null) {
+            loaded.operationTag == "Locked" || viewModel.pdfEngine.requiresPassword(loaded.filePath)
+        } else {
+            false
+        }
     }
+
+    fun attemptUnlock() {
+        val currentRec = record ?: return
+        if (isUnlocking) return
+        if (passwordInput.isEmpty()) {
+            passwordError = "Enter PDF Password"
+            return
+        }
+        isUnlocking = true
+        passwordError = null
+        coroutineScope.launch {
+            try {
+                val result = viewModel.pdfEngine.unlockPdfForViewing(currentRec.filePath, passwordInput)
+                unlockedRecord = currentRec.copy(
+                    filePath = result.unlockedFilePath,
+                    pageCount = result.pageCount,
+                    operationTag = "Unlocked"
+                )
+                passwordError = null
+            } catch (e: Exception) {
+                passwordError = e.localizedMessage?.takeIf { it.isNotBlank() }
+                    ?: "Incorrect password, please try again"
+            } finally {
+                isUnlocking = false
+            }
+        }
+    }
+
+    val activeRecord = unlockedRecord ?: record
+    val isLockedView = isPasswordProtected && unlockedRecord == null
 
     val saveLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("application/pdf")
@@ -112,9 +174,14 @@ fun PdfViewerScreen(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        record?.let {
+                        activeRecord?.let {
+                            val subtitleText = if (isLockedView) {
+                                "Encrypted PDF • ${formatFileSize(it.sizeBytes)}"
+                            } else {
+                                "${it.pageCount} page(s) • ${formatFileSize(it.sizeBytes)}"
+                            }
                             Text(
-                                text = "${it.pageCount} page(s) • ${formatFileSize(it.sizeBytes)}",
+                                text = subtitleText,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -159,8 +226,8 @@ fun PdfViewerScreen(
             )
         },
         bottomBar = {
-            record?.let { rec ->
-                if (rec.operationTag != "Locked") {
+            activeRecord?.let { rec ->
+                if (!isLockedView) {
                     Surface(
                         color = MaterialTheme.colorScheme.surface,
                         tonalElevation = 2.dp
@@ -234,7 +301,7 @@ fun PdfViewerScreen(
             }
         }
     ) { innerPadding ->
-        val current = record
+        val current = activeRecord
         if (current == null) {
             Box(
                 modifier = Modifier
@@ -244,7 +311,7 @@ fun PdfViewerScreen(
             ) {
                 CircularProgressIndicator()
             }
-        } else if (current.operationTag == "Locked") {
+        } else if (isLockedView) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -256,12 +323,15 @@ fun PdfViewerScreen(
                     shape = RoundedCornerShape(22.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                    modifier = Modifier.widthIn(max = 420.dp)
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 420.dp)
+                        .testTag("viewer_password_card")
                 ) {
                     Column(
                         modifier = Modifier.padding(24.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         Box(
                             modifier = Modifier
@@ -283,11 +353,95 @@ fun PdfViewerScreen(
                             fontWeight = FontWeight.Bold
                         )
                         Text(
-                            text = "This document is encrypted with 128-bit password protection. Save or share it, then open in a PDF reader with your password.",
+                            text = "Enter the document password to unlock and view pages right inside Paperly.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center
                         )
+
+                        OutlinedTextField(
+                            value = passwordInput,
+                            onValueChange = {
+                                passwordInput = it
+                                if (passwordError != null) passwordError = null
+                            },
+                            label = { Text("Enter PDF Password") },
+                            singleLine = true,
+                            isError = passwordError != null,
+                            supportingText = passwordError?.let { err ->
+                                {
+                                    Text(
+                                        text = err,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                }
+                            },
+                            visualTransformation = if (passwordVisible) {
+                                VisualTransformation.None
+                            } else {
+                                PasswordVisualTransformation()
+                            },
+                            keyboardOptions = KeyboardOptions(
+                                keyboardType = KeyboardType.Password,
+                                imeAction = ImeAction.Done
+                            ),
+                            keyboardActions = KeyboardActions(
+                                onDone = { attemptUnlock() }
+                            ),
+                            trailingIcon = {
+                                IconButton(
+                                    onClick = { passwordVisible = !passwordVisible },
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("viewer_password_visibility_toggle")
+                                ) {
+                                    Icon(
+                                        imageVector = if (passwordVisible) {
+                                            Icons.Filled.VisibilityOff
+                                        } else {
+                                            Icons.Filled.Visibility
+                                        },
+                                        contentDescription = if (passwordVisible) "Hide password" else "Show password"
+                                    )
+                                }
+                            },
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("viewer_password_input")
+                        )
+
+                        Button(
+                            onClick = { attemptUnlock() },
+                            enabled = !isUnlocking,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 50.dp)
+                                .testTag("viewer_unlock_button")
+                        ) {
+                            if (isUnlocking) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(18.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Unlocking…")
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.LockOpen,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "Unlock & View",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
                     }
                 }
             }

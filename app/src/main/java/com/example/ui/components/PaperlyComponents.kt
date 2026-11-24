@@ -6,8 +6,10 @@ import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
+import android.graphics.drawable.AdaptiveIconDrawable
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.os.Build
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button as AndroidButton
@@ -18,6 +20,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -99,8 +102,11 @@ import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -108,6 +114,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -137,6 +144,27 @@ fun PaperlyTopBar(
     onProClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
+    val launcherIconBitmap = remember(context) {
+        runCatching {
+            val drawable = ContextCompat.getDrawable(context, R.mipmap.ic_launcher)
+                ?: return@runCatching null
+            val sizePx = 144
+            val bmp = Bitmap.createBitmap(sizePx, sizePx, Bitmap.Config.ARGB_8888)
+            val canvas = AndroidCanvas(bmp)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                drawable is AdaptiveIconDrawable
+            ) {
+                val bleed = (sizePx * 0.25f).toInt()
+                drawable.setBounds(-bleed, -bleed, sizePx + bleed, sizePx + bleed)
+            } else {
+                drawable.setBounds(0, 0, sizePx, sizePx)
+            }
+            drawable.draw(canvas)
+            bmp.asImageBitmap()
+        }.getOrNull()
+    }
+
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -146,25 +174,34 @@ fun PaperlyTopBar(
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(
+            Surface(
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(11.dp))
-                    .background(
-                        Brush.linearGradient(
-                            listOf(MaterialTheme.colorScheme.primary, PaperlyViolet)
-                        )
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = "P",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold
+                    .size(40.dp)
+                    .testTag("top_bar_app_icon"),
+                shape = RoundedCornerShape(12.dp),
+                shadowElevation = 4.dp,
+                border = BorderStroke(
+                    width = 1.dp,
+                    color = if (isDarkMode) Color.White.copy(alpha = 0.16f) else Color.Black.copy(alpha = 0.08f)
                 )
+            ) {
+                if (launcherIconBitmap != null) {
+                    Image(
+                        bitmap = launcherIconBitmap,
+                        contentDescription = stringResource(R.string.app_name),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(40.dp)
+                    )
+                } else {
+                    Image(
+                        painter = painterResource(id = R.drawable.img_app_icon_fg),
+                        contentDescription = stringResource(R.string.app_name),
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
             }
             Column {
                 Text(
@@ -488,7 +525,6 @@ fun PaperlyProSheet(
 
     val triggeredToolLabel = when (state.triggeredByTool) {
         PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
-        PdfToolType.SCAN -> "Unlock Scan to PDF"
         PdfToolType.SIGN -> "Unlock E-Sign PDF"
         else -> null
     }
@@ -569,7 +605,7 @@ fun PaperlyProSheet(
 
             listOf(
                 "Zero banner, native, or rewarded video ads",
-                "Unlimited instant AI Summarize & Scan to PDF",
+                "Unlimited instant AI Summarize & E-Sign PDF",
                 "100% private on-device PDF processing"
             ).forEach { perk ->
                 Row(

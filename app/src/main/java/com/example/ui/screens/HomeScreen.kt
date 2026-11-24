@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.Draw
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -42,7 +43,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
@@ -151,20 +154,89 @@ fun HomeScreen(
             verticalArrangement = Arrangement.spacedBy(20.dp)
         ) {
             item {
-                Column(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+                val heroGradient = if (isDark) {
+                    Brush.linearGradient(
+                        colors = listOf(
+                            Color(0xFF1E1B4B).copy(alpha = 0.78f),
+                            MaterialTheme.colorScheme.surfaceVariant,
+                            MaterialTheme.colorScheme.surface
+                        )
+                    )
+                } else {
+                    Brush.linearGradient(
+                        colors = listOf(
+                            PaperlyIndigoTint,
+                            Color(0xFFF1F5F9),
+                            MaterialTheme.colorScheme.surface
+                        )
+                    )
+                }
+
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .padding(top = 4.dp)
+                        .testTag("home_hero_banner_card"),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isDark) {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                        } else {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                        }
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.home_headline),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Text(
-                        text = stringResource(R.string.home_subheadline),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(heroGradient)
+                            .padding(horizontal = 18.dp, vertical = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = PaperlyEmerald.copy(alpha = if (isDark) 0.18f else 0.12f),
+                            border = BorderStroke(1.dp, PaperlyEmerald.copy(alpha = 0.28f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.VerifiedUser,
+                                    contentDescription = null,
+                                    tint = PaperlyEmerald,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "100% Offline & Private",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = PaperlyEmerald
+                                )
+                            }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = stringResource(R.string.home_headline),
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.home_subheadline),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
                 }
             }
 

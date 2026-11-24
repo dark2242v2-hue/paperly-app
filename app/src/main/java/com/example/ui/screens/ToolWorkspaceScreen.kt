@@ -8,7 +8,6 @@ import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
-import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
@@ -52,6 +51,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -63,7 +63,6 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenWith
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
@@ -85,7 +84,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -178,12 +176,6 @@ fun ToolWorkspaceScreen(
         if (uri != null) {
             viewModel.addPickedPdfUris(listOf(uri))
         }
-    }
-
-    val photoPickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 20)
-    ) { uris ->
-        viewModel.importScanImageUris(uris, fromSmartScan = false)
     }
 
     val smartScannerLauncher = rememberLauncherForActivityResult(
@@ -416,11 +408,6 @@ fun ToolWorkspaceScreen(
                             isLaunchingSmartScanner = isLaunchingSmartScanner,
                             onSmartScan = { launchSmartDocumentScanner() },
                             onOpenMultiShotCamera = onOpenMultiShotCamera,
-                            onPickPhotos = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                                )
-                            },
                             onMoveLeft = viewModel::moveScanImageLeft,
                             onMoveRight = viewModel::moveScanImageRight,
                             onRemoveImage = viewModel::removeScanImageAt,
@@ -913,7 +900,6 @@ private fun ScanWorkspaceContent(
     isLaunchingSmartScanner: Boolean,
     onSmartScan: () -> Unit,
     onOpenMultiShotCamera: () -> Unit,
-    onPickPhotos: () -> Unit,
     onMoveLeft: (Int) -> Unit,
     onMoveRight: (Int) -> Unit,
     onRemoveImage: (Int) -> Unit,
@@ -998,12 +984,18 @@ private fun ScanWorkspaceContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (isLaunchingSmartScanner) "Opening Smart Scanner…" else "Auto-crop • Filters • Clean",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold
-                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = if (isLaunchingSmartScanner) "Opening Smart Scanner…" else "Auto-crop • Filters • Clean",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
+                    }
                     if (isLaunchingSmartScanner) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(18.dp),
@@ -1021,7 +1013,7 @@ private fun ScanWorkspaceContent(
             }
         }
 
-        // Mode 2: Normal Photo / Gallery (Multi-Shot)
+        // Mode 2: Normal Photo / Gallery (Multi-Shot) — Unified card layout matching Smart Scan
         Card(
             onClick = onOpenMultiShotCamera,
             shape = RoundedCornerShape(20.dp),
@@ -1033,12 +1025,12 @@ private fun ScanWorkspaceContent(
         ) {
             Column(
                 modifier = Modifier.padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
@@ -1051,52 +1043,61 @@ private fun ScanWorkspaceContent(
                             imageVector = Icons.Filled.CameraAlt,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.secondary,
-                            modifier = Modifier.size(23.dp)
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                    Column(modifier = Modifier.weight(1f)) {
+
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.secondaryContainer
+                    ) {
                         Text(
-                            text = stringResource(R.string.scan_mode_normal_title),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-                        Text(
-                            text = stringResource(R.string.scan_mode_normal_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            text = "Multi-Shot",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                         )
                     }
                 }
 
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        text = stringResource(R.string.scan_mode_normal_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = stringResource(R.string.scan_mode_normal_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Button(
-                        onClick = onOpenMultiShotCamera,
-                        modifier = Modifier
-                            .weight(1f)
-                            .heightIn(min = 48.dp)
-                            .testTag("scan_take_photo_button"),
-                        shape = RoundedCornerShape(12.dp)
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surfaceVariant
                     ) {
-                        Icon(Icons.Filled.CameraAlt, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Multi-Shot Camera")
+                        Text(
+                            text = "Multi-Shot Camera • Gallery Import",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                        )
                     }
-
-                    OutlinedButton(
-                        onClick = onPickPhotos,
-                        modifier = Modifier
-                            .heightIn(min = 48.dp)
-                            .testTag("scan_pick_photos_button"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Filled.PhotoLibrary, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Gallery")
-                    }
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
                 }
             }
         }
@@ -1249,26 +1250,125 @@ private fun ScanWorkspaceContent(
                         }
                     }
 
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("scan_color_mode_card")
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Enhance B&W Contrast", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = "Apply crisp B&W scan filter when building PDF",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.AutoFixHigh,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(19.dp)
+                                    )
+                                }
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = "Scan Color Mode",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = if (enhanceContrast) {
+                                            "High-contrast black & white document filter"
+                                        } else {
+                                            "Keeps natural or Smart Scanner colors"
+                                        },
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            Surface(
+                                shape = CircleShape,
+                                color = MaterialTheme.colorScheme.surface,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(4.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    val originalSelected = !enhanceContrast
+                                    Surface(
+                                        onClick = { onToggleEnhance(false) },
+                                        shape = CircleShape,
+                                        color = if (originalSelected) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("scan_color_mode_original")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "Original",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = if (originalSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (originalSelected) {
+                                                    MaterialTheme.colorScheme.onPrimary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+                                    }
+
+                                    val bwSelected = enhanceContrast
+                                    Surface(
+                                        onClick = { onToggleEnhance(true) },
+                                        shape = CircleShape,
+                                        color = if (bwSelected) {
+                                            MaterialTheme.colorScheme.primary
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("scan_color_mode_bw")
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "Crisp B&W",
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = if (bwSelected) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (bwSelected) {
+                                                    MaterialTheme.colorScheme.onPrimary
+                                                } else {
+                                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                                }
+                                            )
+                                        }
+                                    }
+                                }
+                            }
                         }
-                        Switch(
-                            checked = enhanceContrast,
-                            onCheckedChange = onToggleEnhance,
-                            modifier = Modifier.testTag("scan_enhance_switch")
-                        )
                     }
 
                     OutputNameField(

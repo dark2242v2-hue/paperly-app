@@ -257,7 +257,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
         val canProceed = when (tool) {
             PdfToolType.AI_SUMMARIZE -> isPro.value || aiSummaryCredits.value > 0
-            PdfToolType.SCAN, PdfToolType.SIGN -> isRewardUnlockedForSession.value
+            PdfToolType.SIGN -> isRewardUnlockedForSession.value
             else -> true
         }
         if (canProceed) {
@@ -297,7 +297,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
         val canProceed = when (tool) {
             PdfToolType.AI_SUMMARIZE -> isPro.value || aiSummaryCredits.value > 0
-            PdfToolType.SCAN, PdfToolType.SIGN -> isRewardUnlockedForSession.value
+            PdfToolType.SIGN -> isRewardUnlockedForSession.value
             else -> true
         }
         if (canProceed) {
@@ -497,10 +497,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 return@launch
             }
             _workspace.update { state ->
-                val shouldKeepNativeScanLook = fromSmartScan && state.scanImageUris.isEmpty()
+                val isFirstBatch = state.scanImageUris.isEmpty()
                 state.copy(
                     scanImageUris = state.scanImageUris + imported,
-                    scanEnhanceContrast = if (shouldKeepNativeScanLook) false else state.scanEnhanceContrast,
+                    scanEnhanceContrast = if (isFirstBatch) !fromSmartScan else state.scanEnhanceContrast,
                     processing = state.processing.copy(errorMessage = null)
                 )
             }
@@ -539,7 +539,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun clearScanImages() {
-        _workspace.update { it.copy(scanImageUris = emptyList()) }
+        _workspace.update { it.copy(scanImageUris = emptyList(), scanEnhanceContrast = true) }
     }
 
     fun toggleScanEnhance(enabled: Boolean) {
