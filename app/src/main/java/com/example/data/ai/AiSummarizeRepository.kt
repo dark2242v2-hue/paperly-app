@@ -110,6 +110,8 @@ class AiSummarizeRepository {
             - Top 3–5 concrete next steps, deadlines, warnings, or must-remember takeaways.
 
             Keep the tone authoritative, clear, and concise. Use `- ` for bullets and `**bold**` only for high-signal terms. Do not include any preamble or closing chatter outside these four sections.
+
+            CRITICAL MATH & CHEMISTRY RULE: NEVER output LaTeX math syntax (no $, $$, \text{}, \mathrm{}, \ce{}, \rightarrow, \frac, ^, or _ formatting). Write all chemical formulas, ions, equations, reactions, exponents, and math using clean Unicode characters (e.g., Ca²⁺, CO₃²⁻, CO₂, CaCO₃, H₂O, →, ⇌, ×, ÷, ≤, ≥, ±, °, x²).
         """.trimIndent()
 
         if (trimmedText.length >= 60) {
@@ -239,16 +241,212 @@ class AiSummarizeRepository {
                         }
                     }
                     val parsed = summaryBuilder.toString().trim()
-                    if (parsed.isNotEmpty()) return@withContext parsed
+                    if (parsed.isNotEmpty()) return@withContext cleanLatexToUnicode(parsed)
                 }
             }
 
             val directText = json.optString("summary").ifBlank { json.optString("text") }.trim()
-            if (directText.isNotEmpty()) return@withContext directText
+            if (directText.isNotEmpty()) return@withContext cleanLatexToUnicode(directText)
 
             throw IllegalStateException("AI service returned an empty summary.")
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun cleanLatexToUnicode(input: String): String {
+        if (input.isBlank()) return input
+
+        var text = input
+            .replace("\$\$", "")
+            .replace("\\(", "")
+            .replace("\\)", "")
+            .replace("\\[", "")
+            .replace("\\]", "")
+            .replace("\\$", "$")
+
+        // Unwrap common LaTeX wrapper commands such as \text{...}, \mathrm{...}, \ce{...}
+        val wrapperRegex = Regex("""\\(?:text|mathrm|mathbf|mathit|mathsf|mathcal|operatorname|ce|pu)\{([^{}]*)\}""")
+        repeat(3) {
+            text = wrapperRegex.replace(text) { it.groupValues[1] }
+        }
+
+        // Convert \frac{a}{b} to a/b (wrapping multi-token parts cleanly if needed)
+        val fracRegex = Regex("""\\frac\{([^{}]+)\}\{([^{}]+)\}""")
+        repeat(2) {
+            text = fracRegex.replace(text) { m ->
+                val num = m.groupValues[1].trim()
+                val den = m.groupValues[2].trim()
+                val numFmt = if (num.any { it.isWhitespace() || it in "+-" }) "($num)" else num
+                val denFmt = if (den.any { it.isWhitespace() || it in "+-" }) "($den)" else den
+                "$numFmt/$denFmt"
+            }
+        }
+
+        // Replace common LaTeX symbols & operators with Unicode
+        val symbolReplacements = listOf(
+            "\\rightleftharpoons" to "⇌",
+            "\\leftrightharpoons" to "⇌",
+            "\\leftrightarrow" to "↔",
+            "\\longrightarrow" to "→",
+            "\\rightarrow" to "→",
+            "\\leftarrow" to "←",
+            "\\Rightarrow" to "⇒",
+            "\\Leftarrow" to "⇐",
+            "\\implies" to "⇒",
+            "\\iff" to "⇔",
+            "\\to" to "→",
+            "\\times" to "×",
+            "\\cdot" to "·",
+            "\\div" to "÷",
+            "\\pm" to "±",
+            "\\mp" to "∓",
+            "\\approx" to "≈",
+            "\\neq" to "≠",
+            "\\ne" to "≠",
+            "\\leq" to "≤",
+            "\\le" to "≤",
+            "\\geq" to "≥",
+            "\\ge" to "≥",
+            "\\equiv" to "≡",
+            "\\propto" to "∝",
+            "\\infty" to "∞",
+            "\\degree" to "°",
+            "\\circ" to "°",
+            "\\sqrt" to "√",
+            "\\sum" to "∑",
+            "\\prod" to "∏",
+            "\\int" to "∫",
+            "\\partial" to "∂",
+            "\\Delta" to "Δ",
+            "\\Sigma" to "Σ",
+            "\\Omega" to "Ω",
+            "\\alpha" to "α",
+            "\\beta" to "β",
+            "\\gamma" to "γ",
+            "\\delta" to "δ",
+            "\\epsilon" to "ε",
+            "\\theta" to "θ",
+            "\\lambda" to "λ",
+            "\\mu" to "μ",
+            "\\pi" to "π",
+            "\\rho" to "ρ",
+            "\\sigma" to "σ",
+            "\\omega" to "ω",
+            "\\%" to "%",
+            "\\," to " ",
+            "\\;" to " ",
+            "\\:" to " ",
+            "\\!" to "",
+            "\\left" to "",
+            "\\right" to ""
+        )
+        for ((latex, unicode) in symbolReplacements) {
+            text = text.replace(latex, unicode)
+        }
+
+        // Convert braced and simple superscripts: ^{2+}, ^2, ^-, ^+
+        text = Regex("""\^\{([^{}]+)\}""").replace(text) { toSuperscript(it.groupValues[1]) }
+        text = Regex("""\^([0-9+\-=()ni°])""").replace(text) { toSuperscript(it.groupValues[1]) }
+
+        // Convert braced and digit/formula subscripts: _{2}, _{aq}, H_2O, CO_2, x_1
+        text = Regex("""_\{([^{}]+)\}""").replace(text) { toSubscript(it.groupValues[1]) }
+        text = Regex("""(?<=[A-Za-z0-9)\]])_([0-9]+)(?![a-z])""").replace(text) { toSubscript(it.groupValues[1]) }
+
+        // Strip inline $...$ LaTeX delimiters while keeping legitimate currency like $50 or $1,200
+        text = Regex("""\$([^$\n]+?)\$""").replace(text) { match ->
+            val inner = match.groupValues[1]
+            val looksLikeCurrency = Regex("""^\d[\d,.]*(?:\s*(?:to|and|–|-|or)\s*.*)?$""").matches(inner.trim()) &&
+                !inner.contains('=') &&
+                !inner.contains('→') &&
+                !inner.contains('×') &&
+                !inner.contains('÷') &&
+                !inner.contains('^') &&
+                !inner.contains('_') &&
+                !inner.contains('\\')
+            if (looksLikeCurrency) match.value else inner
+        }
+
+        // Strip any stray $ before non-digit math/chemical tokens (e.g., $Ca²⁺)
+        text = Regex("""\$(?=[A-Za-z(\[\\√∑∫Δα-ω])""").replace(text, "")
+
+        // Remove any lingering empty braces or backslashes before spaces/letters if leftover
+        text = text.replace("{", "").replace("}", "")
+
+        return text.trim()
+    }
+
+    private fun toSuperscript(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw.trim()) {
+            val mapped = when (ch) {
+                '0' -> '⁰'
+                '1' -> '¹'
+                '2' -> '²'
+                '3' -> '³'
+                '4' -> '⁴'
+                '5' -> '⁵'
+                '6' -> '⁶'
+                '7' -> '⁷'
+                '8' -> '⁸'
+                '9' -> '⁹'
+                '+' -> '⁺'
+                '-', '−' -> '⁻'
+                '=' -> '⁼'
+                '(' -> '⁽'
+                ')' -> '⁾'
+                'n' -> 'ⁿ'
+                'i' -> 'ⁱ'
+                '°' -> '°'
+                ' ' -> null
+                else -> return raw
+            }
+            if (mapped != null) sb.append(mapped)
+        }
+        return sb.toString()
+    }
+
+    private fun toSubscript(raw: String): String {
+        val sb = StringBuilder(raw.length)
+        for (ch in raw.trim()) {
+            val mapped = when (ch) {
+                '0' -> '₀'
+                '1' -> '₁'
+                '2' -> '₂'
+                '3' -> '₃'
+                '4' -> '₄'
+                '5' -> '₅'
+                '6' -> '₆'
+                '7' -> '₇'
+                '8' -> '₈'
+                '9' -> '₉'
+                '+' -> '₊'
+                '-', '−' -> '₋'
+                '=' -> '₌'
+                '(' -> '₍'
+                ')' -> '₎'
+                'a' -> 'ₐ'
+                'e' -> 'ₑ'
+                'h' -> 'ₕ'
+                'i' -> 'ᵢ'
+                'j' -> 'ⱼ'
+                'k' -> 'ₖ'
+                'l' -> 'ₗ'
+                'm' -> 'ₘ'
+                'n' -> 'ₙ'
+                'o' -> 'ₒ'
+                'p' -> 'ₚ'
+                'r' -> 'ᵣ'
+                's' -> 'ₛ'
+                't' -> 'ₜ'
+                'u' -> 'ᵤ'
+                'v' -> 'ᵥ'
+                'x' -> 'ₓ'
+                ' ' -> null
+                else -> return "(${raw.trim()})"
+            }
+            if (mapped != null) sb.append(mapped)
+        }
+        return sb.toString()
     }
 }
