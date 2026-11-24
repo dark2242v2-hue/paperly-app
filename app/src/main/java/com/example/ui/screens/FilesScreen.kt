@@ -87,7 +87,7 @@ fun FilesScreen(
         pendingSaveRecord = null
     }
 
-    val filters = listOf("All", "Merged", "Split", "Compressed", "Scanned", "Signed", "Summary")
+    val filters = listOf("All", "Merged", "Split", "Compressed", "Scanned", "Signed", "Locked", "Summary", "Opened")
     val filtered = remember(records, query, selectedFilter) {
         records.filter { rec ->
             val matchesTag = selectedFilter == "All" || rec.operationTag.equals(selectedFilter, ignoreCase = true)

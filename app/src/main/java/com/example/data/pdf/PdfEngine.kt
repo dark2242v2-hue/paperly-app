@@ -109,7 +109,11 @@ class PdfEngine(private val context: Context) {
 
         val pageCount = countPages(tempFile)
         if (pageCount <= 0) {
+            val isLocked = requiresPasswordSync(tempFile)
             tempFile.delete()
+            if (isLocked) {
+                throw IllegalStateException("This PDF is password-protected. Open it directly in the viewer to unlock first.")
+            }
             throw IllegalStateException("Selected file does not contain valid PDF pages.")
         }
 
@@ -240,7 +244,15 @@ class PdfEngine(private val context: Context) {
         }
 
         onProgress(0.70f, "Merging PDF streams locally...")
-        merger.mergeDocuments(MemoryUsageSetting.setupTempFileOnly())
+        try {
+            merger.mergeDocuments(MemoryUsageSetting.setupTempFileOnly())
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalStateException("One or more selected PDFs are password-protected. Unlock them in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
+        }
 
         onProgress(0.95f, "Verifying merged document...")
         val pages = countPages(outFile)
@@ -278,17 +290,25 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
         onProgress(0.35f, "Loading PDF structure...")
-        PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { sourceDoc ->
-            PDDocument().use { targetDoc ->
-                selectedPages.forEachIndexed { idx, oneBasedPage ->
-                    val page = sourceDoc.getPage(oneBasedPage - 1)
-                    targetDoc.importPage(page)
-                    val progress = 0.35f + 0.50f * ((idx + 1).toFloat() / selectedPages.size)
-                    onProgress(progress, "Extracting page $oneBasedPage...")
+        try {
+            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { sourceDoc ->
+                PDDocument().use { targetDoc ->
+                    selectedPages.forEachIndexed { idx, oneBasedPage ->
+                        val page = sourceDoc.getPage(oneBasedPage - 1)
+                        targetDoc.importPage(page)
+                        val progress = 0.35f + 0.50f * ((idx + 1).toFloat() / selectedPages.size)
+                        onProgress(progress, "Extracting page $oneBasedPage...")
+                    }
+                    onProgress(0.90f, "Writing split PDF...")
+                    targetDoc.save(outFile)
                 }
-                onProgress(0.90f, "Writing split PDF...")
-                targetDoc.save(outFile)
             }
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
         }
 
         onProgress(1f, "Split complete")
@@ -319,43 +339,51 @@ class PdfEngine(private val context: Context) {
 
         onProgress(0.10f, "Inspecting ${file.pageCount} pages...")
         val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        pfd.use { descriptor ->
-            PdfRenderer(descriptor).use { renderer ->
-                val pageCount = renderer.pageCount
-                PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { outDoc ->
-                    val scaleFactor = level.targetDpi / 72f
-                    for (i in 0 until pageCount) {
-                        renderer.openPage(i).use { page ->
-                            val origW = max(1, page.width)
-                            val origH = max(1, page.height)
-                            val renderW = (origW * scaleFactor).roundToInt().coerceIn(320, 2200)
-                            val renderH = (origH * scaleFactor).roundToInt().coerceIn(320, 3000)
+        try {
+            pfd.use { descriptor ->
+                PdfRenderer(descriptor).use { renderer ->
+                    val pageCount = renderer.pageCount
+                    PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { outDoc ->
+                        val scaleFactor = level.targetDpi / 72f
+                        for (i in 0 until pageCount) {
+                            renderer.openPage(i).use { page ->
+                                val origW = max(1, page.width)
+                                val origH = max(1, page.height)
+                                val renderW = (origW * scaleFactor).roundToInt().coerceIn(320, 2200)
+                                val renderH = (origH * scaleFactor).roundToInt().coerceIn(320, 3000)
 
-                            val bitmap = Bitmap.createBitmap(renderW, renderH, Bitmap.Config.ARGB_8888)
-                            bitmap.eraseColor(Color.WHITE)
-                            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                val bitmap = Bitmap.createBitmap(renderW, renderH, Bitmap.Config.ARGB_8888)
+                                bitmap.eraseColor(Color.WHITE)
+                                page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
 
-                            val baos = ByteArrayOutputStream()
-                            bitmap.compress(Bitmap.CompressFormat.JPEG, level.jpegQuality, baos)
-                            bitmap.recycle()
+                                val baos = ByteArrayOutputStream()
+                                bitmap.compress(Bitmap.CompressFormat.JPEG, level.jpegQuality, baos)
+                                bitmap.recycle()
 
-                            val pdPage = PDPage(PDRectangle(origW.toFloat(), origH.toFloat()))
-                            outDoc.addPage(pdPage)
-                            val pdImage = JPEGFactory.createFromStream(
-                                outDoc,
-                                ByteArrayInputStream(baos.toByteArray())
-                            )
-                            PDPageContentStream(outDoc, pdPage).use { cs ->
-                                cs.drawImage(pdImage, 0f, 0f, origW.toFloat(), origH.toFloat())
+                                val pdPage = PDPage(PDRectangle(origW.toFloat(), origH.toFloat()))
+                                outDoc.addPage(pdPage)
+                                val pdImage = JPEGFactory.createFromStream(
+                                    outDoc,
+                                    ByteArrayInputStream(baos.toByteArray())
+                                )
+                                PDPageContentStream(outDoc, pdPage).use { cs ->
+                                    cs.drawImage(pdImage, 0f, 0f, origW.toFloat(), origH.toFloat())
+                                }
                             }
+                            val progress = 0.15f + 0.72f * ((i + 1).toFloat() / pageCount)
+                            onProgress(progress, "Optimizing page ${i + 1} of $pageCount...")
                         }
-                        val progress = 0.15f + 0.72f * ((i + 1).toFloat() / pageCount)
-                        onProgress(progress, "Optimizing page ${i + 1} of $pageCount...")
+                        onProgress(0.92f, "Finalizing compressed PDF...")
+                        outDoc.save(outFile)
                     }
-                    onProgress(0.92f, "Finalizing compressed PDF...")
-                    outDoc.save(outFile)
                 }
             }
+        } catch (e: SecurityException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
         }
 
         // If the original PDF was an ultra-small text-only PDF and rasterizing increased size,
@@ -400,8 +428,9 @@ class PdfEngine(private val context: Context) {
 
         onProgress(0.08f, "Analyzing ${file.pageCount} pages for target size...")
         val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        pfd.use { descriptor ->
-            PdfRenderer(descriptor).use { renderer ->
+        try {
+            pfd.use { descriptor ->
+                PdfRenderer(descriptor).use { renderer ->
                 val pageCount = max(1, renderer.pageCount)
                 val pdfOverhead = 2_400L + pageCount * 520L
                 val pageBudget = ((clampedTarget - pdfOverhead) / pageCount).coerceAtLeast(2_048L)
@@ -471,7 +500,7 @@ class PdfEngine(private val context: Context) {
                                 outDoc.addPage(pdPage)
                                 val pdImage = JPEGFactory.createFromStream(
                                     outDoc,
-                                    ByteArrayInputStream(chosenBytes!!)
+                                    ByteArrayInputStream(chosenBytes)
                                 )
                                 PDPageContentStream(outDoc, pdPage).use { cs ->
                                     cs.drawImage(pdImage, 0f, 0f, origW.toFloat(), origH.toFloat())
@@ -500,6 +529,13 @@ class PdfEngine(private val context: Context) {
                     retryFile.delete()
                 }
             }
+        }
+        } catch (e: SecurityException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
         }
 
         onProgress(1f, "Target compression complete")
@@ -611,42 +647,50 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
         onProgress(0.25f, "Opening document...")
-        PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
-            val pageIdx = (targetPageOneBased - 1).coerceIn(0, doc.numberOfPages - 1)
-            val page = doc.getPage(pageIdx)
-            val box = page.cropBox ?: page.mediaBox ?: PDRectangle.A4
+        try {
+            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                val pageIdx = (targetPageOneBased - 1).coerceIn(0, doc.numberOfPages - 1)
+                val page = doc.getPage(pageIdx)
+                val box = page.cropBox ?: page.mediaBox ?: PDRectangle.A4
 
-            onProgress(0.55f, "Embedding signature...")
-            val pdSignature = LosslessFactory.createFromImage(doc, signatureBitmap)
-            val aspect = signatureBitmap.height.toFloat() / max(1, signatureBitmap.width).toFloat()
-            var targetW = box.width * widthFraction.coerceIn(0.10f, 0.78f)
-            var targetH = targetW * aspect
-            val maxH = box.height * 0.65f
-            if (targetH > maxH) {
-                targetH = maxH
-                targetW = targetH / max(0.01f, aspect)
+                onProgress(0.55f, "Embedding signature...")
+                val pdSignature = LosslessFactory.createFromImage(doc, signatureBitmap)
+                val aspect = signatureBitmap.height.toFloat() / max(1, signatureBitmap.width).toFloat()
+                var targetW = box.width * widthFraction.coerceIn(0.10f, 0.78f)
+                var targetH = targetW * aspect
+                val maxH = box.height * 0.65f
+                if (targetH > maxH) {
+                    targetH = maxH
+                    targetW = targetH / max(0.01f, aspect)
+                }
+
+                val minX = box.lowerLeftX
+                val maxX = (box.upperRightX - targetW).coerceAtLeast(minX)
+                val minY = box.lowerLeftY
+                val maxY = (box.upperRightY - targetH).coerceAtLeast(minY)
+
+                val x = (box.lowerLeftX + centerXNorm * box.width - targetW / 2f).coerceIn(minX, maxX)
+                val y = (box.lowerLeftY + (1f - centerYNorm) * box.height - targetH / 2f).coerceIn(minY, maxY)
+
+                PDPageContentStream(
+                    doc,
+                    page,
+                    PDPageContentStream.AppendMode.APPEND,
+                    true,
+                    true
+                ).use { cs ->
+                    cs.drawImage(pdSignature, x, y, targetW, targetH)
+                }
+
+                onProgress(0.90f, "Saving signed PDF...")
+                doc.save(outFile)
             }
-
-            val minX = box.lowerLeftX
-            val maxX = (box.upperRightX - targetW).coerceAtLeast(minX)
-            val minY = box.lowerLeftY
-            val maxY = (box.upperRightY - targetH).coerceAtLeast(minY)
-
-            val x = (box.lowerLeftX + centerXNorm * box.width - targetW / 2f).coerceIn(minX, maxX)
-            val y = (box.lowerLeftY + (1f - centerYNorm) * box.height - targetH / 2f).coerceIn(minY, maxY)
-
-            PDPageContentStream(
-                doc,
-                page,
-                PDPageContentStream.AppendMode.APPEND,
-                true,
-                true
-            ).use { cs ->
-                cs.drawImage(pdSignature, x, y, targetW, targetH)
-            }
-
-            onProgress(0.90f, "Saving signed PDF...")
-            doc.save(outFile)
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
         }
 
         onProgress(1f, "Signature applied")
@@ -711,12 +755,16 @@ class PdfEngine(private val context: Context) {
         val srcFile = File(file.localPath)
         require(srcFile.exists()) { "PDF file not found." }
 
-        val rawExtracted = PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
-            val stripper = PDFTextStripper().apply {
-                startPage = 1
-                endPage = min(doc.numberOfPages, 40)
+        val rawExtracted = try {
+            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                val stripper = PDFTextStripper().apply {
+                    startPage = 1
+                    endPage = min(doc.numberOfPages, 40)
+                }
+                stripper.getText(doc).orEmpty()
             }
-            stripper.getText(doc).orEmpty()
+        } catch (e: InvalidPasswordException) {
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
         }
 
         val normalizedLines = rawExtracted

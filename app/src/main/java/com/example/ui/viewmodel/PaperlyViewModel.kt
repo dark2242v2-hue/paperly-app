@@ -899,14 +899,14 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun summarizeSelectedPdf() {
+    fun summarizeSelectedPdf(skipCreditCheck: Boolean = false) {
         if (!isAppIntegrityTrusted) {
             _aiSummaryState.value = AiSummaryUiState.Error(
                 "AI Summarize is unavailable in unverified builds. Please install Paperly from Google Play."
             )
             return
         }
-        if (!isPro.value && aiSummaryCredits.value <= 0) {
+        if (!skipCreditCheck && !isPro.value && aiSummaryCredits.value <= 0) {
             openAiSummaryPaywallInWorkspace()
             return
         }
@@ -1396,12 +1396,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    fun generateAiImage(onResultReady: () -> Unit) {
+    fun generateAiImage(onResultReady: () -> Unit, skipCreditCheck: Boolean = false) {
         if (!isAppIntegrityTrusted) {
             _snackbarMessage.value = "AI Image Generator requires the official Google Play release."
             return
         }
-        if (!isPro.value && aiImageCredits.value <= 0) {
+        if (!skipCreditCheck && !isPro.value && aiImageCredits.value <= 0) {
             openImagePaywallInWorkspace(ImageToolType.TEXT_TO_IMAGE)
             return
         }
@@ -1457,8 +1457,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _imageWorkspace.update { it.copy(upscaleTarget = target) }
     }
 
-    fun runImageUpscale(onResultReady: () -> Unit) {
-        if (!isPro.value && upscaleCredits.value <= 0) {
+    fun runImageUpscale(onResultReady: () -> Unit, skipCreditCheck: Boolean = false) {
+        if (!skipCreditCheck && !isPro.value && upscaleCredits.value <= 0) {
             openImagePaywallInWorkspace(ImageToolType.UPSCALER)
             return
         }

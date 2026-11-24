@@ -204,12 +204,22 @@ fun PaperlyApp(
                     viewModel.prepareToolWorkspace(pendingTool, preloadedRecord = preloaded)
                     navController.navigate(PaperlyRoutes.toolWorkspace(pendingTool))
                 } else if (pendingTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
-                    viewModel.summarizeSelectedPdf()
+                    viewModel.summarizeSelectedPdf(skipCreditCheck = true)
                 }
             } else if (pendingImgTool != null) {
                 if (shouldNavigate) {
                     viewModel.prepareImageToolWorkspace(pendingImgTool)
                     navController.navigate(PaperlyRoutes.imageWorkspace(pendingImgTool))
+                } else if (pendingImgTool == ImageToolType.TEXT_TO_IMAGE && imageWorkspace.aiPrompt.isNotBlank()) {
+                    viewModel.generateAiImage(
+                        onResultReady = { navController.navigate(PaperlyRoutes.IMAGE_RESULT) },
+                        skipCreditCheck = true
+                    )
+                } else if (pendingImgTool == ImageToolType.UPSCALER && imageWorkspace.pickedImage != null) {
+                    viewModel.runImageUpscale(
+                        onResultReady = { navController.navigate(PaperlyRoutes.IMAGE_RESULT) },
+                        skipCreditCheck = true
+                    )
                 }
             }
         }
@@ -484,11 +494,21 @@ fun PaperlyApp(
                     if (shouldNavigate) {
                         navController.navigate(PaperlyRoutes.toolWorkspace(unlockedPdfTool))
                     } else if (unlockedPdfTool == PdfToolType.AI_SUMMARIZE && workspace.selectedPdfs.isNotEmpty()) {
-                        viewModel.summarizeSelectedPdf()
+                        viewModel.summarizeSelectedPdf(skipCreditCheck = true)
                     }
                 } else if (unlockedImgTool != null) {
                     if (shouldNavigate) {
                         navController.navigate(PaperlyRoutes.imageWorkspace(unlockedImgTool))
+                    } else if (unlockedImgTool == ImageToolType.TEXT_TO_IMAGE && imageWorkspace.aiPrompt.isNotBlank()) {
+                        viewModel.generateAiImage(
+                            onResultReady = { navController.navigate(PaperlyRoutes.IMAGE_RESULT) },
+                            skipCreditCheck = true
+                        )
+                    } else if (unlockedImgTool == ImageToolType.UPSCALER && imageWorkspace.pickedImage != null) {
+                        viewModel.runImageUpscale(
+                            onResultReady = { navController.navigate(PaperlyRoutes.IMAGE_RESULT) },
+                            skipCreditCheck = true
+                        )
                     }
                 }
             }
