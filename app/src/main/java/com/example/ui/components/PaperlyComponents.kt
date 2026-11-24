@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -761,37 +763,78 @@ fun PaperlyProSheet(
 
                 // Secondary rewarded option when opened via Trigger 1 (AI Summarize or Scan to PDF)
                 if (state.triggeredByTool != null) {
-                    TextButton(
-                        onClick = onWatchRewardedVideo,
-                        enabled = !state.isLoadingRewardedAd && !billingState.isPurchasing,
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                        Text(
+                            text = "OR",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.weight(1f),
+                            color = MaterialTheme.colorScheme.outline
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onWatchRewardedVideo,
+                        enabled = !state.isLoadingRewardedAd && !billingState.isPurchasing,
+                        shape = RoundedCornerShape(14.dp),
+                        border = BorderStroke(
+                            width = 1.5.dp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)
+                        ),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.30f),
+                            contentColor = MaterialTheme.colorScheme.primary
+                        ),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .minimumInteractiveComponentSize()
+                            .heightIn(min = 52.dp)
                             .testTag("paywall_watch_video_button")
                     ) {
                         if (state.isLoadingRewardedAd) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp
+                                modifier = Modifier.size(18.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Loading short video…")
+                            Text(
+                                text = "Loading short video…",
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.SemiBold
+                            )
                         } else {
                             Icon(
                                 imageVector = Icons.Filled.PlayCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp),
+                                contentDescription = "Watch video",
+                                modifier = Modifier.size(22.dp),
                                 tint = MaterialTheme.colorScheme.primary
                             )
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
                                 text = if (state.triggeredByTool == PdfToolType.AI_SUMMARIZE) {
                                     "Watch a short video to unlock 1 summary free"
                                 } else {
                                     "Watch a short video to unlock this session free"
                                 },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.primary
+                                style = MaterialTheme.typography.labelLarge,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                textAlign = TextAlign.Center
                             )
                         }
                     }
