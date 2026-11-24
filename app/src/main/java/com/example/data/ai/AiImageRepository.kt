@@ -1,5 +1,6 @@
 package com.example.data.ai
 
+import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Log
 import com.example.data.model.AiImageAspectRatio
@@ -9,12 +10,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import java.io.ByteArrayOutputStream
 import java.net.URL
 import java.net.URLEncoder
 import javax.net.ssl.HttpsURLConnection
 import kotlin.random.Random
 
 private const val TAG = "AiImageRepository"
+private const val WATERMARK_CROP_BOTTOM_PX = 48
 
 data class GeneratedAiImagePayload(
     val bytes: ByteArray,
@@ -43,12 +46,13 @@ class AiImageRepository {
             AiImageAspectRatio.PORTRAIT -> 720 to 1280
             AiImageAspectRatio.CLASSIC_PORTRAIT -> 896 to 1152
         }
+        val requestHeight = height + WATERMARK_CROP_BOTTOM_PX
 
         var lastError: Exception? = null
         repeat(2) { attempt ->
             val seed = Random.nextInt(100_000, 9_999_999)
             val endpointUrl =
-                "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$height&nologo=true&seed=$seed"
+                "https://image.pollinations.ai/prompt/$encodedPrompt?width=$width&height=$requestHeight&nologo=true&seed=$seed"
             try {
                 return@withTimeout downloadImagePayload(endpointUrl)
             } catch (e: CancellationException) {
@@ -85,25 +89,42 @@ class AiImageRepository {
                 }
 
                 val contentType = connection.contentType.orEmpty()
-                val bytes = connection.inputStream.use { it.readBytes() }
-                if (bytes.isEmpty()) {
+                val rawBytes = connection.inputStream.use { it.readBytes() }
+                if (rawBytes.isEmpty()) {
                     throw IllegalStateException("Generated image download was empty.")
                 }
 
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
-                if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                    throw IllegalStateException("Received invalid image data from generator.")
-                }
+                val decoded = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+                    ?: throw IllegalStateException("Received invalid image data from generator.")
 
-                val detectedMime = when {
-                    bounds.outMimeType?.contains("png", ignoreCase = true) == true ||
-                        contentType.contains("png", ignoreCase = true) -> "image/png"
-                    else -> "image/jpeg"
+                val isPng = contentType.contains("png", ignoreCase = true)
+                val detectedMime = if (isPng) "image/png" else "image/jpeg"
+
+                val finalBytes = try {
+                    if (decoded.height > WATERMARK_CROP_BOTTOM_PX + 64) {
+                        val croppedHeight = decoded.height - WATERMARK_CROP_BOTTOM_PX
+                        val cropped = Bitmap.createBitmap(decoded, 0, 0, decoded.width, croppedHeight)
+                        try {
+                            val out = ByteArrayOutputStream()
+                            val fmt = if (isPng) Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG
+                            cropped.compress(fmt, if (isPng) 100 else 95, out)
+                            out.toByteArray()
+                        } finally {
+                            if (cropped !== decoded && !cropped.isRecycled) {
+                                cropped.recycle()
+                            }
+                        }
+                    } else {
+                        rawBytes
+                    }
+                } finally {
+                    if (!decoded.isRecycled) {
+                        decoded.recycle()
+                    }
                 }
 
                 GeneratedAiImagePayload(
-                    bytes = bytes,
+                    bytes = finalBytes,
                     mimeType = detectedMime,
                     modelUsed = "pollinations"
                 )

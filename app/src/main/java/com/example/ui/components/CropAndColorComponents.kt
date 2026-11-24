@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapShader
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
+import android.graphics.Matrix as AndroidMatrix
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.PorterDuff
@@ -121,10 +122,21 @@ fun InteractiveCropPreview(
     onCropChanged: (Float, Float, Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val swapped = ((rotationDegrees % 180) + 180) % 180 != 0
-    val displayW = if (swapped) bitmap.height else bitmap.width
-    val displayH = if (swapped) bitmap.width else bitmap.height
-    val imgAspect = (displayW.toFloat() / displayH.coerceAtLeast(1).toFloat()).coerceIn(0.35f, 2.8f)
+    val transformedBitmap = remember(bitmap, rotationDegrees, flipHorizontal) {
+        val normRot = ((rotationDegrees % 360) + 360) % 360
+        if (normRot == 0 && !flipHorizontal) {
+            bitmap
+        } else {
+            val m = AndroidMatrix().apply {
+                if (normRot != 0) postRotate(normRot.toFloat())
+                if (flipHorizontal) postScale(-1f, 1f)
+            }
+            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
+        }
+    }
+    val displayW = transformedBitmap.width
+    val displayH = transformedBitmap.height
+    val imgAspect = displayW.toFloat() / displayH.coerceAtLeast(1).toFloat()
 
     val latestLeft by rememberUpdatedState(leftNorm)
     val latestTop by rememberUpdatedState(topNorm)
@@ -156,29 +168,24 @@ fun InteractiveCropPreview(
             val fitH: androidx.compose.ui.unit.Dp
             if (availW / availH > imgAspect) {
                 fitH = availH
-                fitW = availH * imgAspect
+                fitW = (availH * imgAspect).coerceAtLeast(48.dp)
             } else {
                 fitW = availW
-                fitH = availW / imgAspect
+                fitH = (availW / imgAspect).coerceAtLeast(48.dp)
             }
 
             Box(
                 modifier = Modifier
                     .size(width = fitW, height = fitH)
-                    .clip(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(6.dp))
                     .background(Color(0xFF1A1C24)),
                 contentAlignment = Alignment.Center
             ) {
                 Image(
-                    bitmap = bitmap.asImageBitmap(),
+                    bitmap = transformedBitmap.asImageBitmap(),
                     contentDescription = "Crop preview image",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            rotationZ = rotationDegrees.toFloat()
-                            scaleX = if (flipHorizontal) -1f else 1f
-                        }
+                    contentScale = ContentScale.FillBounds,
+                    modifier = Modifier.fillMaxSize()
                 )
 
                 var activeHandle by remember { mutableStateOf(DragCorner.NONE) }
@@ -609,7 +616,7 @@ fun SplitBeforeAfterComparisonPreview(
             color = Color(0xFF121318),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(210.dp)
+                .height(160.dp)
                 .testTag("upscaler_split_preview")
         ) {
             Box(

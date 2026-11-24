@@ -1236,14 +1236,26 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     fun rotateCropImage90() {
         _imageWorkspace.update { state ->
             val newRot = (state.rotationDegrees + 90) % 360
+            val info = state.pickedImage
+            val swapped = ((newRot % 180) + 180) % 180 != 0
+            val newW = if (info != null) {
+                (if (swapped) info.height else info.width).toString()
+            } else {
+                state.resizeHeightText
+            }
+            val newH = if (info != null) {
+                (if (swapped) info.width else info.height).toString()
+            } else {
+                state.resizeWidthText
+            }
             state.copy(
                 rotationDegrees = newRot,
                 cropLeftNorm = 0f,
                 cropTopNorm = 0f,
                 cropRightNorm = 1f,
                 cropBottomNorm = 1f,
-                resizeWidthText = state.resizeHeightText,
-                resizeHeightText = state.resizeWidthText
+                resizeWidthText = newW,
+                resizeHeightText = newH
             )
         }
     }

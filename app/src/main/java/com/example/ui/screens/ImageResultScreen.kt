@@ -14,15 +14,15 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
@@ -146,141 +146,138 @@ fun ImageResultScreen(
                 .padding(innerPadding),
             contentAlignment = Alignment.TopCenter
         ) {
-            LazyColumn(
+            Column(
                 modifier = Modifier
-                    .fillMaxSize()
-                    .widthIn(max = 600.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp)
+                    .widthIn(max = 540.dp)
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 6.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                item {
-                    Card(
-                        shape = RoundedCornerShape(20.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(10.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.CheckCircle,
-                                    contentDescription = "Ready",
-                                    tint = PaperlyEmerald,
-                                    modifier = Modifier.size(24.dp)
+                            Icon(
+                                imageVector = Icons.Filled.CheckCircle,
+                                contentDescription = "Ready",
+                                tint = PaperlyEmerald,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = result.displayName,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        text = result.displayName,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        text = "${result.width}×${result.height} px • ${result.format.label} • ${formatFileSize(result.sizeBytes)}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                Text(
+                                    text = "${result.width}×${result.height} px • ${result.format.label} • ${formatFileSize(result.sizeBytes)}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
+                        }
 
-                            val showSplitComparison = result.operationLabel.startsWith("Upscaled") &&
-                                originalBitmap != null && previewBitmap != null
-                            if (showSplitComparison) {
-                                SplitBeforeAfterComparisonPreview(
-                                    originalBitmap = originalBitmap,
-                                    enhancedBitmap = previewBitmap
-                                )
-                            } else {
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(min = 140.dp, max = 220.dp)
-                                ) {
-                                    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                        if (result.format == ImageOutputFormat.PNG) {
-                                            TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
-                                        }
-                                        previewBitmap?.let { bmp ->
-                                            Image(
-                                                bitmap = bmp.asImageBitmap(),
-                                                contentDescription = "Processed image output",
-                                                contentScale = ContentScale.Fit,
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .heightIn(max = 216.dp)
-                                                    .clip(RoundedCornerShape(12.dp))
-                                            )
-                                        }
+                        val showSplitComparison = result.operationLabel.startsWith("Upscaled") &&
+                            originalBitmap != null && previewBitmap != null
+                        if (showSplitComparison) {
+                            SplitBeforeAfterComparisonPreview(
+                                originalBitmap = originalBitmap,
+                                enhancedBitmap = previewBitmap
+                            )
+                        } else {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(160.dp)
+                            ) {
+                                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    if (result.format == ImageOutputFormat.PNG) {
+                                        TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
+                                    }
+                                    previewBitmap?.let { bmp ->
+                                        Image(
+                                            bitmap = bmp.asImageBitmap(),
+                                            contentDescription = "Processed image output",
+                                            contentScale = ContentScale.Fit,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(12.dp))
+                                        )
                                     }
                                 }
                             }
+                        }
 
-                            if (result.originalSizeBytes != null && result.originalWidth != null && result.originalHeight != null) {
-                                Surface(
-                                    shape = RoundedCornerShape(14.dp),
-                                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                        if (result.originalSizeBytes != null && result.originalWidth != null && result.originalHeight != null) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 14.dp, vertical = 12.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Column {
-                                            Text("Before", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Column {
+                                        Text(
+                                            "Before • ${result.originalWidth}×${result.originalHeight}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = formatFileSize(result.originalSizeBytes),
+                                            style = MaterialTheme.typography.titleSmall
+                                        )
+                                    }
+                                    Column(horizontalAlignment = Alignment.End) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                        ) {
                                             Text(
-                                                text = formatFileSize(result.originalSizeBytes),
-                                                style = MaterialTheme.typography.titleSmall
-                                            )
-                                            Text(
-                                                text = "${result.originalWidth}×${result.originalHeight}",
+                                                "After • ${result.width}×${result.height}",
                                                 style = MaterialTheme.typography.labelSmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
-                                        }
-                                        Column(horizontalAlignment = Alignment.End) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                            ) {
-                                                Text("After", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                                if (savedPercent != null && savedPercent > 0) {
-                                                    Surface(
-                                                        shape = CircleShape,
-                                                        color = PaperlyEmerald.copy(alpha = 0.16f)
-                                                    ) {
-                                                        Text(
-                                                            text = "-$savedPercent%",
-                                                            style = MaterialTheme.typography.labelSmall,
-                                                            color = PaperlyEmerald,
-                                                            fontWeight = FontWeight.Bold,
-                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                                        )
-                                                    }
+                                            if (savedPercent != null && savedPercent > 0) {
+                                                Surface(
+                                                    shape = CircleShape,
+                                                    color = PaperlyEmerald.copy(alpha = 0.16f)
+                                                ) {
+                                                    Text(
+                                                        text = "-$savedPercent%",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = PaperlyEmerald,
+                                                        fontWeight = FontWeight.Bold,
+                                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 1.dp)
+                                                    )
                                                 }
                                             }
-                                            Text(
-                                                text = formatFileSize(result.sizeBytes),
-                                                style = MaterialTheme.typography.titleSmall,
-                                                color = PaperlyEmerald
-                                            )
-                                            Text(
-                                                text = "${result.width}×${result.height}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
                                         }
+                                        Text(
+                                            text = formatFileSize(result.sizeBytes),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = PaperlyEmerald
+                                        )
                                     }
                                 }
                             }
@@ -288,84 +285,85 @@ fun ImageResultScreen(
                     }
                 }
 
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(
-                            onClick = viewModel::saveResultImageToGallery,
-                            shape = RoundedCornerShape(14.dp),
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = viewModel::saveResultImageToGallery,
+                        shape = RoundedCornerShape(13.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                            .testTag("save_image_gallery_button")
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text("Save to Gallery", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
+                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                    type = result.format.mimeType
+                                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(shareIntent, "Share image"))
+                            },
+                            shape = RoundedCornerShape(13.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(54.dp)
-                                .testTag("save_image_gallery_button")
-                        ) {
-                            Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text("Save to Gallery", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
-                        }
-
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            OutlinedButton(
-                                onClick = {
-                                    val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = result.format.mimeType
-                                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share image"))
-                                },
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp)
-                                    .testTag("share_image_button")
-                            ) {
-                                Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Share")
-                            }
-
-                            OutlinedButton(
-                                onClick = {
-                                    viewModel.exportResultImageToPdf { pdfId ->
-                                        onOpenPdfViewer(pdfId)
-                                    }
-                                },
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(50.dp)
-                                    .testTag("export_image_pdf_button")
-                            ) {
-                                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("Save as PDF")
-                            }
-                        }
-
-                        TextButton(
-                            onClick = onDone,
-                            modifier = Modifier
-                                .fillMaxWidth()
+                                .weight(1f)
                                 .height(48.dp)
+                                .testTag("share_image_button")
                         ) {
-                            Text("Done")
+                            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Share")
                         }
+
+                        OutlinedButton(
+                            onClick = {
+                                viewModel.exportResultImageToPdf { pdfId ->
+                                    onOpenPdfViewer(pdfId)
+                                }
+                            },
+                            shape = RoundedCornerShape(13.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(48.dp)
+                                .testTag("export_image_pdf_button")
+                        ) {
+                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Save as PDF")
+                        }
+                    }
+
+                    TextButton(
+                        onClick = onDone,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(48.dp)
+                    ) {
+                        Text("Done")
                     }
                 }
 
                 if (!isPro) {
-                    item {
-                        SponsoredNativeAdCard(
-                            adManager = viewModel.adManager,
-                            isDarkMode = isDarkMode
-                        )
-                        Spacer(modifier = Modifier.height(10.dp))
-                    }
+                    SponsoredNativeAdCard(
+                        adManager = viewModel.adManager,
+                        isDarkMode = isDarkMode
+                    )
                 }
+
+                Spacer(modifier = Modifier.height(6.dp))
             }
         }
     }
