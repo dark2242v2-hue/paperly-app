@@ -10,7 +10,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.paperly.vqnxkp"
+    applicationId = "com.paperly.pdf.studio"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
