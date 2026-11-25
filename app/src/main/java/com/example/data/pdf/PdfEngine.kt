@@ -236,11 +236,11 @@ class PdfEngine(private val context: Context) {
         merger.destinationFileName = outFile.absolutePath
 
         files.forEachIndexed { index, info ->
+            val step = 0.15f + (0.45f * (index + 1).toFloat() / files.size)
+            onProgress(step, "Preparing PDF ${index + 1} of ${files.size}...")
             val src = File(info.localPath)
             require(src.exists()) { "File not found: ${info.displayName}" }
             merger.addSource(src)
-            val step = 0.15f + (0.45f * (index + 1).toFloat() / files.size)
-            onProgress(step, "Queueing ${info.displayName}...")
         }
 
         onProgress(0.70f, "Merging PDF streams locally...")
@@ -297,7 +297,7 @@ class PdfEngine(private val context: Context) {
                         val page = sourceDoc.getPage(oneBasedPage - 1)
                         targetDoc.importPage(page)
                         val progress = 0.35f + 0.50f * ((idx + 1).toFloat() / selectedPages.size)
-                        onProgress(progress, "Extracting page $oneBasedPage...")
+                        onProgress(progress, "Processing page ${idx + 1} of ${selectedPages.size}...")
                     }
                     onProgress(0.90f, "Writing split PDF...")
                     targetDoc.save(outFile)
@@ -371,7 +371,7 @@ class PdfEngine(private val context: Context) {
                                 }
                             }
                             val progress = 0.15f + 0.72f * ((i + 1).toFloat() / pageCount)
-                            onProgress(progress, "Optimizing page ${i + 1} of $pageCount...")
+                            onProgress(progress, "Processing page ${i + 1} of $pageCount...")
                         }
                         onProgress(0.92f, "Finalizing compressed PDF...")
                         outDoc.save(outFile)
@@ -508,7 +508,7 @@ class PdfEngine(private val context: Context) {
                             }
                             onProgress(
                                 progressStart + progressSpan * ((i + 1).toFloat() / pageCount),
-                                "Matching target size (page ${i + 1}/$pageCount)..."
+                                "Processing page ${i + 1} of $pageCount..."
                             )
                         }
                         outDoc.save(destination)
@@ -609,7 +609,7 @@ class PdfEngine(private val context: Context) {
                 }
 
                 val progress = 0.15f + 0.75f * ((idx + 1).toFloat() / imageUris.size)
-                onProgress(progress, "Building page ${idx + 1} of ${imageUris.size}...")
+                onProgress(progress, "Processing page ${idx + 1} of ${imageUris.size}...")
             }
 
             onProgress(0.95f, "Saving scanned PDF...")

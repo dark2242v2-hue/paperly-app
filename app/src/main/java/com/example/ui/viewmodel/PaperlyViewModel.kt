@@ -12,6 +12,7 @@ import com.example.ads.PaperlyAdManager
 import com.example.billing.BillingUiState
 import com.example.billing.PaperlyBillingManager
 import com.example.billing.ProPlanType
+import com.example.core.formatFileSize
 import com.example.data.ai.AiImageRepository
 import com.example.data.ai.AiSummarizeRepository
 import com.example.data.image.ImageEngine
@@ -49,9 +50,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import kotlin.math.max
 import kotlin.math.roundToInt
@@ -193,6 +196,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _recentImages = MutableStateFlow<List<RecentImageItem>>(emptyList())
     val recentImages: StateFlow<List<RecentImageItem>> = _recentImages.asStateFlow()
 
+    private val _tempCacheSizeBytes = MutableStateFlow(0L)
+    val tempCacheSizeBytes: StateFlow<Long> = _tempCacheSizeBytes.asStateFlow()
+
     private val _isRefreshingFiles = MutableStateFlow(false)
     val isRefreshingFiles: StateFlow<Boolean> = _isRefreshingFiles.asStateFlow()
 
@@ -252,6 +258,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
         refreshFilesCache(force = false)
         refreshRecentImages()
+        refreshTempCacheSize()
     }
 
     fun refreshRecentImages() {
@@ -365,6 +372,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun openProSheet() {
+        adManager.preloadRewardedAd()
         billingManager.clearStatusMessage()
         _proSheetState.value = ProSheetUiState(visible = true, triggeredByTool = null)
     }
@@ -545,9 +553,35 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     )
                 }
             },
-            onLoadFailed = { msg ->
-                _proSheetState.update {
-                    it.copy(isLoadingRewardedAd = false, rewardedError = msg)
+            onLoadFailed = { isNoFill, msg ->
+                viewModelScope.launch {
+                    val courtesyAlreadyUsed = runCatching {
+                        prefsRepository.courtesyUnlockUsed.first()
+                    }.getOrDefault(true)
+
+                    if (isNoFill && !courtesyAlreadyUsed) {
+                        prefsRepository.markCourtesyUnlockUsed()
+                        when {
+                            pdfTool == PdfToolType.AI_SUMMARIZE -> prefsRepository.grantAiSummaryCredit(1)
+                            pdfTool != null -> prefsRepository.grantAiSessionUnlock()
+                            imgTool == ImageToolType.TEXT_TO_IMAGE -> prefsRepository.grantAiImageCredit(1)
+                            imgTool == ImageToolType.UPSCALER -> prefsRepository.grantUpscaleCredit(1)
+                        }
+                        _proSheetState.value = ProSheetUiState(visible = false)
+                        _snackbarMessage.value = "Ad sponsor busy — enjoy a free courtesy unlock!"
+                        if (shouldNavigate) {
+                            if (pdfTool != null) {
+                                prepareToolWorkspace(pdfTool, preloadedRecord = preloaded)
+                            } else if (imgTool != null) {
+                                prepareImageToolWorkspace(imgTool)
+                            }
+                        }
+                        onUnlocked(pdfTool, imgTool, shouldNavigate, preloaded)
+                    } else {
+                        _proSheetState.update {
+                            it.copy(isLoadingRewardedAd = false, rewardedError = msg)
+                        }
+                    }
                 }
             }
         )
@@ -1721,11 +1755,49 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun refreshTempCacheSize() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val size = calculateDirectorySize(getApplication<Application>().cacheDir)
+            _tempCacheSizeBytes.value = size
+        }
+    }
+
+    fun clearTempCache() {
+        viewModelScope.launch {
+            val freed = withContext(Dispatchers.IO) {
+                val cacheRoot = getApplication<Application>().cacheDir
+                val before = calculateDirectorySize(cacheRoot)
+                cacheRoot.listFiles()?.forEach { child ->
+                    runCatching { child.deleteRecursively() }
+                }
+                val after = calculateDirectorySize(cacheRoot)
+                _tempCacheSizeBytes.value = after
+                (before - after).coerceAtLeast(0L)
+            }
+            _snackbarMessage.value = if (freed > 0L) {
+                "Cleared ${formatFileSize(freed)} of temporary cache"
+            } else {
+                "Temporary cache is already clean"
+            }
+        }
+    }
+
+    private fun calculateDirectorySize(dir: File?): Long {
+        if (dir == null || !dir.exists()) return 0L
+        if (dir.isFile) return dir.length()
+        var total = 0L
+        dir.listFiles()?.forEach { child ->
+            total += if (child.isDirectory) calculateDirectorySize(child) else child.length()
+        }
+        return total
+    }
+
     fun clearAllLocalFiles() {
         viewModelScope.launch {
             recordRepository.clearAll(pdfEngine.pdfsDir, pdfEngine.cacheDir)
             imageEngine.imagesDir.listFiles()?.forEach { runCatching { it.delete() } }
             _recentImages.value = emptyList()
+            refreshTempCacheSize()
             _snackbarMessage.value = "Cleared local Paperly files"
         }
     }

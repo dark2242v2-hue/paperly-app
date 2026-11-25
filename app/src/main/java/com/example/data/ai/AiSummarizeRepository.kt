@@ -12,8 +12,13 @@ import kotlinx.coroutines.withTimeout
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.UnknownHostException
 import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLException
 
 private const val TAG = "AiSummarizeRepository"
 
@@ -249,6 +254,20 @@ class AiSummarizeRepository {
             if (directText.isNotEmpty()) return@withContext cleanLatexToUnicode(directText)
 
             throw IllegalStateException("AI service returned an empty summary.")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: ProxyHttpException) {
+            throw e
+        } catch (_: UnknownHostException) {
+            throw IllegalStateException("No internet connection. Connect to Wi-Fi or mobile data to use AI Summarize.")
+        } catch (_: ConnectException) {
+            throw IllegalStateException("Could not reach the AI server. Check your internet connection and try again.")
+        } catch (_: SocketTimeoutException) {
+            throw IllegalStateException("The AI server took too long to respond. Please try again.")
+        } catch (_: SSLException) {
+            throw IllegalStateException("Secure HTTPS connection failed. Please check your device date/time and network.")
+        } catch (e: IOException) {
+            throw IllegalStateException("Network error while contacting AI server: ${e.localizedMessage ?: "please try again."}")
         } finally {
             connection.disconnect()
         }

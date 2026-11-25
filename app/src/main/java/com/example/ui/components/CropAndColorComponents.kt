@@ -34,8 +34,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CompareArrows
 import androidx.compose.material.icons.filled.ZoomIn
@@ -55,6 +57,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
@@ -65,6 +68,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
@@ -80,6 +86,8 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.example.data.model.BgBrushPoint
 import com.example.data.model.BgBrushStroke
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.max
@@ -122,16 +130,23 @@ fun InteractiveCropPreview(
     onCropChanged: (Float, Float, Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val transformedBitmap = remember(bitmap, rotationDegrees, flipHorizontal) {
+    val transformedBitmap by produceState(
+        initialValue = bitmap,
+        bitmap,
+        rotationDegrees,
+        flipHorizontal
+    ) {
         val normRot = ((rotationDegrees % 360) + 360) % 360
-        if (normRot == 0 && !flipHorizontal) {
+        value = if (normRot == 0 && !flipHorizontal) {
             bitmap
         } else {
-            val m = AndroidMatrix().apply {
-                if (normRot != 0) postRotate(normRot.toFloat())
-                if (flipHorizontal) postScale(-1f, 1f)
+            withContext(Dispatchers.Default) {
+                val m = AndroidMatrix().apply {
+                    if (normRot != 0) postRotate(normRot.toFloat())
+                    if (flipHorizontal) postScale(-1f, 1f)
+                }
+                Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
             }
-            Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, m, true)
         }
     }
     val displayW = transformedBitmap.width
@@ -249,6 +264,9 @@ fun InteractiveCropPreview(
                                             l = (l + dx).coerceIn(0f, r - minSpan)
                                             t = (t + dy).coerceIn(0f, b - minSpan)
                                             latestRatio?.let { ratio ->
+                                                val maxSpanW = (b * ratio / imgAspect).coerceAtMost(r)
+                                                val clampedSpanW = (r - l).coerceIn(minSpan, maxSpanW.coerceAtLeast(minSpan))
+                                                l = (r - clampedSpanW).coerceIn(0f, r - minSpan)
                                                 val desiredNormH = ((r - l) * imgAspect / ratio).coerceIn(minSpan, b)
                                                 t = (b - desiredNormH).coerceIn(0f, b - minSpan)
                                             }
@@ -257,6 +275,9 @@ fun InteractiveCropPreview(
                                             r = (r + dx).coerceIn(l + minSpan, 1f)
                                             t = (t + dy).coerceIn(0f, b - minSpan)
                                             latestRatio?.let { ratio ->
+                                                val maxSpanW = (b * ratio / imgAspect).coerceAtMost(1f - l)
+                                                val clampedSpanW = (r - l).coerceIn(minSpan, maxSpanW.coerceAtLeast(minSpan))
+                                                r = (l + clampedSpanW).coerceIn(l + minSpan, 1f)
                                                 val desiredNormH = ((r - l) * imgAspect / ratio).coerceIn(minSpan, b)
                                                 t = (b - desiredNormH).coerceIn(0f, b - minSpan)
                                             }
@@ -265,6 +286,9 @@ fun InteractiveCropPreview(
                                             l = (l + dx).coerceIn(0f, r - minSpan)
                                             b = (b + dy).coerceIn(t + minSpan, 1f)
                                             latestRatio?.let { ratio ->
+                                                val maxSpanW = ((1f - t) * ratio / imgAspect).coerceAtMost(r)
+                                                val clampedSpanW = (r - l).coerceIn(minSpan, maxSpanW.coerceAtLeast(minSpan))
+                                                l = (r - clampedSpanW).coerceIn(0f, r - minSpan)
                                                 val desiredNormH = ((r - l) * imgAspect / ratio).coerceIn(minSpan, 1f - t)
                                                 b = (t + desiredNormH).coerceIn(t + minSpan, 1f)
                                             }
@@ -273,6 +297,9 @@ fun InteractiveCropPreview(
                                             r = (r + dx).coerceIn(l + minSpan, 1f)
                                             b = (b + dy).coerceIn(t + minSpan, 1f)
                                             latestRatio?.let { ratio ->
+                                                val maxSpanW = ((1f - t) * ratio / imgAspect).coerceAtMost(1f - l)
+                                                val clampedSpanW = (r - l).coerceIn(minSpan, maxSpanW.coerceAtLeast(minSpan))
+                                                r = (l + clampedSpanW).coerceIn(l + minSpan, 1f)
                                                 val desiredNormH = ((r - l) * imgAspect / ratio).coerceIn(minSpan, 1f - t)
                                                 b = (t + desiredNormH).coerceIn(t + minSpan, 1f)
                                             }
@@ -347,75 +374,79 @@ fun BgTouchUpPreview(
     val latestRadius by rememberUpdatedState(brushRadiusNorm)
     val latestOnComplete by rememberUpdatedState(onStrokeCompleted)
 
-    // Render cutout + committed strokes onto a compact preview bitmap cleanly
-    val composedPreview = remember(cutoutBitmap, originalBitmap, strokes, activeStrokePoints.size) {
-        val base = cutoutBitmap ?: return@remember null
-        val working = base.copy(Bitmap.Config.ARGB_8888, true)
-        val allStrokes = if (activeStrokePoints.isNotEmpty()) {
-            strokes + BgBrushStroke(
-                isErase = latestErase,
-                radiusNorm = latestRadius,
-                points = activeStrokePoints.toList()
-            )
-        } else {
-            strokes
+    // Render cutout + committed strokes off the UI thread so dragging stays silky smooth
+    val composedPreview by produceState<Bitmap?>(
+        initialValue = cutoutBitmap,
+        cutoutBitmap,
+        originalBitmap,
+        strokes
+    ) {
+        val base = cutoutBitmap
+        if (base == null) {
+            value = null
+            return@produceState
         }
-        if (allStrokes.isEmpty()) return@remember working
-
-        val canvas = AndroidCanvas(working)
-        val w = working.width.toFloat()
-        val h = working.height.toFloat()
-        val minSide = min(w, h)
-        val alignedOrig = if (allStrokes.any { !it.isErase } && originalBitmap != null) {
-            if (originalBitmap.width == working.width && originalBitmap.height == working.height) {
-                originalBitmap
-            } else {
-                Bitmap.createScaledBitmap(originalBitmap, working.width, working.height, true)
-            }
-        } else null
-
-        val shader = alignedOrig?.let { orig ->
-            BitmapShader(orig, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+        if (strokes.isEmpty()) {
+            value = base
+            return@produceState
         }
-
-        try {
-            allStrokes.forEach { stroke ->
-                if (stroke.points.isEmpty()) return@forEach
-                val rPx = (stroke.radiusNorm * minSide).coerceAtLeast(2f)
-                val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
-                    style = AndroidPaint.Style.STROKE
-                    strokeWidth = rPx * 2f
-                    strokeCap = AndroidPaint.Cap.ROUND
-                    strokeJoin = AndroidPaint.Join.ROUND
-                    if (stroke.isErase) {
-                        xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
-                    } else if (shader != null) {
-                        this.shader = shader
-                    }
-                }
-                if (!stroke.isErase && shader == null) return@forEach
-                if (stroke.points.size == 1) {
-                    val p = stroke.points[0]
-                    paint.style = AndroidPaint.Style.FILL
-                    canvas.drawCircle(p.xNorm * w, p.yNorm * h, rPx, paint)
+        value = withContext(Dispatchers.Default) {
+            val working = base.copy(Bitmap.Config.ARGB_8888, true)
+            val canvas = AndroidCanvas(working)
+            val w = working.width.toFloat()
+            val h = working.height.toFloat()
+            val minSide = min(w, h)
+            val alignedOrig = if (strokes.any { !it.isErase } && originalBitmap != null) {
+                if (originalBitmap.width == working.width && originalBitmap.height == working.height) {
+                    originalBitmap
                 } else {
-                    val path = AndroidPath().apply {
-                        val first = stroke.points.first()
-                        moveTo(first.xNorm * w, first.yNorm * h)
-                        for (i in 1 until stroke.points.size) {
-                            val pt = stroke.points[i]
-                            lineTo(pt.xNorm * w, pt.yNorm * h)
+                    Bitmap.createScaledBitmap(originalBitmap, working.width, working.height, true)
+                }
+            } else null
+
+            val shader = alignedOrig?.let { orig ->
+                BitmapShader(orig, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP)
+            }
+
+            try {
+                strokes.forEach { stroke ->
+                    if (stroke.points.isEmpty()) return@forEach
+                    val rPx = (stroke.radiusNorm * minSide).coerceAtLeast(2f)
+                    val paint = AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+                        style = AndroidPaint.Style.STROKE
+                        strokeWidth = rPx * 2f
+                        strokeCap = AndroidPaint.Cap.ROUND
+                        strokeJoin = AndroidPaint.Join.ROUND
+                        if (stroke.isErase) {
+                            xfermode = PorterDuffXfermode(PorterDuff.Mode.CLEAR)
+                        } else if (shader != null) {
+                            this.shader = shader
                         }
                     }
-                    canvas.drawPath(path, paint)
+                    if (!stroke.isErase && shader == null) return@forEach
+                    if (stroke.points.size == 1) {
+                        val p = stroke.points[0]
+                        paint.style = AndroidPaint.Style.FILL
+                        canvas.drawCircle(p.xNorm * w, p.yNorm * h, rPx, paint)
+                    } else {
+                        val path = AndroidPath().apply {
+                            val first = stroke.points.first()
+                            moveTo(first.xNorm * w, first.yNorm * h)
+                            for (i in 1 until stroke.points.size) {
+                                val pt = stroke.points[i]
+                                lineTo(pt.xNorm * w, pt.yNorm * h)
+                            }
+                        }
+                        canvas.drawPath(path, paint)
+                    }
+                }
+            } finally {
+                if (alignedOrig != null && alignedOrig !== originalBitmap && !alignedOrig.isRecycled) {
+                    alignedOrig.recycle()
                 }
             }
-        } finally {
-            if (alignedOrig != null && alignedOrig !== originalBitmap && !alignedOrig.isRecycled) {
-                alignedOrig.recycle()
-            }
+            working
         }
-        working
     }
 
     val displayAspect = remember(cutoutBitmap, originalBitmap) {
@@ -519,6 +550,40 @@ fun BgTouchUpPreview(
                                 )
                             }
                     ) {
+                        if (activeStrokePoints.isNotEmpty()) {
+                            val rPx = (latestRadius * min(size.width, size.height)).coerceAtLeast(2f)
+                            val strokeColor = if (latestErase) {
+                                Color(0xFFEF4444).copy(alpha = 0.55f)
+                            } else {
+                                Color(0xFF10B981).copy(alpha = 0.55f)
+                            }
+                            if (activeStrokePoints.size == 1) {
+                                val pt = activeStrokePoints.first()
+                                drawCircle(
+                                    color = strokeColor,
+                                    radius = rPx,
+                                    center = Offset(pt.xNorm * size.width, pt.yNorm * size.height)
+                                )
+                            } else {
+                                val livePath = Path().apply {
+                                    val first = activeStrokePoints.first()
+                                    moveTo(first.xNorm * size.width, first.yNorm * size.height)
+                                    for (i in 1 until activeStrokePoints.size) {
+                                        val pt = activeStrokePoints[i]
+                                        lineTo(pt.xNorm * size.width, pt.yNorm * size.height)
+                                    }
+                                }
+                                drawPath(
+                                    path = livePath,
+                                    color = strokeColor,
+                                    style = Stroke(
+                                        width = rPx * 2f,
+                                        cap = StrokeCap.Round,
+                                        join = StrokeJoin.Round
+                                    )
+                                )
+                            }
+                        }
                         cursorOffset?.let { pos ->
                             val rPx = latestRadius * min(size.width, size.height)
                             drawCircle(
@@ -795,7 +860,12 @@ fun CustomColorPickerDialog(
         onDismissRequest = onDismiss,
         title = { Text("Custom Background Color", style = MaterialTheme.typography.titleLarge) },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(
+                modifier = Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -821,7 +891,9 @@ fun CustomColorPickerDialog(
                         },
                         label = { Text("Hex Code") },
                         singleLine = true,
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .bringIntoViewAboveKeyboard()
                     )
                 }
 

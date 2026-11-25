@@ -32,6 +32,7 @@ class UserPreferencesRepository(private val context: Context) {
         val UPSCALE_CREDITS = intPreferencesKey("upscale_credits")
         val SAVED_PDF_COUNT = intPreferencesKey("saved_pdf_count")
         val IN_APP_REVIEW_REQUESTED = booleanPreferencesKey("in_app_review_requested")
+        val COURTESY_UNLOCK_USED = booleanPreferencesKey("courtesy_unlock_used")
     }
 
     val isDarkMode: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
@@ -73,6 +74,10 @@ class UserPreferencesRepository(private val context: Context) {
 
     val upscaleCredits: Flow<Int> = context.paperlyDataStore.data.map { prefs ->
         prefs[Keys.UPSCALE_CREDITS] ?: 0
+    }
+
+    val courtesyUnlockUsed: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
+        prefs[Keys.COURTESY_UNLOCK_USED] ?: false
     }
 
     suspend fun setDarkMode(enabled: Boolean) {
@@ -165,5 +170,11 @@ class UserPreferencesRepository(private val context: Context) {
             }
         }
         return shouldTriggerReview
+    }
+
+    suspend fun markCourtesyUnlockUsed() {
+        context.paperlyDataStore.edit {
+            it[Keys.COURTESY_UNLOCK_USED] = true
+        }
     }
 }

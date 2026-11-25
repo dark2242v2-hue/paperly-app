@@ -13,8 +13,8 @@ android {
     applicationId = "com.paperly.pdf.studio"
     minSdk = 24
     targetSdk = 36
-    versionCode = 2
-    versionName = "1.0.1"
+    versionCode = 3
+    versionName = "1.0.2"
 
     val releaseCertSha256 = (System.getenv("RELEASE_CERT_SHA256") ?: "")
       .replace("\"", "")

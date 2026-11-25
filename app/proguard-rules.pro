@@ -69,9 +69,27 @@
 -dontwarn org.w3c.dom.**
 
 # ------------------------------------------------------------------------------
-# Google ML Kit Document Scanner, CameraX & Play In-App Review
+# Google ML Kit (Document Scanner, Text Recognition OCR, Subject Segmentation)
 # ------------------------------------------------------------------------------
--keep class com.google.mlkit.vision.documentscanner.** { *; }
+-keep class com.google.mlkit.** { *; }
+-keepclassmembers class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keepclassmembers class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.vision.** { *; }
+-keepclassmembers class com.google.android.gms.vision.** { *; }
+-keep class com.google.android.gms.internal.vision.** { *; }
+-keep class * extends com.google.android.gms.internal.mlkit_vision_common.zzaj { *; }
+-keep class * extends com.google.android.gms.internal.mlkit_vision_text_common.zzaj { *; }
+-keep class * extends com.google.android.gms.internal.mlkit_vision_subject_segmentation.zzaj { *; }
+-keep class **zzaj* { *; }
+-keep class com.google.android.gms.tasks.** { *; }
 -dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.internal.mlkit_**
+-dontwarn com.google.android.gms.vision.**
+-dontwarn com.google.android.gms.internal.vision.**
+
+# ------------------------------------------------------------------------------
+# Google Play In-App Review
+# ------------------------------------------------------------------------------
 -keep class com.google.android.play.core.review.** { *; }
 -dontwarn com.google.android.play.core.**

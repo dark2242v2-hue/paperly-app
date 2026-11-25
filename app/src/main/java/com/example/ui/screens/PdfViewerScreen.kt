@@ -131,6 +131,7 @@ import androidx.compose.ui.unit.dp
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.PdfToolType
+import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyViewerCanvas
 import com.example.ui.theme.PaperlyViewerChrome
@@ -490,7 +491,8 @@ private fun LockedPdfPasswordPromptSection(
         modifier = modifier
             .imePadding()
             .verticalScroll(scrollState)
-            .padding(horizontal = 24.dp, vertical = 20.dp),
+            .padding(horizontal = 24.dp, vertical = 20.dp)
+            .padding(bottom = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
@@ -583,6 +585,7 @@ private fun LockedPdfPasswordPromptSection(
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .bringIntoViewAboveKeyboard()
                         .testTag("viewer_password_input")
                 )
 

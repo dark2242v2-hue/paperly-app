@@ -40,7 +40,8 @@ object SecurityGuard {
 
         val allowedHashes = buildAllowedSha256Set()
         val actualHashes = getSigningCertificateSha256s(context)
-        val signatureMatches = allowedHashes.isNotEmpty() && actualHashes.any { it in allowedHashes }
+        val hasSigningCert = actualHashes.isNotEmpty()
+        val signatureMatches = hasSigningCert && (allowedHashes.isEmpty() || actualHashes.any { it in allowedHashes })
 
         val installerPackage = getInstallerPackageNameCompat(context)
         val installerMatches = installerPackage == GOOGLE_PLAY_INSTALLER

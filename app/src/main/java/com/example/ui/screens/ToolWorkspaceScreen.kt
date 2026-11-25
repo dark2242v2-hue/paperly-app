@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -66,6 +67,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -93,6 +95,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -124,6 +127,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.ads.findActivity
 import com.example.core.formatFileSize
@@ -134,7 +138,10 @@ import com.example.data.model.PdfToolType
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.SignaturePlacement
 import com.example.data.model.TargetSizeUnit
+import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.SignaturePad
+import com.example.ui.components.bringIntoViewAboveKeyboard
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.components.renderSignatureBitmap
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
@@ -162,7 +169,14 @@ fun ToolWorkspaceScreen(
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
+    val haptics = rememberPaperlyHaptics()
     val tool = workspace.activeTool
+
+    LaunchedEffect(aiSummaryState) {
+        if (aiSummaryState is AiSummaryUiState.Success) {
+            haptics.confirmSuccess()
+        }
+    }
 
     val signatureStrokes = remember { mutableStateListOf<List<Offset>>() }
     var signatureCanvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -341,6 +355,7 @@ fun ToolWorkspaceScreen(
 
                             Button(
                                 onClick = {
+                                    haptics.lightTap()
                                     val sigBmp = if (tool == PdfToolType.SIGN) {
                                         renderSignatureBitmap(signatureStrokes, signatureCanvasSize)
                                     } else {
@@ -352,13 +367,14 @@ fun ToolWorkspaceScreen(
                                     )
                                 },
                                 enabled = canProcess,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(54.dp)
+                                    .heightIn(min = 52.dp)
                                     .testTag("process_pdf_button"),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
-                                Text(
+                                FittedSingleLineText(
                                     text = if (workspace.processing.isProcessing) "Processing..." else stringResource(R.string.process_pdf),
                                     style = MaterialTheme.typography.labelLarge
                                 )
@@ -375,11 +391,17 @@ fun ToolWorkspaceScreen(
                 .padding(innerPadding),
             contentAlignment = Alignment.TopCenter
         ) {
+            val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = 680.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = 20.dp,
+                    top = 12.dp,
+                    bottom = if (imeVisible) 140.dp else 24.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Error banner
@@ -556,6 +578,7 @@ fun ToolWorkspaceScreen(
                                     onSummarizeClick = viewModel::summarizeSelectedPdf,
                                     onUpgradeProClick = onUpgradeProClick,
                                     onCopySummary = { summaryText ->
+                                        haptics.lightTap()
                                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                         clipboard.setPrimaryClip(
                                             ClipData.newPlainText(
@@ -565,7 +588,17 @@ fun ToolWorkspaceScreen(
                                         )
                                         viewModel.postMessage("Summary copied to clipboard")
                                     },
+                                    onShareSummary = { summaryText ->
+                                        haptics.lightTap()
+                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_SUBJECT, "Paperly AI Summary")
+                                            putExtra(Intent.EXTRA_TEXT, stripMarkdownForPlainText(summaryText))
+                                        }
+                                        context.startActivity(Intent.createChooser(shareIntent, "Share summary"))
+                                    },
                                     onExportPdf = { fileName, summaryText ->
+                                        haptics.lightTap()
                                         viewModel.exportSummaryAsPdf(
                                             sourceFileName = fileName,
                                             summaryText = summaryText,
@@ -625,9 +658,10 @@ private fun PdfFilePickerSection(
 
             Button(
                 onClick = onPickFromDevice,
+                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(50.dp)
+                    .heightIn(min = 50.dp)
                     .testTag("pick_pdf_file_button"),
                 shape = RoundedCornerShape(13.dp)
             ) {
@@ -637,7 +671,7 @@ private fun PdfFilePickerSection(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(8.dp))
-                Text(
+                FittedSingleLineText(
                     text = if (tool == PdfToolType.MERGE) {
                         if (selectedPdfs.isEmpty()) "Choose PDF Files" else "Add More PDFs"
                     } else {
@@ -789,6 +823,7 @@ private fun SplitControlsCard(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .bringIntoViewAboveKeyboard()
                     .testTag("split_range_input")
             )
 
@@ -995,6 +1030,7 @@ private fun CompressControlsCard(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .weight(1f)
+                                .bringIntoViewAboveKeyboard()
                                 .testTag("pdf_target_size_input")
                         )
                         TargetSizeUnit.entries.forEach { unit ->
@@ -1005,12 +1041,12 @@ private fun CompressControlsCard(
                                     onTargetConfigChange(true, targetValue.ifBlank { "200" }, unit)
                                 },
                                 label = {
-                                    Text(
+                                    FittedSingleLineText(
                                         text = unit.label,
                                         fontWeight = if (unitSelected) FontWeight.Bold else FontWeight.Medium
                                     )
                                 },
-                                modifier = Modifier.height(48.dp)
+                                modifier = Modifier.heightIn(min = 48.dp)
                             )
                         }
                     }
@@ -1042,6 +1078,8 @@ private fun ScanWorkspaceContent(
     onToggleEnhance: (Boolean) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
+    val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     Box(
         modifier = Modifier.fillMaxWidth(),
         contentAlignment = Alignment.TopCenter
@@ -1163,8 +1201,15 @@ private fun ScanWorkspaceContent(
                                         .clip(RoundedCornerShape(12.dp))
                                         .background(MaterialTheme.colorScheme.surfaceVariant)
                                 ) {
+                                    val thumbRequest = remember(uri) {
+                                        ImageRequest.Builder(context)
+                                            .data(uri)
+                                            .size(360, 480)
+                                            .crossfade(true)
+                                            .build()
+                                    }
                                     AsyncImage(
-                                        model = uri,
+                                        model = thumbRequest,
                                         contentDescription = "Scanned page ${idx + 1}",
                                         modifier = Modifier.fillMaxSize(),
                                         contentScale = ContentScale.Crop
@@ -1322,7 +1367,10 @@ private fun ScanWorkspaceContent(
                                 ) {
                                     val originalSelected = !enhanceContrast
                                     Surface(
-                                        onClick = { onToggleEnhance(false) },
+                                        onClick = {
+                                            haptics.lightTap()
+                                            onToggleEnhance(false)
+                                        },
                                         shape = CircleShape,
                                         color = if (originalSelected) {
                                             MaterialTheme.colorScheme.primary
@@ -1350,7 +1398,10 @@ private fun ScanWorkspaceContent(
 
                                     val bwSelected = enhanceContrast
                                     Surface(
-                                        onClick = { onToggleEnhance(true) },
+                                        onClick = {
+                                            haptics.lightTap()
+                                            onToggleEnhance(true)
+                                        },
                                         shape = CircleShape,
                                         color = if (bwSelected) {
                                             MaterialTheme.colorScheme.primary
@@ -1605,7 +1656,7 @@ private fun SignControlsCard(
                     OutlinedButton(
                         onClick = { onPageChange(workspace.signTargetPage - 1) },
                         enabled = workspace.signTargetPage > 1,
-                        modifier = Modifier.height(48.dp)
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) {
                         Text("-")
                     }
@@ -1616,7 +1667,7 @@ private fun SignControlsCard(
                     OutlinedButton(
                         onClick = { onPageChange(workspace.signTargetPage + 1) },
                         enabled = workspace.signTargetPage < pdf.pageCount,
-                        modifier = Modifier.height(48.dp)
+                        modifier = Modifier.heightIn(min = 48.dp)
                     ) {
                         Text("+")
                     }
@@ -1852,6 +1903,7 @@ private fun LockControlsCard(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .bringIntoViewAboveKeyboard()
                     .testTag("lock_password_input")
             )
 
@@ -1879,6 +1931,7 @@ private fun LockControlsCard(
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .bringIntoViewAboveKeyboard()
                     .testTag("lock_confirm_password_input")
             )
 
@@ -1975,8 +2028,10 @@ private fun AiSummarizeWorkspaceSection(
     onSummarizeClick: () -> Unit,
     onUpgradeProClick: () -> Unit,
     onCopySummary: (String) -> Unit,
+    onShareSummary: (String) -> Unit,
     onExportPdf: (String, String) -> Unit
 ) {
+    val haptics = rememberPaperlyHaptics()
     val isBusy = aiState is AiSummaryUiState.Extracting ||
         aiState is AiSummaryUiState.Loading ||
         aiState is AiSummaryUiState.Formatting
@@ -2018,17 +2073,21 @@ private fun AiSummarizeWorkspaceSection(
         }
 
         Button(
-            onClick = onSummarizeClick,
+            onClick = {
+                haptics.lightTap()
+                onSummarizeClick()
+            },
             enabled = selectedPdf != null && !isBusy,
+            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(54.dp)
+                .heightIn(min = 52.dp)
                 .testTag("summarize_with_ai_button"),
             shape = RoundedCornerShape(14.dp)
         ) {
             Icon(Icons.Filled.AutoAwesome, contentDescription = null, modifier = Modifier.size(18.dp))
             Spacer(modifier = Modifier.width(8.dp))
-            Text(
+            FittedSingleLineText(
                 text = when (aiState) {
                     is AiSummaryUiState.Extracting -> "Extracting PDF text..."
                     is AiSummaryUiState.Loading -> "Analyzing document..."
@@ -2285,28 +2344,43 @@ private fun AiSummarizeWorkspaceSection(
                             ) {
                                 OutlinedButton(
                                     onClick = { onCopySummary(summaryText) },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(50.dp)
+                                        .heightIn(min = 48.dp)
                                         .testTag("copy_ai_summary_button"),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
                                     Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Copy Summary", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    FittedSingleLineText("Copy Text")
                                 }
-                                Button(
-                                    onClick = { onExportPdf(fileName, summaryText) },
+                                OutlinedButton(
+                                    onClick = { onShareSummary(summaryText) },
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                                     modifier = Modifier
                                         .weight(1f)
-                                        .height(50.dp)
-                                        .testTag("export_summary_pdf_button"),
+                                        .heightIn(min = 48.dp)
+                                        .testTag("share_ai_summary_button"),
                                     shape = RoundedCornerShape(12.dp)
                                 ) {
-                                    Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                                     Spacer(modifier = Modifier.width(6.dp))
-                                    Text("Export as PDF", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    FittedSingleLineText("Share")
                                 }
+                            }
+                            Button(
+                                onClick = { onExportPdf(fileName, summaryText) },
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 50.dp)
+                                    .testTag("export_summary_pdf_button"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(modifier = Modifier.width(8.dp))
+                                FittedSingleLineText("Export as PDF", fontWeight = FontWeight.SemiBold)
                             }
 
                             if (!isPro) {
@@ -2389,9 +2463,9 @@ private fun AiSummarizeWorkspaceSection(
                         )
                         OutlinedButton(
                             onClick = onSummarizeClick,
-                            modifier = Modifier.height(48.dp)
+                            modifier = Modifier.heightIn(min = 48.dp)
                         ) {
-                            Text("Retry")
+                            FittedSingleLineText("Retry")
                         }
                     }
                 }
@@ -2416,6 +2490,7 @@ private fun OutputNameField(
             shape = RoundedCornerShape(12.dp),
             modifier = Modifier
                 .fillMaxWidth()
+                .bringIntoViewAboveKeyboard()
                 .testTag("output_filename_input")
         )
         if (!helper.isNullOrBlank()) {

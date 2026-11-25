@@ -12,9 +12,11 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
@@ -27,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Share
@@ -45,13 +48,16 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,6 +67,8 @@ import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
+import com.example.ui.components.bringIntoViewAboveKeyboard
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.viewmodel.PaperlyViewModel
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -72,6 +80,7 @@ fun FilesScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     val isRefreshing by viewModel.isRefreshingFiles.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
@@ -123,7 +132,10 @@ fun FilesScreen(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                     IconButton(
-                        onClick = { viewModel.refreshFilesCache(force = true) },
+                        onClick = {
+                            haptics.lightTap()
+                            viewModel.refreshFilesCache(force = true)
+                        },
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("files_refresh_button")
@@ -147,6 +159,7 @@ fun FilesScreen(
                 shape = RoundedCornerShape(14.dp),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .bringIntoViewAboveKeyboard()
                     .testTag("files_search_input")
             )
 
@@ -154,7 +167,10 @@ fun FilesScreen(
                 items(filters) { filter ->
                     FilterChip(
                         selected = selectedFilter == filter,
-                        onClick = { selectedFilter = filter },
+                        onClick = {
+                            haptics.lightTap()
+                            selectedFilter = filter
+                        },
                         label = { Text(filter) },
                         modifier = Modifier.testTag("files_filter_${filter.lowercase()}")
                     )
@@ -195,13 +211,31 @@ fun FilesScreen(
                     }
                 }
             } else {
+                val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 LazyColumn(
-                    contentPadding = PaddingValues(bottom = 20.dp),
+                    contentPadding = PaddingValues(bottom = if (imeVisible) 140.dp else 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { record ->
+                        val pageThumb by produceState(
+                            initialValue = viewModel.pdfEngine.getCachedPageThumbnail(record.filePath, 0, 180),
+                            key1 = record.filePath,
+                            key2 = record.sizeBytes
+                        ) {
+                            if (value == null || value?.isRecycled == true) {
+                                value = viewModel.pdfEngine.renderPageThumbnail(
+                                    filePath = record.filePath,
+                                    pageIndex = 0,
+                                    maxWidth = 180
+                                )
+                            }
+                        }
+
                         Card(
-                            onClick = { onOpenViewer(record.id) },
+                            onClick = {
+                                haptics.lightTap()
+                                onOpenViewer(record.id)
+                            },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("file_item_card_${record.id}"),
@@ -216,16 +250,26 @@ fun FilesScreen(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(44.dp)
-                                        .clip(RoundedCornerShape(12.dp))
+                                        .size(width = 40.dp, height = 52.dp)
+                                        .clip(RoundedCornerShape(10.dp))
                                         .background(MaterialTheme.colorScheme.primaryContainer),
                                     contentAlignment = Alignment.Center
                                 ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Description,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                    )
+                                    val thumb = pageThumb?.takeIf { !it.isRecycled }
+                                    if (thumb != null) {
+                                        Image(
+                                            bitmap = thumb.asImageBitmap(),
+                                            contentDescription = "${record.displayName} thumbnail",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier.fillMaxSize()
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = if (record.operationTag == "Locked") Icons.Filled.Lock else Icons.Filled.Description,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
                                 }
 
                                 Column(modifier = Modifier.weight(1f)) {
@@ -263,6 +307,7 @@ fun FilesScreen(
 
                                 IconButton(
                                     onClick = {
+                                        haptics.lightTap()
                                         pendingSaveRecord = record
                                         saveLauncher.launch(record.displayName)
                                     },
@@ -277,6 +322,7 @@ fun FilesScreen(
 
                                 IconButton(
                                     onClick = {
+                                        haptics.lightTap()
                                         val shareUri = viewModel.pdfEngine.getShareUri(record.filePath)
                                         val intent = Intent(Intent.ACTION_SEND).apply {
                                             type = "application/pdf"
@@ -295,7 +341,10 @@ fun FilesScreen(
                                 }
 
                                 IconButton(
-                                    onClick = { viewModel.deleteRecord(record) },
+                                    onClick = {
+                                        haptics.lightTap()
+                                        viewModel.deleteRecord(record)
+                                    },
                                     modifier = Modifier.minimumInteractiveComponentSize()
                                 ) {
                                     Icon(

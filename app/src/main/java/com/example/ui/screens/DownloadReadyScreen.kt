@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -27,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Share
@@ -71,13 +73,17 @@ import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.font.FontWeight
+import android.widget.Toast
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.ads.findActivity
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
+import com.example.core.formatSavedSummary
 import com.example.data.local.PdfRecordEntity
+import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.SponsoredNativeAdCard
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 import com.google.android.play.core.review.ReviewManagerFactory
@@ -95,6 +101,7 @@ fun DownloadReadyScreen(
     onDone: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var thumbnail by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
@@ -122,6 +129,7 @@ fun DownloadReadyScreen(
         val loaded = viewModel.loadRecordById(recordId)
         record = loaded
         if (loaded != null) {
+            haptics.confirmSuccess()
             thumbnail = viewModel.pdfEngine.renderPageThumbnail(loaded.filePath, pageIndex = 0, maxWidth = 560)
         }
         isLoading = false
@@ -323,9 +331,18 @@ fun DownloadReadyScreen(
                                         )
 
                                         Text(
-                                            text = "${current.pageCount} page(s) • ${formatFileSize(current.sizeBytes)}",
+                                            text = formatSavedSummary(
+                                                originalBytes = current.originalSizeBytes,
+                                                newBytes = current.sizeBytes,
+                                                pageCount = current.pageCount
+                                            ),
                                             style = MaterialTheme.typography.labelMedium,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = if (savedPercent != null && savedPercent > 0) {
+                                                PaperlyEmerald
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
                                         )
                                     }
                                 }
@@ -340,10 +357,14 @@ fun DownloadReadyScreen(
                                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                                 ) {
                                     Button(
-                                        onClick = { createDocumentLauncher.launch(current.displayName) },
+                                        onClick = {
+                                            haptics.lightTap()
+                                            createDocumentLauncher.launch(current.displayName)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                                         modifier = Modifier
                                             .weight(1.3f)
-                                            .height(54.dp)
+                                            .heightIn(min = 52.dp)
                                             .testTag("download_pdf_button"),
                                         shape = RoundedCornerShape(14.dp)
                                     ) {
@@ -353,7 +374,7 @@ fun DownloadReadyScreen(
                                             modifier = Modifier.size(20.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
+                                        FittedSingleLineText(
                                             text = "Save to Device",
                                             style = MaterialTheme.typography.labelLarge
                                         )
@@ -361,6 +382,7 @@ fun DownloadReadyScreen(
 
                                     OutlinedButton(
                                         onClick = {
+                                            haptics.lightTap()
                                             val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
                                             val intent = Intent(Intent.ACTION_SEND).apply {
                                                 type = "application/pdf"
@@ -369,9 +391,10 @@ fun DownloadReadyScreen(
                                             }
                                             context.startActivity(Intent.createChooser(intent, "Share PDF"))
                                         },
+                                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                                         modifier = Modifier
                                             .weight(1f)
-                                            .height(54.dp)
+                                            .heightIn(min = 52.dp)
                                             .testTag("share_pdf_button"),
                                         shape = RoundedCornerShape(14.dp),
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -382,7 +405,7 @@ fun DownloadReadyScreen(
                                             modifier = Modifier.size(18.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
-                                        Text(
+                                        FittedSingleLineText(
                                             text = stringResource(R.string.share_pdf),
                                             style = MaterialTheme.typography.labelLarge
                                         )
@@ -391,27 +414,72 @@ fun DownloadReadyScreen(
 
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    TextButton(
-                                        onClick = { onPreviewPdf(current.id) },
-                                        modifier = Modifier.height(48.dp).testTag("preview_pdf_button")
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptics.lightTap()
+                                            onPreviewPdf(current.id)
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("preview_pdf_button")
                                     ) {
                                         Icon(
                                             imageVector = Icons.Filled.Visibility,
                                             contentDescription = null,
-                                            modifier = Modifier.size(18.dp)
+                                            modifier = Modifier.size(17.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        Text(stringResource(R.string.open_viewer))
+                                        FittedSingleLineText(stringResource(R.string.open_viewer))
                                     }
 
-                                    TextButton(
-                                        onClick = onDone,
-                                        modifier = Modifier.height(48.dp).testTag("done_to_home_button")
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptics.lightTap()
+                                            val viewUri = viewModel.pdfEngine.getShareUri(current.filePath)
+                                            val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                                setDataAndType(viewUri, "application/pdf")
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                            }
+                                            runCatching {
+                                                context.startActivity(Intent.createChooser(viewIntent, "Open PDF with"))
+                                            }.onFailure {
+                                                Toast.makeText(context, "No external PDF app found.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("open_with_pdf_button")
                                     ) {
-                                        Text(stringResource(R.string.back_to_home))
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        FittedSingleLineText("Open With")
                                     }
+                                }
+
+                                TextButton(
+                                    onClick = {
+                                        haptics.lightTap()
+                                        onDone()
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .testTag("done_to_home_button")
+                                ) {
+                                    FittedSingleLineText(stringResource(R.string.back_to_home))
                                 }
                             }
                         }

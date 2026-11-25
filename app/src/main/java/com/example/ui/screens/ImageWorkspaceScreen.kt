@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -87,6 +88,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -99,6 +101,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -122,9 +125,12 @@ import com.example.data.model.UpscaleTarget
 import com.example.ui.components.BgTouchUpPreview
 import com.example.ui.components.ColorSwatchCircle
 import com.example.ui.components.CustomColorPickerDialog
+import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.InteractiveCropPreview
 import com.example.ui.components.PassportFramingPreview
 import com.example.ui.components.SponsoredNativeAdCard
+import com.example.ui.components.bringIntoViewAboveKeyboard
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.viewmodel.ImageWorkspaceUiState
@@ -149,7 +155,14 @@ fun ImageWorkspaceScreen(
     onPdfExported: (Long) -> Unit
 ) {
     val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     val tool = state.activeTool
+
+    LaunchedEffect(ocrState) {
+        if (ocrState is OcrUiState.Success) {
+            haptics.confirmSuccess()
+        }
+    }
 
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
@@ -327,6 +340,7 @@ fun ImageWorkspaceScreen(
 
                             Button(
                                 onClick = {
+                                    haptics.lightTap()
                                     when (tool) {
                                         ImageToolType.COMPRESS_IMAGE -> viewModel.runImageCompression(onImageResultReady)
                                         ImageToolType.CROP_RESIZE -> viewModel.runCropRotateResize(onImageResultReady)
@@ -338,13 +352,14 @@ fun ImageWorkspaceScreen(
                                     }
                                 },
                                 enabled = canProcess,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(54.dp)
+                                    .heightIn(min = 52.dp)
                                     .testTag("image_process_cta_button"),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
-                                Text(
+                                FittedSingleLineText(
                                     text = if (state.processing.isProcessing) "Processing..." else primaryCtaLabel,
                                     style = MaterialTheme.typography.labelLarge,
                                     fontWeight = FontWeight.Bold
@@ -362,11 +377,17 @@ fun ImageWorkspaceScreen(
                 .padding(innerPadding),
             contentAlignment = Alignment.TopCenter
         ) {
+            val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .widthIn(max = 720.dp),
-                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
+                contentPadding = PaddingValues(
+                    start = 20.dp,
+                    end = 20.dp,
+                    top = 12.dp,
+                    bottom = if (imeVisible) 140.dp else 24.dp
+                ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 state.processing.errorMessage?.let { errorMsg ->
@@ -446,11 +467,13 @@ fun ImageWorkspaceScreen(
                                 isDarkMode = isDarkMode,
                                 adManager = viewModel.adManager,
                                 onCopyText = { text ->
+                                    haptics.lightTap()
                                     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                     clipboard.setPrimaryClip(ClipData.newPlainText("Paperly OCR Text", text))
                                     viewModel.postMessage("Extracted text copied to clipboard")
                                 },
                                 onShareText = { text ->
+                                    haptics.lightTap()
                                     val sendIntent = Intent(Intent.ACTION_SEND).apply {
                                         type = "text/plain"
                                         putExtra(Intent.EXTRA_TEXT, text)
@@ -458,6 +481,7 @@ fun ImageWorkspaceScreen(
                                     context.startActivity(Intent.createChooser(sendIntent, "Share extracted text"))
                                 },
                                 onSaveAsPdf = { text ->
+                                    haptics.lightTap()
                                     viewModel.saveOcrTextAsPdf(text, onPdfExported)
                                 }
                             )
@@ -574,9 +598,10 @@ private fun ImagePickerCard(
                 OutlinedButton(
                     onClick = onPickFromGallery,
                     shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .height(48.dp)
+                        .heightIn(min = 48.dp)
                         .testTag("pick_image_button")
                 ) {
                     Icon(
@@ -585,16 +610,17 @@ private fun ImagePickerCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(if (pickedImage == null) "Choose Photo" else "Change Photo")
+                    FittedSingleLineText(if (pickedImage == null) "Choose Photo" else "Change Photo")
                 }
 
                 if (showCameraForOcr) {
                     OutlinedButton(
                         onClick = onSnapCamera,
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("ocr_camera_button")
                     ) {
                         Icon(
@@ -603,7 +629,7 @@ private fun ImagePickerCard(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Snap Photo")
+                        FittedSingleLineText("Snap Photo")
                     }
                 }
             }
@@ -618,6 +644,7 @@ private fun ImageCompressionControlsCard(
     onConfigChange: (String?, TargetSizeUnit?, ImageOutputFormat?, String?, Boolean) -> Unit,
     onClearPreset: () -> Unit
 ) {
+    val haptics = rememberPaperlyHaptics()
     val presets = listOf(
         Triple("10 KB", "10", TargetSizeUnit.KB),
         Triple("20 KB", "20", TargetSizeUnit.KB),
@@ -665,7 +692,10 @@ private fun ImageCompressionControlsCard(
                         val selected = state.compressSelectedPresetLabel == label
                         FilterChip(
                             selected = selected,
-                            onClick = { onConfigChange(valStr, unit, null, label, false) },
+                            onClick = {
+                                haptics.lightTap()
+                                onConfigChange(valStr, unit, null, label, false)
+                            },
                             label = { Text(label) }
                         )
                     }
@@ -685,6 +715,7 @@ private fun ImageCompressionControlsCard(
                         shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .weight(1f)
+                            .bringIntoViewAboveKeyboard()
                             .onFocusChanged { focusState ->
                                 if (focusState.isFocused) {
                                     onClearPreset()
@@ -697,8 +728,8 @@ private fun ImageCompressionControlsCard(
                         FilterChip(
                             selected = state.compressTargetUnit == unit,
                             onClick = { onConfigChange(null, unit, null, null, false) },
-                            label = { Text(unit.label, fontWeight = FontWeight.SemiBold) },
-                            modifier = Modifier.height(48.dp)
+                            label = { FittedSingleLineText(unit.label, fontWeight = FontWeight.SemiBold) },
+                            modifier = Modifier.heightIn(min = 48.dp)
                         )
                     }
                 }
@@ -727,6 +758,7 @@ private fun CropAndResizeWorkspaceCard(
     viewModel: PaperlyViewModel
 ) {
     val bmp = state.previewBitmap ?: return
+    val haptics = rememberPaperlyHaptics()
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
         InteractiveCropPreview(
             bitmap = bmp,
@@ -746,54 +778,91 @@ private fun CropAndResizeWorkspaceCard(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
             Column(
-                modifier = Modifier.padding(16.dp),
+                modifier = Modifier.padding(vertical = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text("Aspect Ratio & Orientation", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    text = "Aspect Ratio & Orientation",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
 
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     items(CropAspectPreset.entries) { preset ->
                         FilterChip(
                             selected = state.cropAspectPreset == preset,
-                            onClick = { viewModel.selectCropAspectPreset(preset) },
-                            label = { Text(preset.label) }
+                            onClick = {
+                                haptics.lightTap()
+                                viewModel.selectCropAspectPreset(preset)
+                            },
+                            label = {
+                                Text(
+                                    text = preset.label,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            },
+                            modifier = Modifier.testTag("crop_aspect_${preset.name.lowercase()}")
                         )
                     }
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     OutlinedButton(
-                        onClick = viewModel::rotateCropImage90,
+                        onClick = {
+                            haptics.lightTap()
+                            viewModel.rotateCropImage90()
+                        },
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                     ) {
                         Icon(Icons.AutoMirrored.Filled.RotateRight, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Rotate 90°")
+                        FittedSingleLineText("Rotate 90°")
                     }
                     OutlinedButton(
-                        onClick = viewModel::toggleCropFlipHorizontal,
+                        onClick = {
+                            haptics.lightTap()
+                            viewModel.toggleCropFlipHorizontal()
+                        },
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                         modifier = Modifier
                             .weight(1f)
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                     ) {
                         Icon(Icons.Filled.Flip, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text(if (state.flipHorizontal) "Flipped" else "Flip Horiz")
+                        FittedSingleLineText(if (state.flipHorizontal) "Flipped" else "Flip Horiz")
                     }
                 }
 
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
-                Text("Exact Pixel Dimensions (px)", style = MaterialTheme.typography.titleSmall)
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
+                Text(
+                    text = "Exact Pixel Dimensions (px)",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(horizontal = 16.dp)
+                )
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -804,7 +873,10 @@ private fun CropAndResizeWorkspaceCard(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .bringIntoViewAboveKeyboard()
+                            .testTag("crop_resize_width_input")
                     )
 
                     IconButton(
@@ -827,12 +899,19 @@ private fun CropAndResizeWorkspaceCard(
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                         shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .bringIntoViewAboveKeyboard()
+                            .testTag("crop_resize_height_input")
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ImageOutputFormat.entries.forEach { fmt ->
+                LazyRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(ImageOutputFormat.entries) { fmt ->
                         FilterChip(
                             selected = state.outputFormat == fmt,
                             onClick = { viewModel.updateImageCompressionConfig(format = fmt) },
@@ -974,37 +1053,40 @@ private fun OcrWorkspaceCard(
                         OutlinedButton(
                             onClick = { onCopyText(ocrState.text) },
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Copy")
+                            FittedSingleLineText("Copy")
                         }
                         OutlinedButton(
                             onClick = { onShareText(ocrState.text) },
                             shape = RoundedCornerShape(12.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                         ) {
                             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Share")
+                            FittedSingleLineText("Share")
                         }
                     }
 
                     Button(
                         onClick = { onSaveAsPdf(ocrState.text) },
                         shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(50.dp)
+                            .heightIn(min = 50.dp)
                     ) {
                         Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Save as PDF", fontWeight = FontWeight.SemiBold)
+                        FittedSingleLineText("Save as PDF", fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
@@ -1100,6 +1182,7 @@ private fun AiTextToImageWorkspaceCard(
                     shape = RoundedCornerShape(14.dp),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .bringIntoViewAboveKeyboard()
                         .testTag("ai_image_prompt_input")
                 )
 
@@ -1126,12 +1209,12 @@ private fun AiTextToImageWorkspaceCard(
                 }
 
                 Text("Aspect Ratio", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    AiImageAspectRatio.entries.forEach { ratio ->
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(AiImageAspectRatio.entries) { ratio ->
                         FilterChip(
                             selected = state.aiAspectRatio == ratio,
                             onClick = { onUpdateConfig(null, null, ratio) },
-                            label = { Text(ratio.label) }
+                            label = { FittedSingleLineText(ratio.label) }
                         )
                     }
                 }
@@ -1582,14 +1665,14 @@ private fun PassportSheetWorkspaceCard(
                         OutlinedButton(
                             onClick = onResetFraming,
                             shape = RoundedCornerShape(10.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("passport_framing_reset")
                         ) {
                             Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Reset", style = MaterialTheme.typography.labelMedium)
+                            FittedSingleLineText("Reset", style = MaterialTheme.typography.labelMedium)
                         }
                     }
                 }
@@ -1664,12 +1747,12 @@ private fun PassportSheetWorkspaceCard(
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
 
                 Text("Copies on Print Sheet", style = MaterialTheme.typography.titleSmall)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(4, 6, 8, 12).forEach { count ->
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(listOf(4, 6, 8, 12)) { count ->
                         FilterChip(
                             selected = state.passportCopyCount == count,
                             onClick = { onUpdatePassport(null, null, count, null) },
-                            label = { Text("$count Photos") }
+                            label = { FittedSingleLineText("$count Photos") }
                         )
                     }
                 }

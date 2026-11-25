@@ -11,9 +11,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.net.ConnectException
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
+import java.net.UnknownHostException
 import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLException
 import kotlin.random.Random
 
 private const val TAG = "AiImageRepository"
@@ -99,10 +104,21 @@ class AiImageRepository {
                 throw fallbackErr
             } catch (fallbackErr: Exception) {
                 throw IllegalStateException(
-                    fallbackErr.localizedMessage
-                        ?: "AI image server is busy right now — please tap Generate again in a moment"
+                    toFriendlyNetworkMessage(fallbackErr)
                 )
             }
+        }
+    }
+
+    private fun toFriendlyNetworkMessage(error: Throwable): String {
+        return when (error) {
+            is UnknownHostException -> "No internet connection. Connect to Wi-Fi or mobile data to generate AI images."
+            is ConnectException -> "Could not reach the AI image server. Check your connection and try again."
+            is SocketTimeoutException -> "AI image generation timed out. Please tap Generate again."
+            is SSLException -> "Secure connection failed. Please check your network and try again."
+            is IOException -> "Network interruption while generating image. Please try again."
+            else -> error.localizedMessage?.takeIf { it.isNotBlank() }
+                ?: "AI image server is busy right now — please tap Generate again in a moment"
         }
     }
 

@@ -18,6 +18,7 @@ import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -34,11 +35,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -69,6 +74,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.NavigationBar
@@ -88,11 +94,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusEvent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -102,15 +112,24 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.isSpecified
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -134,6 +153,91 @@ import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdView
 
 @Composable
+fun FittedSingleLineText(
+    text: String,
+    modifier: Modifier = Modifier,
+    style: TextStyle = LocalTextStyle.current,
+    color: Color = Color.Unspecified,
+    fontWeight: FontWeight? = null,
+    textAlign: TextAlign? = null,
+    minFontSize: TextUnit = 9.sp
+) {
+    var scaledFontSize by remember(text, style.fontSize) {
+        mutableStateOf(
+            if (style.fontSize.isSpecified) style.fontSize else 14.sp
+        )
+    }
+    Text(
+        text = text,
+        modifier = modifier,
+        color = color,
+        fontWeight = fontWeight,
+        textAlign = textAlign,
+        style = style.copy(fontSize = scaledFontSize),
+        maxLines = 1,
+        softWrap = false,
+        overflow = if (scaledFontSize <= minFontSize) TextOverflow.Ellipsis else TextOverflow.Clip,
+        onTextLayout = { result ->
+            if (result.didOverflowWidth && scaledFontSize > minFontSize) {
+                val nextValue = (scaledFontSize.value * 0.90f).coerceAtLeast(minFontSize.value)
+                if (nextValue < scaledFontSize.value) {
+                    scaledFontSize = nextValue.sp
+                }
+            }
+        }
+    )
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+fun Modifier.bringIntoViewAboveKeyboard(
+    bottomClearance: Dp = 140.dp
+): Modifier = composed {
+    val bringIntoViewRequester = remember { BringIntoViewRequester() }
+    val density = LocalDensity.current
+    val coroutineScope = rememberCoroutineScope()
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    var isFocused by remember { mutableStateOf(false) }
+    var boxSize by remember { mutableStateOf(IntSize.Zero) }
+
+    LaunchedEffect(isFocused, imeBottom) {
+        if (isFocused) {
+            val clearancePx = with(density) { bottomClearance.toPx() }
+            val rect = Rect(
+                left = 0f,
+                top = 0f,
+                right = boxSize.width.toFloat().coerceAtLeast(1f),
+                bottom = (boxSize.height.toFloat() + clearancePx).coerceAtLeast(1f)
+            )
+            bringIntoViewRequester.bringIntoView(rect)
+            delay(180)
+            bringIntoViewRequester.bringIntoView(rect)
+        }
+    }
+
+    this
+        .onSizeChanged { boxSize = it }
+        .bringIntoViewRequester(bringIntoViewRequester)
+        .onFocusEvent { focusState ->
+            val nowFocused = focusState.isFocused || focusState.hasFocus
+            if (nowFocused && !isFocused) {
+                isFocused = true
+                coroutineScope.launch {
+                    val clearancePx = with(density) { bottomClearance.toPx() }
+                    val rect = Rect(
+                        left = 0f,
+                        top = 0f,
+                        right = boxSize.width.toFloat().coerceAtLeast(1f),
+                        bottom = (boxSize.height.toFloat() + clearancePx).coerceAtLeast(1f)
+                    )
+                    bringIntoViewRequester.bringIntoView(rect)
+                }
+            } else if (!nowFocused) {
+                isFocused = false
+            }
+        }
+}
+
+@Composable
 fun PaperlyTopBar(
     isDarkMode: Boolean,
     isPro: Boolean,
@@ -141,6 +245,7 @@ fun PaperlyTopBar(
     onProClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
     Row(
         modifier = modifier
             .fillMaxWidth()
@@ -175,7 +280,10 @@ fun PaperlyTopBar(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             IconButton(
-                onClick = onToggleDarkMode,
+                onClick = {
+                    haptics.lightTap()
+                    onToggleDarkMode()
+                },
                 modifier = Modifier
                     .minimumInteractiveComponentSize()
                     .testTag("dark_mode_toggle")
@@ -188,7 +296,10 @@ fun PaperlyTopBar(
             }
 
             Surface(
-                onClick = onProClick,
+                onClick = {
+                    haptics.lightTap()
+                    onProClick()
+                },
                 shape = CircleShape,
                 color = if (isPro) PaperlyEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primaryContainer,
                 border = BorderStroke(
@@ -196,7 +307,7 @@ fun PaperlyTopBar(
                     color = if (isPro) PaperlyEmerald.copy(alpha = 0.45f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
                 ),
                 modifier = Modifier
-                    .height(48.dp)
+                    .heightIn(min = 48.dp)
                     .testTag("pro_badge_button")
             ) {
                 Row(
@@ -326,6 +437,7 @@ fun PaperlyBottomBarWithBanner(
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -364,7 +476,10 @@ fun PaperlyBottomBarWithBanner(
                 val selected = currentRoute == route
                 NavigationBarItem(
                     selected = selected,
-                    onClick = { onNavigate(route) },
+                    onClick = {
+                        haptics.lightTap()
+                        onNavigate(route)
+                    },
                     icon = {
                         Icon(
                             imageVector = if (selected) icons.first else icons.second,
@@ -589,10 +704,11 @@ fun PaperlyProSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .imePadding()
                 .verticalScroll(rememberScrollState())
                 .windowInsetsPadding(WindowInsets.navigationBars)
                 .padding(horizontal = 24.dp, vertical = 10.dp)
-                .padding(bottom = 20.dp),
+                .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Row(
@@ -714,13 +830,14 @@ fun PaperlyProSheet(
                             context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                         }
                     },
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
+                        .heightIn(min = 50.dp)
                         .testTag("manage_subscription_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
-                    Text(
+                    FittedSingleLineText(
                         text = "Manage Subscription in Google Play",
                         style = MaterialTheme.typography.labelLarge
                     )
@@ -728,9 +845,10 @@ fun PaperlyProSheet(
 
                 Button(
                     onClick = onDismiss,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(50.dp)
+                        .heightIn(min = 50.dp)
                         .testTag("pro_sheet_done_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
@@ -787,9 +905,10 @@ fun PaperlyProSheet(
                 Button(
                     onClick = { onSubscribe(selectedPlan) },
                     enabled = !billingState.isPurchasing && !billingState.isRestoring && !state.isLoadingRewardedAd,
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(54.dp)
+                        .heightIn(min = 54.dp)
                         .testTag("pro_sheet_action_button"),
                     shape = RoundedCornerShape(14.dp)
                 ) {
@@ -800,12 +919,12 @@ fun PaperlyProSheet(
                             color = Color.White
                         )
                         Spacer(modifier = Modifier.width(10.dp))
-                        Text(
+                        FittedSingleLineText(
                             text = "Opening Google Play…",
                             style = MaterialTheme.typography.labelLarge
                         )
                     } else {
-                        Text(
+                        FittedSingleLineText(
                             text = ctaLabel,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
@@ -943,16 +1062,16 @@ fun PaperlyProSheet(
                             onClick = onRestorePurchases,
                             enabled = !billingState.isRestoring && !billingState.isPurchasing,
                             modifier = Modifier
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("pro_sheet_restore_button")
                         ) {
-                            Text(if (billingState.isRestoring) "Restoring…" else "Restore Purchases")
+                            FittedSingleLineText(if (billingState.isRestoring) "Restoring…" else "Restore Purchases")
                         }
 
                         TextButton(
                             onClick = onDismiss,
                             modifier = Modifier
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("pro_sheet_close_button")
                         ) {
                             Text(
@@ -1176,7 +1295,7 @@ fun SignaturePad(
                     activeStroke.clear()
                     onClear()
                 },
-                modifier = Modifier.height(48.dp).testTag("clear_signature_button")
+                modifier = Modifier.heightIn(min = 48.dp).testTag("clear_signature_button")
             ) {
                 Icon(
                     imageVector = Icons.Filled.Refresh,

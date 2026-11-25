@@ -1,7 +1,6 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -10,12 +9,16 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -78,8 +81,8 @@ import com.example.data.model.HomeToolCategory
 import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.data.model.RecentImageItem
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyAmber
 import com.example.ui.theme.PaperlyAmberSoft
 import com.example.ui.theme.PaperlyEmerald
@@ -115,8 +118,13 @@ fun HomeScreen(
     onRecentSelected: (PdfRecordEntity) -> Unit,
     onRecentImageSelected: (RecentImageItem) -> Unit,
     onSeeAllFiles: () -> Unit,
+    getCachedImageThumbnail: (String, Int) -> Bitmap? = { _, _ -> null },
+    loadImageThumbnail: suspend (String, Int) -> Bitmap? = { _, _ -> null },
+    getCachedPdfThumbnail: (String, Int) -> Bitmap? = { _, _ -> null },
+    loadPdfThumbnail: suspend (String, Int) -> Bitmap? = { _, _ -> null },
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
     val pdfToolItems = listOf(
         HomeToolItem(
             key = PdfToolType.MERGE.routeArg,
@@ -362,7 +370,10 @@ fun HomeScreen(
             item {
                 ToolCategorySwitcher(
                     selectedCategory = selectedCategory,
-                    onCategorySelected = onCategorySelected,
+                    onCategorySelected = { category ->
+                        haptics.lightTap()
+                        onCategorySelected(category)
+                    },
                     modifier = Modifier.padding(horizontal = 20.dp)
                 )
             }
@@ -408,13 +419,17 @@ fun HomeScreen(
 
                     gridItems.chunked(gridColumns).forEach { rowItems ->
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(IntrinsicSize.Max),
                             horizontalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
                             rowItems.forEach { spec ->
                                 ToolActionCard(
                                     spec = spec,
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
                                 )
                             }
                             repeat(gridColumns - rowItems.size) {
@@ -447,9 +462,12 @@ fun HomeScreen(
                             )
                             if (recentRecords.isNotEmpty()) {
                                 TextButton(
-                                    onClick = onSeeAllFiles,
+                                    onClick = {
+                                        haptics.lightTap()
+                                        onSeeAllFiles()
+                                    },
                                     modifier = Modifier
-                                        .height(48.dp)
+                                        .heightIn(min = 48.dp)
                                         .testTag("recent_see_all_button")
                                 ) {
                                     Text(stringResource(R.string.see_all))
@@ -504,7 +522,12 @@ fun HomeScreen(
                                 items(recentRecords.take(10), key = { it.id }) { record ->
                                     RecentPdfCard(
                                         record = record,
-                                        onClick = { onRecentSelected(record) }
+                                        cachedThumbnail = getCachedPdfThumbnail(record.filePath, 180),
+                                        loadThumbnail = { loadPdfThumbnail(record.filePath, 180) },
+                                        onClick = {
+                                            haptics.lightTap()
+                                            onRecentSelected(record)
+                                        }
                                     )
                                 }
                             }
@@ -579,7 +602,12 @@ fun HomeScreen(
                                 items(recentImages.take(10), key = { it.filePath }) { img ->
                                     RecentImageCard(
                                         item = img,
-                                        onClick = { onRecentImageSelected(img) }
+                                        cachedThumbnail = getCachedImageThumbnail(img.filePath, 280),
+                                        loadThumbnail = { loadImageThumbnail(img.filePath, 280) },
+                                        onClick = {
+                                            haptics.lightTap()
+                                            onRecentImageSelected(img)
+                                        }
                                     )
                                 }
                             }
@@ -647,7 +675,7 @@ private fun ToolCategorySwitcher(
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(7.dp))
-                        Text(
+                        FittedSingleLineText(
                             text = category.label,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
@@ -655,9 +683,7 @@ private fun ToolCategorySwitcher(
                                 MaterialTheme.colorScheme.onPrimary
                             } else {
                                 MaterialTheme.colorScheme.onSurfaceVariant
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
+                            }
                         )
                     }
                 }
@@ -670,8 +696,12 @@ private fun ToolCategorySwitcher(
 private fun FeaturedFullWidthToolCard(
     spec: HomeToolItem
 ) {
+    val haptics = rememberPaperlyHaptics()
     Card(
-        onClick = spec.onClick,
+        onClick = {
+            haptics.lightTap()
+            spec.onClick()
+        },
         modifier = Modifier
             .fillMaxWidth()
             .testTag("tool_card_${spec.key}"),
@@ -733,8 +763,20 @@ private fun FeaturedFullWidthToolCard(
 @Composable
 private fun RecentPdfCard(
     record: PdfRecordEntity,
+    cachedThumbnail: Bitmap?,
+    loadThumbnail: suspend () -> Bitmap?,
     onClick: () -> Unit
 ) {
+    val thumbBitmap by produceState(
+        initialValue = cachedThumbnail,
+        key1 = record.filePath,
+        key2 = record.sizeBytes
+    ) {
+        if (value == null || value?.isRecycled == true) {
+            value = loadThumbnail()
+        }
+    }
+
     Card(
         onClick = onClick,
         modifier = Modifier
@@ -755,17 +797,27 @@ private fun RecentPdfCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(34.dp)
-                        .clip(RoundedCornerShape(10.dp))
+                        .size(width = 36.dp, height = 46.dp)
+                        .clip(RoundedCornerShape(8.dp))
                         .background(MaterialTheme.colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        imageVector = Icons.Filled.Description,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
+                    val bmp = thumbBitmap?.takeIf { !it.isRecycled }
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "${record.displayName} preview",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (record.operationTag == "Locked") Icons.Filled.Lock else Icons.Filled.Description,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
                 }
                 Surface(
                     shape = CircleShape,
@@ -802,22 +854,17 @@ private fun RecentPdfCard(
 @Composable
 private fun RecentImageCard(
     item: RecentImageItem,
+    cachedThumbnail: Bitmap?,
+    loadThumbnail: suspend () -> Bitmap?,
     onClick: () -> Unit
 ) {
-    val thumbBitmap by produceState<Bitmap?>(initialValue = null, key1 = item.filePath) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(item.filePath, bounds)
-                var sample = 1
-                while (bounds.outWidth / sample > 260 || bounds.outHeight / sample > 260) {
-                    sample *= 2
-                }
-                BitmapFactory.decodeFile(
-                    item.filePath,
-                    BitmapFactory.Options().apply { inSampleSize = sample }
-                )
-            }.getOrNull()
+    val thumbBitmap by produceState(
+        initialValue = cachedThumbnail,
+        key1 = item.filePath,
+        key2 = item.createdAtMillis
+    ) {
+        if (value == null || value?.isRecycled == true) {
+            value = loadThumbnail()
         }
     }
 
@@ -842,9 +889,10 @@ private fun RecentImageCard(
                     .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
                 contentAlignment = Alignment.Center
             ) {
-                if (thumbBitmap != null) {
+                val bmp = thumbBitmap?.takeIf { !it.isRecycled }
+                if (bmp != null) {
                     Image(
-                        bitmap = thumbBitmap!!.asImageBitmap(),
+                        bitmap = bmp.asImageBitmap(),
                         contentDescription = item.displayName,
                         contentScale = ContentScale.Crop,
                         modifier = Modifier.fillMaxSize()
@@ -897,10 +945,14 @@ private fun ToolActionCard(
     spec: HomeToolItem,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
     Card(
-        onClick = spec.onClick,
+        onClick = {
+            haptics.lightTap()
+            spec.onClick()
+        },
         modifier = modifier
-            .height(140.dp)
+            .defaultMinSize(minHeight = 136.dp)
             .testTag("tool_card_${spec.key}"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -910,7 +962,7 @@ private fun ToolActionCard(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp),
+                .padding(14.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
@@ -949,19 +1001,23 @@ private fun ToolActionCard(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = stringResource(spec.titleRes),
                     style = MaterialTheme.typography.titleMedium,
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
+                    maxLines = 2,
+                    softWrap = true,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = stringResource(spec.descRes),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
+                    softWrap = true,
                     overflow = TextOverflow.Ellipsis
                 )
             }

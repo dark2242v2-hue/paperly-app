@@ -90,7 +90,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
+import com.example.ui.components.rememberPaperlyHaptics
 import kotlinx.coroutines.delay
 import java.io.File
 import java.util.concurrent.Executors
@@ -113,6 +115,7 @@ fun MultiShotCameraScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptic = LocalHapticFeedback.current
+    val paperlyHaptics = rememberPaperlyHaptics()
 
     var hasCameraPermission by remember {
         mutableStateOf(
@@ -518,7 +521,13 @@ fun MultiShotCameraScreen(
                                 .background(Color(0xFF1F2937))
                         ) {
                             AsyncImage(
-                                model = uri,
+                                model = remember(uri) {
+                                    ImageRequest.Builder(context)
+                                        .data(uri)
+                                        .size(240, 320)
+                                        .crossfade(true)
+                                        .build()
+                                },
                                 contentDescription = "Captured page ${index + 1}",
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
@@ -682,7 +691,10 @@ fun MultiShotCameraScreen(
                     contentAlignment = Alignment.CenterEnd
                 ) {
                     Button(
-                        onClick = onDone,
+                        onClick = {
+                            paperlyHaptics.lightTap()
+                            onDone()
+                        },
                         enabled = capturedUris.isNotEmpty(),
                         shape = CircleShape,
                         colors = ButtonDefaults.buttonColors(

@@ -45,6 +45,7 @@ import com.tom_roush.pdfbox.pdmodel.PDPageContentStream
 import com.tom_roush.pdfbox.pdmodel.common.PDRectangle
 import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -194,7 +195,7 @@ class ImageEngine(private val context: Context) {
         try {
             for ((stepIndex, scale) in scaleSteps.withIndex()) {
                 val p = 0.2f + 0.7f * ((stepIndex + 1).toFloat() / scaleSteps.size)
-                onProgress(p, "Optimizing size (${(scale * 100).roundToInt()}% scale)...")
+                onProgress(p, "Encoding pass ${stepIndex + 1} of ${scaleSteps.size} (${(scale * 100).roundToInt()}%)...")
 
                 val working = if (scale >= 0.999f) {
                     baseBitmap
@@ -375,11 +376,36 @@ class ImageEngine(private val context: Context) {
     }
 
     suspend fun extractTextOcr(imageUri: Uri): OcrUiState.Success = withContext(Dispatchers.IO) {
-        val inputImage = InputImage.fromFilePath(context, imageUri)
-        val recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+        var tempCopiedFile: File? = null
+        val sourceFile = when (imageUri.scheme) {
+            "file" -> imageUri.path?.let { File(it) }
+            else -> null
+        } ?: run {
+            val tempDir = File(context.cacheDir, "ocr_temp").apply { mkdirs() }
+            val temp = File(tempDir, "ocr_${UUID.randomUUID()}.jpg")
+            context.contentResolver.openInputStream(imageUri)?.use { input ->
+                FileOutputStream(temp).use { out -> input.copyTo(out) }
+            } ?: throw IllegalStateException("Unable to read image for text recognition.")
+            tempCopiedFile = temp
+            temp
+        }
+
+        val scaledBitmap = try {
+            decodeSampledFileBitmap(sourceFile, maxDimension = 2048)
+        } catch (t: Throwable) {
+            if (t is CancellationException) throw t
+            null
+        } ?: run {
+            tempCopiedFile?.delete()
+            throw IllegalStateException("Could not decode selected image for OCR.")
+        }
+
+        var recognizer: com.google.mlkit.vision.text.TextRecognizer? = null
         try {
+            val inputImage = InputImage.fromBitmap(scaledBitmap, 0)
+            recognizer = TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
             val result = recognizer.process(inputImage).awaitResult()
-            val cleaned = result.text.trim()
+            val cleaned = result?.text?.trim().orEmpty()
             if (cleaned.isEmpty()) {
                 throw IllegalStateException("No readable text detected in this image.")
             }
@@ -389,8 +415,19 @@ class ImageEngine(private val context: Context) {
                 wordCount = words,
                 charCount = cleaned.length
             )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (t: Throwable) {
+            throw IllegalStateException(
+                t.localizedMessage ?: "Text recognition could not process this image. Please try another photo.",
+                t
+            )
         } finally {
-            runCatching { recognizer.close() }
+            if (!scaledBitmap.isRecycled) scaledBitmap.recycle()
+            runCatching { recognizer?.close() }
+            tempCopiedFile?.let { runCatching { it.delete() } }
         }
     }
 
@@ -441,7 +478,7 @@ class ImageEngine(private val context: Context) {
                 val nextH = min(targetH, current.height * 2)
                 onProgress(
                     (0.20f + pass * 0.18f).coerceAtMost(0.75f),
-                    "Multi-pass HD scaling (${nextW}×${nextH})..."
+                    "Upscale pass $pass (${nextW}×${nextH})..."
                 )
                 val scaled = Bitmap.createScaledBitmap(current, nextW, nextH, true)
                 if (current !== scaled) current.recycle()
@@ -450,8 +487,10 @@ class ImageEngine(private val context: Context) {
                 if (pass > 5) break
             }
 
-            onProgress(0.80f, "Boosting clarity & fine edge detail...")
-            val enhanced = applyMultiRadiusClarityEnhance(current)
+            onProgress(0.80f, "Enhancing clarity & edge detail...")
+            val enhanced = withContext(Dispatchers.Default) {
+                applyMultiRadiusClarityEnhance(current)
+            }
             if (enhanced !== current) {
                 current.recycle()
                 current = enhanced
@@ -489,36 +528,52 @@ class ImageEngine(private val context: Context) {
         require(srcFile.exists()) { "Source image not found." }
 
         onProgress(0.25f, "Running ML Kit Subject Segmentation...")
-        val source = decodeSampledFileBitmap(srcFile, 2048)
+        val source = decodeSampledFileBitmap(srcFile, maxDimension = 2048)
             ?: throw IllegalStateException("Could not decode image.")
 
-        val options = SubjectSegmenterOptions.Builder()
-            .enableForegroundBitmap()
-            .build()
-        val segmenter = SubjectSegmentation.getClient(options)
+        var segmenter: com.google.mlkit.vision.segmentation.subject.SubjectSegmenter? = null
+        var fg: Bitmap? = null
         try {
+            val options = SubjectSegmenterOptions.Builder()
+                .enableForegroundBitmap()
+                .build()
+            segmenter = SubjectSegmentation.getClient(options)
             val inputImage = InputImage.fromBitmap(source, 0)
             val result = segmenter.process(inputImage).awaitResult()
-            val fg = result.foregroundBitmap
+            val foreground = result?.foregroundBitmap?.takeIf { !it.isRecycled }
                 ?: throw IllegalStateException("No clear foreground subject detected.")
+            fg = foreground
 
             onProgress(0.85f, "Saving transparent cutout...")
             val outDir = File(context.cacheDir, "cutouts").apply { mkdirs() }
             val uid = UUID.randomUUID()
             val cutoutFile = File(outDir, "cutout_$uid.png")
             FileOutputStream(cutoutFile).use { out ->
-                fg.compress(Bitmap.CompressFormat.PNG, 100, out)
+                foreground.compress(Bitmap.CompressFormat.PNG, 100, out)
             }
             val alignedOrigFile = File(outDir, "orig_$uid.jpg")
             FileOutputStream(alignedOrigFile).use { out ->
                 source.compress(Bitmap.CompressFormat.JPEG, 96, out)
             }
-            if (fg !== source) fg.recycle()
             onProgress(1f, "Subject isolated")
             cutoutFile.absolutePath to alignedOrigFile.absolutePath
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (t: Throwable) {
+            throw IllegalStateException(
+                t.localizedMessage ?: "Subject segmentation could not process this photo.",
+                t
+            )
         } finally {
-            source.recycle()
-            runCatching { segmenter.close() }
+            if (fg != null && fg !== source && !fg.isRecycled) {
+                fg.recycle()
+            }
+            if (!source.isRecycled) {
+                source.recycle()
+            }
+            runCatching { segmenter?.close() }
         }
     }
 
@@ -1017,6 +1072,7 @@ class ImageEngine(private val context: Context) {
     }
 
     private fun decodeSampledFileBitmap(file: File, maxDimension: Int): Bitmap? {
+        if (!file.exists()) return null
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(file.absolutePath, boundsOpts)
         if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) return null
@@ -1028,8 +1084,31 @@ class ImageEngine(private val context: Context) {
             sampleSize *= 2
         }
 
-        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val decoded = BitmapFactory.decodeFile(file.absolutePath, decodeOpts) ?: return null
+        var decoded: Bitmap? = null
+        for (attempt in 0..2) {
+            try {
+                val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+                decoded = BitmapFactory.decodeFile(file.absolutePath, decodeOpts)
+                if (decoded != null) break
+            } catch (_: OutOfMemoryError) {
+                sampleSize *= 2
+            }
+        }
+        val baseBitmap = decoded ?: return null
+
+        // Clamp exact max dimension if still slightly above maxDimension after power-of-2 sampling
+        val scaledBitmap = if (max(baseBitmap.width, baseBitmap.height) > maxDimension) {
+            val scale = maxDimension.toFloat() / max(baseBitmap.width, baseBitmap.height).toFloat()
+            val targetW = (baseBitmap.width * scale).roundToInt().coerceAtLeast(1)
+            val targetH = (baseBitmap.height * scale).roundToInt().coerceAtLeast(1)
+            runCatching {
+                Bitmap.createScaledBitmap(baseBitmap, targetW, targetH, true).also {
+                    if (it !== baseBitmap) baseBitmap.recycle()
+                }
+            }.getOrElse { baseBitmap }
+        } else {
+            baseBitmap
+        }
 
         val orientation = readExifOrientation(file)
         val matrix = Matrix()
@@ -1048,10 +1127,12 @@ class ImageEngine(private val context: Context) {
                 matrix.postScale(-1f, 1f)
             }
         }
-        if (matrix.isIdentity) return decoded
-        return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also {
-            if (it !== decoded) decoded.recycle()
-        }
+        if (matrix.isIdentity) return scaledBitmap
+        return runCatching {
+            Bitmap.createBitmap(scaledBitmap, 0, 0, scaledBitmap.width, scaledBitmap.height, matrix, true).also {
+                if (it !== scaledBitmap) scaledBitmap.recycle()
+            }
+        }.getOrElse { scaledBitmap }
     }
 
     private fun readExifOrientation(file: File): Int = runCatching {

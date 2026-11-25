@@ -109,12 +109,14 @@ enum class ImageOutputFormat(val label: String, val ext: String, val mimeType: S
 
 enum class CropAspectPreset(val label: String, val ratio: Float?) {
     FREE("Free", null),
-    SQUARE("1:1", 1f),
+    SQUARE("1:1 (Square)", 1f),
+    FOUR_FIVE("4:5 (Instagram Portrait)", 4f / 5f),
+    NINE_SIXTEEN("9:16 (Story / Reels / Vertical)", 9f / 16f),
+    SIXTEEN_NINE("16:9 (Widescreen / YouTube)", 16f / 9f),
     FOUR_THREE("4:3", 4f / 3f),
-    SIXTEEN_NINE("16:9", 16f / 9f),
     THREE_FOUR("3:4", 3f / 4f),
-    PASSPORT("Passport 35×45", 35f / 45f),
-    SIGNATURE("Signature 3:1", 3f)
+    PASSPORT("Passport (35x45 mm)", 35f / 45f),
+    SIGNATURE("Signature (3:1)", 3f)
 }
 
 enum class AiImageStyle(val label: String, val promptModifier: String) {

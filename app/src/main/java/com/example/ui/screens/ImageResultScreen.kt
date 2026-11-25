@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
@@ -14,6 +15,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -25,6 +27,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.PictureAsPdf
@@ -61,11 +64,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
+import com.example.core.formatSavedSummary
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ProcessedImageResult
+import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.SplitBeforeAfterComparisonPreview
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.TransparencyCheckerboardCanvas
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 
@@ -80,10 +86,14 @@ fun ImageResultScreen(
     onDone: () -> Unit
 ) {
     val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     LaunchedEffect(result?.filePath, result?.originalFilePath, result?.operationLabel) {
+        if (result != null) {
+            haptics.confirmSuccess()
+        }
         previewBitmap = result?.filePath?.let { path ->
             viewModel.imageEngine.decodePreviewBitmap(path, maxEdge = 1600)
         }
@@ -184,9 +194,15 @@ fun ImageResultScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "${result.width}×${result.height} px • ${result.format.label} • ${formatFileSize(result.sizeBytes)}",
+                                    text = "${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (savedPercent != null && savedPercent > 0) {
+                                        PaperlyEmerald
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                             }
                         }
@@ -287,25 +303,33 @@ fun ImageResultScreen(
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
-                        onClick = viewModel::saveResultImageToGallery,
+                        onClick = {
+                            haptics.lightTap()
+                            viewModel.saveResultImageToGallery()
+                        },
                         shape = RoundedCornerShape(13.dp),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                             .testTag("save_image_gallery_button")
                     ) {
                         Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Save to Gallery", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+                        FittedSingleLineText(
+                            text = "Save to Gallery",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         OutlinedButton(
                             onClick = {
+                                haptics.lightTap()
                                 val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
                                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                                     type = result.format.mimeType
@@ -315,44 +339,74 @@ fun ImageResultScreen(
                                 context.startActivity(Intent.createChooser(shareIntent, "Share image"))
                             },
                             shape = RoundedCornerShape(13.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("share_image_button")
                         ) {
-                            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Share")
+                            Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            FittedSingleLineText("Share")
                         }
 
                         OutlinedButton(
                             onClick = {
+                                haptics.lightTap()
+                                val viewUri = viewModel.imageEngine.getShareUri(result.filePath)
+                                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                    setDataAndType(viewUri, result.format.mimeType)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                }
+                                runCatching {
+                                    context.startActivity(Intent.createChooser(viewIntent, "Open image with"))
+                                }.onFailure {
+                                    Toast.makeText(context, "No compatible viewer app found.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            shape = RoundedCornerShape(13.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("open_image_file_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            FittedSingleLineText("Open File")
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                haptics.lightTap()
                                 viewModel.exportResultImageToPdf { pdfId ->
                                     onOpenPdfViewer(pdfId)
                                 }
                             },
                             shape = RoundedCornerShape(13.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
-                                .height(48.dp)
+                                .heightIn(min = 48.dp)
                                 .testTag("export_image_pdf_button")
                         ) {
-                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(17.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save as PDF")
+                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            FittedSingleLineText("Save as PDF")
                         }
                     }
 
                     TextButton(
-                        onClick = onDone,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        onClick = {
+                            haptics.lightTap()
+                            onDone()
+                        },
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp)
+                            .heightIn(min = 48.dp)
                     ) {
-                        Text("Done")
+                        FittedSingleLineText("Done")
                     }
                 }
 

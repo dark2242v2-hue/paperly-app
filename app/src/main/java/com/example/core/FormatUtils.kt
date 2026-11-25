@@ -18,6 +18,22 @@ fun formatReductionPercent(originalBytes: Long?, newBytes: Long): Int? {
     return (((originalBytes - newBytes).toDouble() / originalBytes.toDouble()) * 100.0).roundToInt()
 }
 
+fun formatSavedSummary(
+    originalBytes: Long?,
+    newBytes: Long,
+    pageCount: Int? = null
+): String {
+    val savedPercent = formatReductionPercent(originalBytes, newBytes)
+    if (originalBytes != null && savedPercent != null && savedPercent > 0) {
+        return "Saved! Reduced from ${formatFileSize(originalBytes)} → ${formatFileSize(newBytes)} (-$savedPercent%)"
+    }
+    return if (pageCount != null && pageCount > 0) {
+        "Saved! $pageCount page(s) • ${formatFileSize(newBytes)}"
+    } else {
+        "Saved! ${formatFileSize(newBytes)}"
+    }
+}
+
 fun formatTimestamp(millis: Long): String {
     val now = System.currentTimeMillis()
     val diff = now - millis

@@ -321,6 +321,16 @@ fun PaperlyApp(
                                 launchSingleTop = true
                                 restoreState = true
                             }
+                        },
+                        getCachedImageThumbnail = viewModel.imageEngine::getCachedPreview,
+                        loadImageThumbnail = { path, maxEdge ->
+                            viewModel.imageEngine.decodePreviewBitmap(path, maxEdge)
+                        },
+                        getCachedPdfThumbnail = { path, maxW ->
+                            viewModel.pdfEngine.getCachedPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
+                        },
+                        loadPdfThumbnail = { path, maxW ->
+                            viewModel.pdfEngine.renderPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
                         }
                     )
                 }
@@ -348,18 +358,23 @@ fun PaperlyApp(
                     popEnterTransition = { EnterTransition.None },
                     popExitTransition = { ExitTransition.None }
                 ) {
+                    val tempCacheSizeBytes by viewModel.tempCacheSizeBytes.collectAsStateWithLifecycle()
                     SettingsScreen(
                         isDarkMode = isDarkMode,
                         isPro = isPro,
+                        activePlanProductId = activePlanProductId,
                         isRestoringPurchases = billingState.isRestoring,
                         debugProOverride = debugProOverride,
                         defaultCompression = defaultCompression,
                         savedFileCount = recentRecords.size,
+                        tempCacheSizeBytes = tempCacheSizeBytes,
                         onToggleDarkMode = viewModel::toggleDarkMode,
                         onOpenProSheet = viewModel::openProSheet,
                         onRestorePurchases = viewModel::restorePurchases,
                         onToggleDebugPro = viewModel::setDebugProOverride,
                         onSelectCompression = viewModel::setDefaultCompression,
+                        onRefreshCacheSize = viewModel::refreshTempCacheSize,
+                        onClearTempCache = viewModel::clearTempCache,
                         onClearAllFiles = viewModel::clearAllLocalFiles
                     )
                 }
