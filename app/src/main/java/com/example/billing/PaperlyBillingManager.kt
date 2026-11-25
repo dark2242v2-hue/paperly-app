@@ -150,6 +150,7 @@ class PaperlyBillingManager(
                 .enablePrepaidPlans()
                 .build()
         )
+        .enableAutoServiceReconnection()
         .build()
 
     fun initialize() {
