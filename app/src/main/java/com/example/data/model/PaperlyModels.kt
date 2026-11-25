@@ -119,6 +119,18 @@ enum class CropAspectPreset(val label: String, val ratio: Float?) {
     SIGNATURE("Signature (3:1)", 3f)
 }
 
+enum class PassportSizePreset(
+    val label: String,
+    val shortLabel: String,
+    val aspectRatio: Float,
+    val tileWidthPx: Int,
+    val tileHeightPx: Int
+) {
+    MM_35_45("35×45 mm (India / UK / EU)", "35×45 mm", 35f / 45f, 413, 531),
+    INCH_2_2("2×2 inch (US / Visa)", "2×2 inch", 1f, 600, 600),
+    MM_35_35("35×35 mm (PAN / Stamp)", "35×35 mm", 1f, 413, 413)
+}
+
 enum class AiImageStyle(val label: String, val promptModifier: String) {
     PHOTOREALISTIC("Photorealistic", "photorealistic, ultra detailed natural lighting, sharp 8k photography"),
     DIGITAL_ART("Digital Art", "vibrant digital illustration, rich color harmony, clean concept art"),

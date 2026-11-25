@@ -1,10 +1,14 @@
 package com.example.ui.screens
 
 import android.graphics.Bitmap
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -58,12 +62,14 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
@@ -82,6 +88,7 @@ import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.data.model.RecentImageItem
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyAmber
 import com.example.ui.theme.PaperlyAmberSoft
@@ -275,7 +282,8 @@ fun HomeScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 880.dp),
+                .widthIn(max = 880.dp)
+                .graphicsLayer {},
             contentPadding = PaddingValues(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -371,7 +379,7 @@ fun HomeScreen(
                 ToolCategorySwitcher(
                     selectedCategory = selectedCategory,
                     onCategorySelected = { category ->
-                        haptics.lightTap()
+                        haptics.selectionClick()
                         onCategorySelected(category)
                     },
                     modifier = Modifier.padding(horizontal = 20.dp)
@@ -646,15 +654,35 @@ private fun ToolCategorySwitcher(
                 } else {
                     Icons.Filled.Image
                 }
+                val tabBg by animateColorAsState(
+                    targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                    label = "cat_bg_${category.name}"
+                )
+                val tabContentColor by animateColorAsState(
+                    targetValue = if (selected) {
+                        MaterialTheme.colorScheme.onPrimary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                    animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                    label = "cat_fg_${category.name}"
+                )
+                val interactionSource = remember { MutableInteractionSource() }
+
                 Surface(
                     shape = CircleShape,
-                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    color = tabBg,
                     shadowElevation = if (selected) 2.dp else 0.dp,
                     modifier = Modifier
                         .weight(1f)
                         .minimumInteractiveComponentSize()
+                        .pressScaleEffect(interactionSource)
                         .clip(CircleShape)
-                        .clickable { onCategorySelected(category) }
+                        .clickable(
+                            interactionSource = interactionSource,
+                            indication = androidx.compose.material3.ripple()
+                        ) { onCategorySelected(category) }
                         .testTag("category_tab_${category.name.lowercase()}")
                 ) {
                     Row(
@@ -667,11 +695,7 @@ private fun ToolCategorySwitcher(
                         Icon(
                             imageVector = icon,
                             contentDescription = null,
-                            tint = if (selected) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            },
+                            tint = tabContentColor,
                             modifier = Modifier.size(18.dp)
                         )
                         Spacer(modifier = Modifier.width(7.dp))
@@ -679,11 +703,7 @@ private fun ToolCategorySwitcher(
                             text = category.label,
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = if (selected) {
-                                MaterialTheme.colorScheme.onPrimary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            color = tabContentColor
                         )
                     }
                 }
@@ -697,13 +717,16 @@ private fun FeaturedFullWidthToolCard(
     spec: HomeToolItem
 ) {
     val haptics = rememberPaperlyHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
     Card(
         onClick = {
-            haptics.lightTap()
+            haptics.selectionClick()
             spec.onClick()
         },
+        interactionSource = interactionSource,
         modifier = Modifier
             .fillMaxWidth()
+            .pressScaleEffect(interactionSource)
             .testTag("tool_card_${spec.key}"),
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -946,13 +969,16 @@ private fun ToolActionCard(
     modifier: Modifier = Modifier
 ) {
     val haptics = rememberPaperlyHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
     Card(
         onClick = {
-            haptics.lightTap()
+            haptics.selectionClick()
             spec.onClick()
         },
+        interactionSource = interactionSource,
         modifier = modifier
             .defaultMinSize(minHeight = 136.dp)
+            .pressScaleEffect(interactionSource)
             .testTag("tool_card_${spec.key}"),
         shape = RoundedCornerShape(20.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),

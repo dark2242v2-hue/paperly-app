@@ -14,6 +14,20 @@ class PaperlyHaptics(
     private val view: View,
     private val composeHaptic: HapticFeedback
 ) {
+    fun selectionClick() {
+        val performed = runCatching {
+            val constant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+                HapticFeedbackConstants.CLOCK_TICK
+            } else {
+                HapticFeedbackConstants.KEYBOARD_TAP
+            }
+            view.performHapticFeedback(constant)
+        }.getOrDefault(false)
+        if (!performed) {
+            runCatching { composeHaptic.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+        }
+    }
+
     fun lightTap() {
         val performed = runCatching {
             val constant = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {

@@ -27,6 +27,7 @@ import com.example.data.local.PdfRecordEntity
 import com.example.data.model.BgBrushStroke
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.OcrUiState
+import com.example.data.model.PassportSizePreset
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.ProcessedImageResult
 import com.example.data.model.RecentImageItem
@@ -692,6 +693,7 @@ class ImageEngine(private val context: Context) {
     suspend fun generatePassportSheet(
         sourceOrCutoutPath: String,
         originalInfo: PickedImageInfo,
+        sizePreset: PassportSizePreset,
         removeBgEnabled: Boolean,
         backgroundColorArgb: Int,
         copyCount: Int,
@@ -704,20 +706,83 @@ class ImageEngine(private val context: Context) {
     ): Pair<ProcessedImageResult, PdfRecordEntity?> = withContext(Dispatchers.IO) {
         val srcFile = File(sourceOrCutoutPath)
         require(srcFile.exists()) { "Portrait image is unavailable." }
-        onProgress(0.2f, "Preparing 35×45mm passport layout...")
+        onProgress(0.2f, "Preparing ${sizePreset.shortLabel} passport layout...")
 
-        val rawPortrait = decodeSampledFileBitmap(srcFile, 1600)
+        val rawPortrait = decodeSampledFileBitmap(srcFile, 2048)
             ?: throw IllegalStateException("Could not decode portrait image.")
 
-        val tileW = 413 // 35mm @ 300 DPI
-        val tileH = 531 // 45mm @ 300 DPI
-        val (sheetW, sheetH, cols) = when (copyCount) {
-            4 -> Triple(1800, 1200, 2)
-            6 -> Triple(1800, 1200, 3)
-            8 -> Triple(1800, 1200, 4)
-            else -> Triple(1800, 2400, 4)
+        val tileW = sizePreset.tileWidthPx
+        val tileH = sizePreset.tileHeightPx
+
+        if (copyCount <= 1) {
+            val singleW = (tileW * 2).coerceAtLeast(826)
+            val singleH = (tileH * 2).coerceAtLeast(826)
+            val singlePhoto = createPassportTileBitmap(
+                source = rawPortrait,
+                tileW = singleW,
+                tileH = singleH,
+                fillBg = removeBgEnabled,
+                bgColorArgb = backgroundColorArgb,
+                zoom = zoom,
+                offsetXNorm = offsetXNorm,
+                offsetYNorm = offsetYNorm
+            )
+            rawPortrait.recycle()
+
+            try {
+                onProgress(0.75f, "Saving high-res ${sizePreset.shortLabel} passport photo...")
+                val jpgFile = uniqueImageOutputFile("Paperly_Passport_Single.jpg")
+                writeBitmapToFile(singlePhoto, jpgFile, ImageOutputFormat.JPG, quality = 96)
+
+                var pdfRecord: PdfRecordEntity? = null
+                if (exportAsPdf) {
+                    pdfsDir.mkdirs()
+                    val pdfFile = File(pdfsDir, "Paperly_Passport_Single_${System.currentTimeMillis()}.pdf")
+                    saveBitmapAsSinglePagePdf(singlePhoto, pdfFile)
+                    pdfRecord = PdfRecordEntity(
+                        displayName = pdfFile.name,
+                        filePath = pdfFile.absolutePath,
+                        pageCount = 1,
+                        sizeBytes = pdfFile.length(),
+                        originalSizeBytes = originalInfo.sizeBytes,
+                        operationTag = "Scanned"
+                    )
+                }
+
+                onProgress(1f, "Single passport photo ready")
+                val imageResult = ProcessedImageResult(
+                    displayName = jpgFile.name,
+                    filePath = jpgFile.absolutePath,
+                    format = ImageOutputFormat.JPG,
+                    width = singlePhoto.width,
+                    height = singlePhoto.height,
+                    sizeBytes = jpgFile.length(),
+                    originalSizeBytes = originalInfo.sizeBytes,
+                    originalWidth = originalInfo.width,
+                    originalHeight = originalInfo.height,
+                    operationLabel = "Single Passport Photo (${sizePreset.shortLabel})",
+                    secondaryPdfRecordId = null,
+                    originalFilePath = originalInfo.localPath
+                )
+                return@withContext imageResult to pdfRecord
+            } finally {
+                if (!singlePhoto.isRecycled) singlePhoto.recycle()
+            }
+        }
+
+        val cols = when (copyCount) {
+            4 -> 2
+            6 -> 3
+            8 -> 4
+            else -> 4
         }
         val rows = ((copyCount + cols - 1) / cols).coerceAtLeast(1)
+        val gap = 28
+        val minSheetW = max(1800, cols * tileW + (cols - 1) * gap + 80)
+        val baseSheetH = if (copyCount <= 8) 1200 else 2400
+        val minSheetH = max(baseSheetH, rows * tileH + (rows - 1) * gap + 80)
+        val sheetW = minSheetW
+        val sheetH = minSheetH
 
         val tile = createPassportTileBitmap(
             source = rawPortrait,
@@ -737,7 +802,6 @@ class ImageEngine(private val context: Context) {
             val canvas = Canvas(sheet)
             canvas.drawColor(Color.WHITE)
 
-            val gap = 28
             val gridW = cols * tileW + (cols - 1) * gap
             val gridH = rows * tileH + (rows - 1) * gap
             val startX = ((sheetW - gridW) / 2f).coerceAtLeast(16f)
@@ -790,7 +854,7 @@ class ImageEngine(private val context: Context) {
                 originalSizeBytes = originalInfo.sizeBytes,
                 originalWidth = originalInfo.width,
                 originalHeight = originalInfo.height,
-                operationLabel = "Passport Sheet ($copyCount copies)",
+                operationLabel = "Passport Sheet ($copyCount copies • ${sizePreset.shortLabel})",
                 secondaryPdfRecordId = null,
                 originalFilePath = originalInfo.localPath
             )

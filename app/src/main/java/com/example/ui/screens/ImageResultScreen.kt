@@ -74,6 +74,7 @@ import com.example.ui.components.TransparencyCheckerboardCanvas
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -94,6 +95,7 @@ fun ImageResultScreen(
         if (result != null) {
             haptics.confirmSuccess()
         }
+        delay(240L)
         previewBitmap = result?.filePath?.let { path ->
             viewModel.imageEngine.decodePreviewBitmap(path, maxEdge = 1600)
         }

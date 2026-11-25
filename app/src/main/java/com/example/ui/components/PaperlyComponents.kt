@@ -16,6 +16,9 @@ import android.widget.TextView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -23,6 +26,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -109,6 +113,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -199,18 +204,23 @@ fun Modifier.bringIntoViewAboveKeyboard(
     var isFocused by remember { mutableStateOf(false) }
     var boxSize by remember { mutableStateOf(IntSize.Zero) }
 
+    fun buildTargetRect(): Rect {
+        val topBufferPx = with(density) { 48.dp.toPx() }
+        val clearancePx = with(density) { bottomClearance.toPx() }
+        return Rect(
+            left = 0f,
+            top = -topBufferPx,
+            right = boxSize.width.toFloat().coerceAtLeast(1f),
+            bottom = (boxSize.height.toFloat() + clearancePx).coerceAtLeast(1f)
+        )
+    }
+
     LaunchedEffect(isFocused, imeBottom) {
         if (isFocused) {
-            val clearancePx = with(density) { bottomClearance.toPx() }
-            val rect = Rect(
-                left = 0f,
-                top = 0f,
-                right = boxSize.width.toFloat().coerceAtLeast(1f),
-                bottom = (boxSize.height.toFloat() + clearancePx).coerceAtLeast(1f)
-            )
+            val rect = buildTargetRect()
             bringIntoViewRequester.bringIntoView(rect)
-            delay(180)
-            bringIntoViewRequester.bringIntoView(rect)
+            delay(300L)
+            bringIntoViewRequester.bringIntoView(buildTargetRect())
         }
     }
 
@@ -222,14 +232,11 @@ fun Modifier.bringIntoViewAboveKeyboard(
             if (nowFocused && !isFocused) {
                 isFocused = true
                 coroutineScope.launch {
-                    val clearancePx = with(density) { bottomClearance.toPx() }
-                    val rect = Rect(
-                        left = 0f,
-                        top = 0f,
-                        right = boxSize.width.toFloat().coerceAtLeast(1f),
-                        bottom = (boxSize.height.toFloat() + clearancePx).coerceAtLeast(1f)
-                    )
-                    bringIntoViewRequester.bringIntoView(rect)
+                    bringIntoViewRequester.bringIntoView(buildTargetRect())
+                    delay(300L)
+                    if (isFocused) {
+                        bringIntoViewRequester.bringIntoView(buildTargetRect())
+                    }
                 }
             } else if (!nowFocused) {
                 isFocused = false
@@ -281,7 +288,7 @@ fun PaperlyTopBar(
         ) {
             IconButton(
                 onClick = {
-                    haptics.lightTap()
+                    haptics.selectionClick()
                     onToggleDarkMode()
                 },
                 modifier = Modifier
@@ -295,11 +302,13 @@ fun PaperlyTopBar(
                 )
             }
 
+            val proInteraction = remember { MutableInteractionSource() }
             Surface(
                 onClick = {
-                    haptics.lightTap()
+                    haptics.selectionClick()
                     onProClick()
                 },
+                interactionSource = proInteraction,
                 shape = CircleShape,
                 color = if (isPro) PaperlyEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primaryContainer,
                 border = BorderStroke(
@@ -308,6 +317,7 @@ fun PaperlyTopBar(
                 ),
                 modifier = Modifier
                     .heightIn(min = 48.dp)
+                    .pressScaleEffect(proInteraction)
                     .testTag("pro_badge_button")
             ) {
                 Row(
@@ -441,6 +451,7 @@ fun PaperlyBottomBarWithBanner(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .graphicsLayer {}
             .background(MaterialTheme.colorScheme.surface)
     ) {
         // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
@@ -477,7 +488,7 @@ fun PaperlyBottomBarWithBanner(
                 NavigationBarItem(
                     selected = selected,
                     onClick = {
-                        haptics.lightTap()
+                        haptics.selectionClick()
                         onNavigate(route)
                     },
                     icon = {
@@ -559,6 +570,7 @@ fun SponsoredNativeAdCard(
     var nativeAd by remember { mutableStateOf<NativeAd?>(null) }
 
     LaunchedEffect(Unit) {
+        delay(240L)
         adManager.loadNativeAd(
             onAdLoaded = { loadedAd ->
                 nativeAd = loadedAd
@@ -1096,20 +1108,37 @@ private fun YearlySubscriptionPlanCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "yearly_bg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "yearly_border"
+    )
+
     Card(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        onClick = {
+            haptics.selectionClick()
+            onClick()
+        },
+        interactionSource = interactionSource,
+        modifier = modifier
+            .fillMaxWidth()
+            .pressScaleEffect(interactionSource),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(
             width = if (selected) 2.dp else 1.dp,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            color = borderColor
         )
     ) {
         Column(
@@ -1207,20 +1236,37 @@ private fun MonthlySubscriptionPlanCard(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
+    val containerColor by animateColorAsState(
+        targetValue = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "monthly_bg"
+    )
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "monthly_border"
+    )
+
     Card(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
+        onClick = {
+            haptics.selectionClick()
+            onClick()
+        },
+        interactionSource = interactionSource,
+        modifier = modifier
+            .fillMaxWidth()
+            .pressScaleEffect(interactionSource),
         shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (selected) {
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-            } else {
-                MaterialTheme.colorScheme.surface
-            }
-        ),
+        colors = CardDefaults.cardColors(containerColor = containerColor),
         border = BorderStroke(
             width = if (selected) 2.dp else 1.dp,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+            color = borderColor
         )
     ) {
         Row(

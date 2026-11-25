@@ -25,11 +25,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -56,6 +58,7 @@ import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Flip
 import androidx.compose.material.icons.filled.Link
@@ -66,12 +69,12 @@ import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.WorkspacePremium
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -84,6 +87,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.minimumInteractiveComponentSize
@@ -91,6 +95,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -99,6 +104,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -109,6 +115,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.ads.PaperlyAdManager
 import com.example.core.formatFileSize
@@ -119,9 +126,13 @@ import com.example.data.model.CropAspectPreset
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ImageToolType
 import com.example.data.model.OcrUiState
+import com.example.data.model.PassportSizePreset
 import com.example.data.model.PickedImageInfo
+import com.example.data.model.ProcessedImageResult
 import com.example.data.model.TargetSizeUnit
 import com.example.data.model.UpscaleTarget
+import com.example.ui.components.AnimatedOptionChip
+import com.example.ui.components.AnimatedSelectableCard
 import com.example.ui.components.BgTouchUpPreview
 import com.example.ui.components.ColorSwatchCircle
 import com.example.ui.components.CustomColorPickerDialog
@@ -224,6 +235,9 @@ fun ImageWorkspaceScreen(
         else -> "100% Local"
     }
 
+    val processedResult by viewModel.processedImageResult.collectAsStateWithLifecycle()
+    var showPassportConfirmDialog by remember { mutableStateOf(false) }
+
     val primaryCtaLabel = when (tool) {
         ImageToolType.COMPRESS_IMAGE -> "Compress Image"
         ImageToolType.CROP_RESIZE -> "Save Cropped & Resized"
@@ -231,8 +245,16 @@ fun ImageWorkspaceScreen(
         ImageToolType.TEXT_TO_IMAGE -> "Generate AI Image"
         ImageToolType.UPSCALER -> "Upscale to ${state.upscaleTarget.label}"
         ImageToolType.BG_REMOVER -> "Export Cutout"
-        ImageToolType.PASSPORT_SHEET -> "Create ${state.passportCopyCount}-Photo Sheet"
+        ImageToolType.PASSPORT_SHEET -> if (state.passportCopyCount <= 1) {
+            "Create Single Passport Photo"
+        } else {
+            "Create ${state.passportCopyCount}-Photo Sheet"
+        }
     }
+
+    val hasTextInputFields = tool == ImageToolType.COMPRESS_IMAGE ||
+        tool == ImageToolType.CROP_RESIZE ||
+        tool == ImageToolType.TEXT_TO_IMAGE
 
     val canProcess = when (tool) {
         ImageToolType.COMPRESS_IMAGE -> state.pickedImage != null &&
@@ -247,9 +269,52 @@ fun ImageWorkspaceScreen(
         ImageToolType.PASSPORT_SHEET -> state.pickedImage != null
     } && !state.processing.isProcessing
 
+    fun triggerPrimaryAction() {
+        haptics.lightTap()
+        when (tool) {
+            ImageToolType.COMPRESS_IMAGE -> viewModel.runImageCompression(onImageResultReady)
+            ImageToolType.CROP_RESIZE -> viewModel.runCropRotateResize(onImageResultReady)
+            ImageToolType.TEXT_TO_IMAGE -> viewModel.generateAiImage(onImageResultReady)
+            ImageToolType.UPSCALER -> viewModel.runImageUpscale(onImageResultReady)
+            ImageToolType.BG_REMOVER -> viewModel.exportBgRemovedImage(onImageResultReady)
+            ImageToolType.PASSPORT_SHEET -> viewModel.generatePassportSheet {
+                haptics.confirmSuccess()
+                showPassportConfirmDialog = true
+            }
+            ImageToolType.IMAGE_TO_TEXT -> Unit
+        }
+    }
+
+    if (showPassportConfirmDialog && processedResult != null) {
+        PassportPreviewConfirmDialog(
+            result = processedResult!!,
+            viewModel = viewModel,
+            onShare = {
+                haptics.lightTap()
+                val res = processedResult!!
+                val shareUri = viewModel.imageEngine.getShareUri(res.filePath)
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = res.format.mimeType
+                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(shareIntent, "Share passport photo"))
+            },
+            onSaveToGallery = {
+                haptics.confirmSuccess()
+                viewModel.saveResultImageToGallery()
+            },
+            onOpenFullResult = {
+                showPassportConfirmDialog = false
+                onImageResultReady()
+            },
+            onDismiss = { showPassportConfirmDialog = false }
+        )
+    }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
         topBar = {
             TopAppBar(
                 title = {
@@ -290,10 +355,11 @@ fun ImageWorkspaceScreen(
             )
         },
         bottomBar = {
-            if (tool != ImageToolType.IMAGE_TO_TEXT) {
+            if (tool != ImageToolType.IMAGE_TO_TEXT && !hasTextInputFields) {
                 Surface(
                     color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp
+                    tonalElevation = 2.dp,
+                    modifier = Modifier.graphicsLayer {}
                 ) {
                     Column(
                         modifier = Modifier
@@ -307,50 +373,10 @@ fun ImageWorkspaceScreen(
                                 .padding(horizontal = 20.dp, vertical = 14.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            AnimatedVisibility(visible = state.processing.isProcessing) {
-                                val animatedProgress by animateFloatAsState(
-                                    targetValue = state.processing.progress.coerceIn(0f, 1f),
-                                    label = "image_progress"
-                                )
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = state.processing.message.ifBlank { "Processing..." },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "${(animatedProgress * 100).roundToInt()}%",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { animatedProgress },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(7.dp)
-                                            .clip(CircleShape)
-                                    )
-                                }
-                            }
+                            ImageProcessingProgressBanner(state = state)
 
                             Button(
-                                onClick = {
-                                    haptics.lightTap()
-                                    when (tool) {
-                                        ImageToolType.COMPRESS_IMAGE -> viewModel.runImageCompression(onImageResultReady)
-                                        ImageToolType.CROP_RESIZE -> viewModel.runCropRotateResize(onImageResultReady)
-                                        ImageToolType.TEXT_TO_IMAGE -> viewModel.generateAiImage(onImageResultReady)
-                                        ImageToolType.UPSCALER -> viewModel.runImageUpscale(onImageResultReady)
-                                        ImageToolType.BG_REMOVER -> viewModel.exportBgRemovedImage(onImageResultReady)
-                                        ImageToolType.PASSPORT_SHEET -> viewModel.generatePassportSheet(onImageResultReady)
-                                        ImageToolType.IMAGE_TO_TEXT -> Unit
-                                    }
-                                },
+                                onClick = { triggerPrimaryAction() },
                                 enabled = canProcess,
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                                 modifier = Modifier
@@ -371,22 +397,24 @@ fun ImageWorkspaceScreen(
             }
         }
     ) { innerPadding ->
+        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .imePadding(),
             contentAlignment = Alignment.TopCenter
         ) {
-            val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 720.dp),
+                    .widthIn(max = 680.dp)
+                    .graphicsLayer {},
                 contentPadding = PaddingValues(
                     start = 20.dp,
                     end = 20.dp,
                     top = 12.dp,
-                    bottom = if (imeVisible) 140.dp else 24.dp
+                    bottom = if (imeVisible) 140.dp else 28.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -544,9 +572,194 @@ fun ImageWorkspaceScreen(
                         }
                     }
                 }
+
+                if (hasTextInputFields) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            ImageProcessingProgressBanner(state = state)
+
+                            Button(
+                                onClick = { triggerPrimaryAction() },
+                                enabled = canProcess,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 52.dp)
+                                    .testTag("image_process_cta_button"),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                FittedSingleLineText(
+                                    text = if (state.processing.isProcessing) "Processing..." else primaryCtaLabel,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+private fun ImageProcessingProgressBanner(state: ImageWorkspaceUiState) {
+    AnimatedVisibility(visible = state.processing.isProcessing) {
+        val animatedProgress by animateFloatAsState(
+            targetValue = state.processing.progress.coerceIn(0f, 1f),
+            label = "image_progress"
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = state.processing.message.ifBlank { "Processing..." },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "${(animatedProgress * 100).roundToInt()}%",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            LinearProgressIndicator(
+                progress = { animatedProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(7.dp)
+                    .clip(CircleShape)
+            )
+        }
+    }
+}
+
+@Composable
+private fun PassportPreviewConfirmDialog(
+    result: ProcessedImageResult,
+    viewModel: PaperlyViewModel,
+    onShare: () -> Unit,
+    onSaveToGallery: () -> Unit,
+    onOpenFullResult: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val previewBitmap by produceState<android.graphics.Bitmap?>(
+        initialValue = null,
+        key1 = result.filePath
+    ) {
+        value = viewModel.imageEngine.decodePreviewBitmap(result.filePath, maxEdge = 1200)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.CheckCircle,
+                    contentDescription = null,
+                    tint = PaperlyEmerald,
+                    modifier = Modifier.size(22.dp)
+                )
+                Text(
+                    text = result.operationLabel,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(210.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                        val bmp = previewBitmap
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = "Passport output preview",
+                                contentScale = ContentScale.Fit,
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                            )
+                        } else {
+                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                        }
+                    }
+                }
+
+                Text(
+                    text = "${result.width}×${result.height} px • ${formatFileSize(result.sizeBytes)} • ${result.format.label}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = onSaveToGallery,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("passport_dialog_save_button")
+                    ) {
+                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        FittedSingleLineText("Save to Gallery")
+                    }
+
+                    OutlinedButton(
+                        onClick = onShare,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("passport_dialog_share_button")
+                    ) {
+                        Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        FittedSingleLineText("Share")
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onOpenFullResult) {
+                Text("Full View & PDF")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Edit More")
+            }
+        }
+    )
 }
 
 @Composable
@@ -690,13 +903,10 @@ private fun ImageCompressionControlsCard(
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(presets) { (label, valStr, unit) ->
                         val selected = state.compressSelectedPresetLabel == label
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = label,
                             selected = selected,
-                            onClick = {
-                                haptics.lightTap()
-                                onConfigChange(valStr, unit, null, label, false)
-                            },
-                            label = { Text(label) }
+                            onClick = { onConfigChange(valStr, unit, null, label, false) }
                         )
                     }
                 }
@@ -725,10 +935,10 @@ private fun ImageCompressionControlsCard(
                     )
 
                     TargetSizeUnit.entries.forEach { unit ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = unit.label,
                             selected = state.compressTargetUnit == unit,
                             onClick = { onConfigChange(null, unit, null, null, false) },
-                            label = { FittedSingleLineText(unit.label, fontWeight = FontWeight.SemiBold) },
                             modifier = Modifier.heightIn(min = 48.dp)
                         )
                     }
@@ -740,10 +950,10 @@ private fun ImageCompressionControlsCard(
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     listOf(ImageOutputFormat.JPG, ImageOutputFormat.WEBP).forEach { fmt ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = fmt.label,
                             selected = state.outputFormat == fmt,
-                            onClick = { onConfigChange(null, null, fmt, null, false) },
-                            label = { Text(fmt.label) }
+                            onClick = { onConfigChange(null, null, fmt, null, false) }
                         )
                     }
                 }
@@ -793,19 +1003,10 @@ private fun CropAndResizeWorkspaceCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(CropAspectPreset.entries) { preset ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = preset.label,
                             selected = state.cropAspectPreset == preset,
-                            onClick = {
-                                haptics.lightTap()
-                                viewModel.selectCropAspectPreset(preset)
-                            },
-                            label = {
-                                Text(
-                                    text = preset.label,
-                                    maxLines = 1,
-                                    softWrap = false
-                                )
-                            },
+                            onClick = { viewModel.selectCropAspectPreset(preset) },
                             modifier = Modifier.testTag("crop_aspect_${preset.name.lowercase()}")
                         )
                     }
@@ -912,10 +1113,10 @@ private fun CropAndResizeWorkspaceCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     items(ImageOutputFormat.entries) { fmt ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = fmt.label,
                             selected = state.outputFormat == fmt,
-                            onClick = { viewModel.updateImageCompressionConfig(format = fmt) },
-                            label = { Text(fmt.label) }
+                            onClick = { viewModel.updateImageCompressionConfig(format = fmt) }
                         )
                     }
                 }
@@ -1189,10 +1390,10 @@ private fun AiTextToImageWorkspaceCard(
                 Text("Quick Prompt Ideas", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(promptIdeas) { idea ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = idea.take(30) + "…",
                             selected = state.aiPrompt == idea,
-                            onClick = { onUpdateConfig(idea, null, null) },
-                            label = { Text(idea.take(30) + "…") }
+                            onClick = { onUpdateConfig(idea, null, null) }
                         )
                     }
                 }
@@ -1200,10 +1401,10 @@ private fun AiTextToImageWorkspaceCard(
                 Text("Art Style", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(AiImageStyle.entries) { style ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = style.label,
                             selected = state.aiStyle == style,
-                            onClick = { onUpdateConfig(null, style, null) },
-                            label = { Text(style.label) }
+                            onClick = { onUpdateConfig(null, style, null) }
                         )
                     }
                 }
@@ -1211,10 +1412,10 @@ private fun AiTextToImageWorkspaceCard(
                 Text("Aspect Ratio", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(AiImageAspectRatio.entries) { ratio ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = ratio.label,
                             selected = state.aiAspectRatio == ratio,
-                            onClick = { onUpdateConfig(null, null, ratio) },
-                            label = { FittedSingleLineText(ratio.label) }
+                            onClick = { onUpdateConfig(null, null, ratio) }
                         )
                     }
                 }
@@ -1317,40 +1518,21 @@ private fun UpscalerWorkspaceCard(
                     val outW = if (info.width >= info.height) desiredEdge else (desiredEdge * aspect).roundToInt()
                     val outH = if (info.height >= info.width) desiredEdge else (desiredEdge / aspect).roundToInt()
 
-                    Card(
+                    AnimatedSelectableCard(
+                        selected = selected,
                         onClick = { onTargetSelected(target) },
-                        shape = RoundedCornerShape(14.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = if (selected) {
-                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
-                            }
-                        ),
-                        border = BorderStroke(
-                            width = if (selected) 1.5.dp else 1.dp,
-                            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                        ),
                         modifier = Modifier.fillMaxWidth()
                     ) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column {
-                                Text(target.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                                Text(
-                                    text = "Up to ${outW}×${outH} px (memory-safe multi-pass HD)",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            if (selected) {
-                                Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                            }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(target.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "Up to ${outW}×${outH} px (memory-safe multi-pass HD)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (selected) {
+                            Icon(Icons.Filled.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         }
                     }
                 }
@@ -1358,10 +1540,10 @@ private fun UpscalerWorkspaceCard(
                 Text("Output Format", style = MaterialTheme.typography.labelLarge)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ImageOutputFormat.entries.forEach { fmt ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = fmt.label,
                             selected = state.outputFormat == fmt,
-                            onClick = { onFormatSelected(fmt) },
-                            label = { Text(fmt.label) }
+                            onClick = { onFormatSelected(fmt) }
                         )
                     }
                 }
@@ -1447,7 +1629,8 @@ private fun BgRemoverWorkspaceCard(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = "Erase",
                         selected = state.bgBrushModeIsErase,
                         onClick = { onBrushModeChanged(true) },
                         leadingIcon = {
@@ -1457,10 +1640,10 @@ private fun BgRemoverWorkspaceCard(
                                 modifier = Modifier.size(16.dp)
                             )
                         },
-                        label = { Text("Erase") },
                         modifier = Modifier.testTag("bg_erase_pill")
                     )
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = "Restore",
                         selected = !state.bgBrushModeIsErase,
                         onClick = { onBrushModeChanged(false) },
                         leadingIcon = {
@@ -1470,7 +1653,6 @@ private fun BgRemoverWorkspaceCard(
                                 modifier = Modifier.size(16.dp)
                             )
                         },
-                        label = { Text("Restore") },
                         modifier = Modifier.testTag("bg_restore_pill")
                     )
                     Spacer(modifier = Modifier.weight(1f))
@@ -1570,10 +1752,11 @@ private fun BgRemoverWorkspaceCard(
 @Composable
 private fun PassportSheetWorkspaceCard(
     state: ImageWorkspaceUiState,
-    onUpdatePassport: (Boolean?, Int?, Int?, Boolean?) -> Unit,
+    onUpdatePassport: (Boolean?, Int?, Int?, Boolean?, PassportSizePreset?) -> Unit,
     onFramingChanged: (Float, Float, Float) -> Unit,
     onResetFraming: () -> Unit
 ) {
+    val haptics = rememberPaperlyHaptics()
     var showColorDialog by remember { mutableStateOf(false) }
 
     val studioSwatches = listOf(
@@ -1591,7 +1774,7 @@ private fun PassportSheetWorkspaceCard(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        // Interactive Drag & Pinch-to-Zoom 35x45mm Framing Preview
+        // Interactive Drag & Pinch-to-Zoom Framing Preview
         Card(
             shape = RoundedCornerShape(18.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1611,16 +1794,21 @@ private fun PassportSheetWorkspaceCard(
                     zoom = state.passportZoom,
                     offsetXNorm = state.passportOffsetXNorm,
                     offsetYNorm = state.passportOffsetYNorm,
-                    onFramingChanged = onFramingChanged
+                    onFramingChanged = onFramingChanged,
+                    aspectRatio = state.passportSizePreset.aspectRatio
                 )
 
                 Column(
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Text("35×45 mm Framing", style = MaterialTheme.typography.titleMedium)
+                    Text("${state.passportSizePreset.shortLabel} Framing", style = MaterialTheme.typography.titleMedium)
                     Text(
-                        text = "Drag to position • Pinch to zoom (${state.passportCopyCount} copies)",
+                        text = if (state.passportCopyCount <= 1) {
+                            "Drag to position • Pinch to zoom (Single photo)"
+                        } else {
+                            "Drag to position • Pinch to zoom (${state.passportCopyCount} copies)"
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1630,6 +1818,7 @@ private fun PassportSheetWorkspaceCard(
                     ) {
                         OutlinedButton(
                             onClick = {
+                                haptics.selectionClick()
                                 onFramingChanged(
                                     state.passportOffsetXNorm,
                                     state.passportOffsetYNorm,
@@ -1647,6 +1836,7 @@ private fun PassportSheetWorkspaceCard(
 
                         OutlinedButton(
                             onClick = {
+                                haptics.selectionClick()
                                 onFramingChanged(
                                     state.passportOffsetXNorm,
                                     state.passportOffsetYNorm,
@@ -1663,7 +1853,10 @@ private fun PassportSheetWorkspaceCard(
                         }
 
                         OutlinedButton(
-                            onClick = onResetFraming,
+                            onClick = {
+                                haptics.selectionClick()
+                                onResetFraming()
+                            },
                             shape = RoundedCornerShape(10.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
@@ -1696,25 +1889,33 @@ private fun PassportSheetWorkspaceCard(
                     Column(modifier = Modifier.weight(1f)) {
                         Text("Remove & Replace Background", style = MaterialTheme.typography.titleSmall)
                         Text(
-                            "Auto-cut portrait & apply clean studio color",
+                            if (state.passportRemoveBg) {
+                                "Auto-cut portrait & apply clean studio color"
+                            } else {
+                                "Off — original photo background preserved"
+                            },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                     Switch(
                         checked = state.passportRemoveBg,
-                        onCheckedChange = { enabled -> onUpdatePassport(enabled, null, null, null) }
+                        onCheckedChange = { enabled ->
+                            haptics.selectionClick()
+                            onUpdatePassport(enabled, null, null, null, null)
+                        },
+                        modifier = Modifier.testTag("passport_remove_bg_switch")
                     )
                 }
 
-                if (state.passportRemoveBg) {
+                AnimatedVisibility(visible = state.passportRemoveBg) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                         items(studioSwatches) { (argb, label) ->
                             ColorSwatchCircle(
                                 color = Color(argb),
                                 label = label,
                                 selected = state.passportBgColorArgb == argb,
-                                onClick = { onUpdatePassport(null, argb, null, null) }
+                                onClick = { onUpdatePassport(null, argb, null, null, null) }
                             )
                         }
                         item {
@@ -1746,28 +1947,42 @@ private fun PassportSheetWorkspaceCard(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
 
+                Text("Passport Size Preset", style = MaterialTheme.typography.titleSmall)
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(PassportSizePreset.entries) { preset ->
+                        AnimatedOptionChip(
+                            label = preset.label,
+                            selected = state.passportSizePreset == preset,
+                            onClick = { onUpdatePassport(null, null, null, null, preset) },
+                            modifier = Modifier.testTag("passport_preset_${preset.name.lowercase()}")
+                        )
+                    }
+                }
+
                 Text("Copies on Print Sheet", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf(4, 6, 8, 12)) { count ->
-                        FilterChip(
+                    items(listOf(1, 4, 6, 8, 12)) { count ->
+                        val chipLabel = if (count == 1) "1 Photo" else "$count Photos"
+                        AnimatedOptionChip(
+                            label = chipLabel,
                             selected = state.passportCopyCount == count,
-                            onClick = { onUpdatePassport(null, null, count, null) },
-                            label = { FittedSingleLineText("$count Photos") }
+                            onClick = { onUpdatePassport(null, null, count, null, null) },
+                            modifier = Modifier.testTag("passport_copies_$count")
                         )
                     }
                 }
 
                 Text("Preferred Print Format", style = MaterialTheme.typography.titleSmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = "Print PDF + JPG",
                         selected = state.passportExportAsPdf,
-                        onClick = { onUpdatePassport(null, null, null, true) },
-                        label = { Text("Print PDF + JPG") }
+                        onClick = { onUpdatePassport(null, null, null, true, null) }
                     )
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = "JPG Only",
                         selected = !state.passportExportAsPdf,
-                        onClick = { onUpdatePassport(null, null, null, false) },
-                        label = { Text("JPG Only") }
+                        onClick = { onUpdatePassport(null, null, null, false, null) }
                     )
                 }
             }
@@ -1778,7 +1993,7 @@ private fun PassportSheetWorkspaceCard(
         CustomColorPickerDialog(
             initialColorArgb = state.passportBgColorArgb,
             onColorConfirmed = { argb ->
-                onUpdatePassport(true, argb, null, null)
+                onUpdatePassport(true, argb, null, null, null)
                 showColorDialog = false
             },
             onDismiss = { showColorDialog = false }

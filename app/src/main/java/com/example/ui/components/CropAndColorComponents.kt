@@ -11,6 +11,9 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffXfermode
 import android.graphics.RectF
 import android.graphics.Shader
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
@@ -19,6 +22,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -87,6 +91,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.BgBrushPoint
 import com.example.data.model.BgBrushStroke
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -140,6 +145,7 @@ fun InteractiveCropPreview(
         value = if (normRot == 0 && !flipHorizontal) {
             bitmap
         } else {
+            delay(120L)
             withContext(Dispatchers.Default) {
                 val m = AndroidMatrix().apply {
                     if (normRot != 0) postRotate(normRot.toFloat())
@@ -164,6 +170,7 @@ fun InteractiveCropPreview(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(max = 280.dp)
+            .graphicsLayer {}
             .testTag("crop_preview_container"),
         shape = RoundedCornerShape(16.dp),
         color = Color(0xFF121318),
@@ -390,6 +397,7 @@ fun BgTouchUpPreview(
             value = base
             return@produceState
         }
+        delay(120L)
         value = withContext(Dispatchers.Default) {
             val working = base.copy(Bitmap.Config.ARGB_8888, true)
             val canvas = AndroidCanvas(working)
@@ -461,6 +469,7 @@ fun BgTouchUpPreview(
         modifier = modifier
             .fillMaxWidth()
             .heightIn(min = 210.dp, max = 270.dp)
+            .graphicsLayer {}
             .testTag("bg_touchup_preview")
     ) {
         BoxWithConstraints(
@@ -609,7 +618,8 @@ fun PassportFramingPreview(
     offsetXNorm: Float,
     offsetYNorm: Float,
     onFramingChanged: (Float, Float, Float) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    aspectRatio: Float = 35f / 45f
 ) {
     val latestZoom by rememberUpdatedState(zoom)
     val latestOffsetX by rememberUpdatedState(offsetXNorm)
@@ -621,7 +631,8 @@ fun PassportFramingPreview(
         border = BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.55f)),
         modifier = modifier
             .width(126.dp)
-            .aspectRatio(35f / 45f)
+            .aspectRatio(aspectRatio)
+            .graphicsLayer {}
             .testTag("passport_framing_preview")
     ) {
         Box(
@@ -682,6 +693,7 @@ fun SplitBeforeAfterComparisonPreview(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(160.dp)
+                .graphicsLayer {}
                 .testTag("upscaler_split_preview")
         ) {
             Box(
@@ -954,6 +966,19 @@ fun ColorSwatchCircle(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val haptics = rememberPaperlyHaptics()
+    val interactionSource = remember { MutableInteractionSource() }
+    val borderColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "swatch_border"
+    )
+    val textColor by animateColorAsState(
+        targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        label = "swatch_text"
+    )
+
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -962,13 +987,20 @@ fun ColorSwatchCircle(
         Box(
             modifier = Modifier
                 .size(44.dp)
+                .pressScaleEffect(interactionSource)
                 .clip(CircleShape)
                 .border(
                     width = if (selected) 2.5.dp else 1.dp,
-                    color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                    color = borderColor,
                     shape = CircleShape
                 )
-                .clickable(onClick = onClick),
+                .clickable(
+                    interactionSource = interactionSource,
+                    indication = androidx.compose.material3.ripple()
+                ) {
+                    haptics.selectionClick()
+                    onClick()
+                },
             contentAlignment = Alignment.Center
         ) {
             if (color == null) {
@@ -984,7 +1016,7 @@ fun ColorSwatchCircle(
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
-            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = textColor,
             fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
             maxLines = 1
         )

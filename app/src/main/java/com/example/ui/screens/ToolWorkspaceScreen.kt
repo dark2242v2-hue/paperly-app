@@ -11,12 +11,16 @@ import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseOutCubic
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,11 +30,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.exclude
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -108,6 +114,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -138,9 +145,12 @@ import com.example.data.model.PdfToolType
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.SignaturePlacement
 import com.example.data.model.TargetSizeUnit
+import com.example.ui.components.AnimatedOptionChip
+import com.example.ui.components.AnimatedSelectableCard
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.SignaturePad
 import com.example.ui.components.bringIntoViewAboveKeyboard
+import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.components.renderSignatureBitmap
 import com.example.ui.theme.PaperlyEmerald
@@ -264,9 +274,12 @@ fun ToolWorkspaceScreen(
         PdfToolType.AI_SUMMARIZE -> workspace.selectedPdfs.isNotEmpty()
     } && !workspace.processing.isProcessing
 
+    val showProcessAction = tool != PdfToolType.AI_SUMMARIZE &&
+        !(tool == PdfToolType.SCAN && workspace.scanImageUris.isEmpty() && !workspace.processing.isProcessing)
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
-        contentWindowInsets = WindowInsets.safeDrawing,
+        contentWindowInsets = WindowInsets.safeDrawing.exclude(WindowInsets.ime),
         topBar = {
             TopAppBar(
                 title = {
@@ -300,107 +313,26 @@ fun ToolWorkspaceScreen(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
-        },
-        bottomBar = {
-            val showBottomBar = tool != PdfToolType.AI_SUMMARIZE &&
-                !(tool == PdfToolType.SCAN && workspace.scanImageUris.isEmpty() && !workspace.processing.isProcessing)
-            if (showBottomBar) {
-                Surface(
-                    color = MaterialTheme.colorScheme.surface,
-                    tonalElevation = 2.dp
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .windowInsetsPadding(WindowInsets.navigationBars)
-                    ) {
-                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 20.dp, vertical = 14.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            AnimatedVisibility(visible = workspace.processing.isProcessing) {
-                                val animatedProgress by animateFloatAsState(
-                                    targetValue = workspace.processing.progress.coerceIn(0f, 1f),
-                                    label = "pdf_progress"
-                                )
-                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween
-                                    ) {
-                                        Text(
-                                            text = workspace.processing.message.ifBlank { "Processing..." },
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Text(
-                                            text = "${(animatedProgress * 100).roundToInt()}%",
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    }
-                                    LinearProgressIndicator(
-                                        progress = { animatedProgress },
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(7.dp)
-                                            .clip(CircleShape)
-                                            .testTag("process_progress_bar")
-                                    )
-                                }
-                            }
-
-                            Button(
-                                onClick = {
-                                    haptics.lightTap()
-                                    val sigBmp = if (tool == PdfToolType.SIGN) {
-                                        renderSignatureBitmap(signatureStrokes, signatureCanvasSize)
-                                    } else {
-                                        null
-                                    }
-                                    viewModel.processActiveTool(
-                                        signatureBitmap = sigBmp,
-                                        onSuccess = onProcessingComplete
-                                    )
-                                },
-                                enabled = canProcess,
-                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 52.dp)
-                                    .testTag("process_pdf_button"),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                FittedSingleLineText(
-                                    text = if (workspace.processing.isProcessing) "Processing..." else stringResource(R.string.process_pdf),
-                                    style = MaterialTheme.typography.labelLarge
-                                )
-                            }
-                        }
-                    }
-                }
-            }
         }
     ) { innerPadding ->
+        val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding),
+                .padding(innerPadding)
+                .imePadding(),
             contentAlignment = Alignment.TopCenter
         ) {
-            val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .widthIn(max = 680.dp),
+                    .widthIn(max = 680.dp)
+                    .graphicsLayer {},
                 contentPadding = PaddingValues(
                     start = 20.dp,
                     end = 20.dp,
                     top = 12.dp,
-                    bottom = if (imeVisible) 140.dp else 24.dp
+                    bottom = if (imeVisible) 140.dp else 28.dp
                 ),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
@@ -612,6 +544,76 @@ fun ToolWorkspaceScreen(
                         PdfToolType.SCAN -> Unit
                     }
                 }
+
+                if (showProcessAction) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp),
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            AnimatedVisibility(visible = workspace.processing.isProcessing) {
+                                val animatedProgress by animateFloatAsState(
+                                    targetValue = workspace.processing.progress.coerceIn(0f, 1f),
+                                    label = "pdf_progress"
+                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Text(
+                                            text = workspace.processing.message.ifBlank { "Processing..." },
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "${(animatedProgress * 100).roundToInt()}%",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                    LinearProgressIndicator(
+                                        progress = { animatedProgress },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .height(7.dp)
+                                            .clip(CircleShape)
+                                            .testTag("process_progress_bar")
+                                    )
+                                }
+                            }
+
+                            Button(
+                                onClick = {
+                                    haptics.lightTap()
+                                    val sigBmp = if (tool == PdfToolType.SIGN) {
+                                        renderSignatureBitmap(signatureStrokes, signatureCanvasSize)
+                                    } else {
+                                        null
+                                    }
+                                    viewModel.processActiveTool(
+                                        signatureBitmap = sigBmp,
+                                        onSuccess = onProcessingComplete
+                                    )
+                                },
+                                enabled = canProcess,
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 52.dp)
+                                    .testTag("process_pdf_button"),
+                                shape = RoundedCornerShape(14.dp)
+                            ) {
+                                FittedSingleLineText(
+                                    text = if (workspace.processing.isProcessing) "Processing..." else stringResource(R.string.process_pdf),
+                                    style = MaterialTheme.typography.labelLarge
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -689,24 +691,18 @@ private fun PdfFilePickerSection(
                     )
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(recentRecords.take(6), key = { it.id }) { rec ->
-                            FilterChip(
+                            AnimatedOptionChip(
+                                label = rec.displayName,
                                 selected = false,
                                 onClick = { onPickRecent(rec) },
-                                label = {
-                                    Text(
-                                        text = rec.displayName,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.widthIn(max = 150.dp)
-                                    )
-                                },
                                 leadingIcon = {
                                     Icon(
                                         imageVector = Icons.Filled.Description,
                                         contentDescription = null,
                                         modifier = Modifier.size(16.dp)
                                     )
-                                }
+                                },
+                                modifier = Modifier.widthIn(max = 185.dp)
                             )
                         }
                     }
@@ -835,10 +831,10 @@ private fun SplitControlsCard(
                     add("All" to "all")
                 }
                 items(presets) { (label, value) ->
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = label,
                         selected = workspace.splitPageRange.equals(value, ignoreCase = true),
-                        onClick = { onRangeChange(value) },
-                        label = { Text(label) }
+                        onClick = { onRangeChange(value) }
                     )
                 }
             }
@@ -909,68 +905,65 @@ private fun CompressControlsCard(
 
             CompressionLevel.entries.forEach { level ->
                 val selected = !useExactTarget && level == selectedLevel
-                Card(
+                AnimatedSelectableCard(
+                    selected = selected,
                     onClick = { onSelectLevel(level) },
-                    shape = RoundedCornerShape(14.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (selected) {
-                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.65f)
-                        } else {
-                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        }
-                    ),
-                    border = BorderStroke(
-                        width = if (selected) 1.5.dp else 1.dp,
-                        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
-                    ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("compress_level_${level.name.lowercase()}")
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(14.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text(level.label, style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                text = level.subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (selected) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = "Selected",
-                                tint = MaterialTheme.colorScheme.primary
-                            )
-                        }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(level.label, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            text = level.subtitle,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    if (selected) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = "Selected",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
                     }
                 }
             }
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
 
+            val exactCardBorder by animateColorAsState(
+                targetValue = if (useExactTarget) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
+                animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                label = "exact_target_border"
+            )
+            val exactCardBg by animateColorAsState(
+                targetValue = if (useExactTarget) {
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                },
+                animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                label = "exact_target_bg"
+            )
+            val exactCardInteraction = remember { MutableInteractionSource() }
+            val haptics = rememberPaperlyHaptics()
+
             Card(
-                onClick = { onTargetConfigChange(true, targetValue.ifBlank { "200" }, targetUnit) },
+                onClick = {
+                    haptics.selectionClick()
+                    onTargetConfigChange(true, targetValue.ifBlank { "200" }, targetUnit)
+                },
+                interactionSource = exactCardInteraction,
                 shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (useExactTarget) {
-                        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.55f)
-                    } else {
-                        MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                    }
-                ),
+                colors = CardDefaults.cardColors(containerColor = exactCardBg),
                 border = BorderStroke(
                     width = if (useExactTarget) 1.5.dp else 1.dp,
-                    color = if (useExactTarget) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                    color = exactCardBorder
                 ),
                 modifier = Modifier
                     .fillMaxWidth()
+                    .pressScaleEffect(exactCardInteraction)
                     .testTag("pdf_exact_target_card")
             ) {
                 Column(
@@ -1008,10 +1001,10 @@ private fun CompressControlsCard(
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         items(presets) { (label, valueStr, unit) ->
                             val isSelected = useExactTarget && targetValue == valueStr && targetUnit == unit
-                            FilterChip(
+                            AnimatedOptionChip(
+                                label = label,
                                 selected = isSelected,
-                                onClick = { onTargetConfigChange(true, valueStr, unit) },
-                                label = { Text(label) }
+                                onClick = { onTargetConfigChange(true, valueStr, unit) }
                             )
                         }
                     }
@@ -1035,16 +1028,11 @@ private fun CompressControlsCard(
                         )
                         TargetSizeUnit.entries.forEach { unit ->
                             val unitSelected = useExactTarget && targetUnit == unit
-                            FilterChip(
+                            AnimatedOptionChip(
+                                label = unit.label,
                                 selected = unitSelected,
                                 onClick = {
                                     onTargetConfigChange(true, targetValue.ifBlank { "200" }, unit)
-                                },
-                                label = {
-                                    FittedSingleLineText(
-                                        text = unit.label,
-                                        fontWeight = if (unitSelected) FontWeight.Bold else FontWeight.Medium
-                                    )
                                 },
                                 modifier = Modifier.heightIn(min = 48.dp)
                             )
@@ -1366,20 +1354,30 @@ private fun ScanWorkspaceContent(
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
                                     val originalSelected = !enhanceContrast
+                                    val originalBg by animateColorAsState(
+                                        targetValue = if (originalSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "scan_orig_bg"
+                                    )
+                                    val originalTextColor by animateColorAsState(
+                                        targetValue = if (originalSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "scan_orig_text"
+                                    )
+                                    val origInteraction = remember { MutableInteractionSource() }
+
                                     Surface(
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             onToggleEnhance(false)
                                         },
+                                        interactionSource = origInteraction,
                                         shape = CircleShape,
-                                        color = if (originalSelected) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            Color.Transparent
-                                        },
+                                        color = originalBg,
                                         modifier = Modifier
                                             .weight(1f)
                                             .heightIn(min = 48.dp)
+                                            .pressScaleEffect(origInteraction)
                                             .testTag("scan_color_mode_original")
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
@@ -1387,30 +1385,36 @@ private fun ScanWorkspaceContent(
                                                 text = "Original",
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = if (originalSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (originalSelected) {
-                                                    MaterialTheme.colorScheme.onPrimary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
+                                                color = originalTextColor
                                             )
                                         }
                                     }
 
                                     val bwSelected = enhanceContrast
+                                    val bwBg by animateColorAsState(
+                                        targetValue = if (bwSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "scan_bw_bg"
+                                    )
+                                    val bwTextColor by animateColorAsState(
+                                        targetValue = if (bwSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "scan_bw_text"
+                                    )
+                                    val bwInteraction = remember { MutableInteractionSource() }
+
                                     Surface(
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             onToggleEnhance(true)
                                         },
+                                        interactionSource = bwInteraction,
                                         shape = CircleShape,
-                                        color = if (bwSelected) {
-                                            MaterialTheme.colorScheme.primary
-                                        } else {
-                                            Color.Transparent
-                                        },
+                                        color = bwBg,
                                         modifier = Modifier
                                             .weight(1f)
                                             .heightIn(min = 48.dp)
+                                            .pressScaleEffect(bwInteraction)
                                             .testTag("scan_color_mode_bw")
                                     ) {
                                         Box(contentAlignment = Alignment.Center) {
@@ -1418,11 +1422,7 @@ private fun ScanWorkspaceContent(
                                                 text = "Crisp B&W",
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = if (bwSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (bwSelected) {
-                                                    MaterialTheme.colorScheme.onPrimary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                }
+                                                color = bwTextColor
                                             )
                                         }
                                     }
@@ -1815,10 +1815,10 @@ private fun SignControlsCard(
                 Text("Quick Snap Position", style = MaterialTheme.typography.labelMedium)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     items(SignaturePlacement.entries) { placement ->
-                        FilterChip(
+                        AnimatedOptionChip(
+                            label = placement.label,
                             selected = workspace.signPlacement == placement,
-                            onClick = { onPlacementChange(placement) },
-                            label = { Text(placement.label) }
+                            onClick = { onPlacementChange(placement) }
                         )
                     }
                 }

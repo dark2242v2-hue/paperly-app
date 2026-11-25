@@ -4,6 +4,7 @@ import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 
 object PaperlyRoutes {
+    const val MAIN_TABS = "main_tabs"
     const val HOME = "home"
     const val FILES = "files"
     const val SETTINGS = "settings"

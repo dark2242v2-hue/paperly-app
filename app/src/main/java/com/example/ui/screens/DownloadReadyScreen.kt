@@ -87,6 +87,7 @@ import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 import com.google.android.play.core.review.ReviewManagerFactory
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -128,11 +129,12 @@ fun DownloadReadyScreen(
         isLoading = true
         val loaded = viewModel.loadRecordById(recordId)
         record = loaded
+        isLoading = false
         if (loaded != null) {
             haptics.confirmSuccess()
+            delay(240L)
             thumbnail = viewModel.pdfEngine.renderPageThumbnail(loaded.filePath, pageIndex = 0, maxWidth = 560)
         }
-        isLoading = false
     }
 
     val createDocumentLauncher = rememberLauncherForActivityResult(

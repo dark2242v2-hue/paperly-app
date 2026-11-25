@@ -3,9 +3,13 @@ package com.example.ui.screens
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +65,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -72,6 +77,7 @@ import com.example.billing.PaperlyBillingManager
 import com.example.core.formatFileSize
 import com.example.data.model.CompressionLevel
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 
@@ -161,7 +167,8 @@ fun SettingsScreen(
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .widthIn(max = 680.dp),
+                .widthIn(max = 680.dp)
+                .graphicsLayer {},
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -396,7 +403,7 @@ fun SettingsScreen(
                             Switch(
                                 checked = isDarkMode,
                                 onCheckedChange = {
-                                    haptics.lightTap()
+                                    haptics.selectionClick()
                                     onToggleDarkMode()
                                 },
                                 modifier = Modifier.testTag("settings_dark_mode_switch")
@@ -431,16 +438,34 @@ fun SettingsScreen(
                             ) {
                                 CompressionLevel.entries.forEach { level ->
                                     val selected = defaultCompression == level
+                                    val pillBg by animateColorAsState(
+                                        targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "preset_bg_${level.name}"
+                                    )
+                                    val pillFg by animateColorAsState(
+                                        targetValue = if (selected) {
+                                            MaterialTheme.colorScheme.onPrimary
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                        label = "preset_fg_${level.name}"
+                                    )
+                                    val interactionSource = remember { MutableInteractionSource() }
+
                                     Surface(
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             onSelectCompression(level)
                                         },
+                                        interactionSource = interactionSource,
                                         shape = RoundedCornerShape(10.dp),
-                                        color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                        color = pillBg,
                                         modifier = Modifier
                                             .weight(1f)
                                             .heightIn(min = 48.dp)
+                                            .pressScaleEffect(interactionSource)
                                             .testTag("settings_compression_${level.name.lowercase()}")
                                     ) {
                                         Box(
@@ -451,11 +476,7 @@ fun SettingsScreen(
                                                 text = level.label,
                                                 style = MaterialTheme.typography.labelLarge,
                                                 fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                                                color = if (selected) {
-                                                    MaterialTheme.colorScheme.onPrimary
-                                                } else {
-                                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                                },
+                                                color = pillFg,
                                                 textAlign = TextAlign.Center
                                             )
                                         }

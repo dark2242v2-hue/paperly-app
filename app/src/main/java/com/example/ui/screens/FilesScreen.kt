@@ -36,7 +36,6 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +54,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -67,6 +67,7 @@ import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
+import com.example.ui.components.AnimatedOptionChip
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.viewmodel.PaperlyViewModel
@@ -165,13 +166,10 @@ fun FilesScreen(
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(filters) { filter ->
-                    FilterChip(
+                    AnimatedOptionChip(
+                        label = filter,
                         selected = selectedFilter == filter,
-                        onClick = {
-                            haptics.lightTap()
-                            selectedFilter = filter
-                        },
-                        label = { Text(filter) },
+                        onClick = { selectedFilter = filter },
                         modifier = Modifier.testTag("files_filter_${filter.lowercase()}")
                     )
                 }
@@ -213,6 +211,7 @@ fun FilesScreen(
             } else {
                 val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 LazyColumn(
+                    modifier = Modifier.graphicsLayer {},
                     contentPadding = PaddingValues(bottom = if (imeVisible) 140.dp else 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {

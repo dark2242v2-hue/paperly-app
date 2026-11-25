@@ -30,6 +30,7 @@ import com.example.data.model.HomeToolCategory
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ImageToolType
 import com.example.data.model.OcrUiState
+import com.example.data.model.PassportSizePreset
 import com.example.data.model.PdfToolType
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.PickedPdfInfo
@@ -119,8 +120,9 @@ data class ImageWorkspaceUiState(
     val bgBrushModeIsErase: Boolean = true,
     val bgBrushRadiusNorm: Float = 0.045f,
     val bgBrushStrokes: List<BgBrushStroke> = emptyList(),
-    val passportRemoveBg: Boolean = true,
+    val passportRemoveBg: Boolean = false,
     val passportBgColorArgb: Int = 0xFFFFFFFF.toInt(),
+    val passportSizePreset: PassportSizePreset = PassportSizePreset.MM_35_45,
     val passportCopyCount: Int = 6,
     val passportExportAsPdf: Boolean = true,
     val passportZoom: Float = 1.0f,
@@ -1036,8 +1038,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             activeTool = tool,
             outputFormat = if (tool == ImageToolType.BG_REMOVER) ImageOutputFormat.PNG else ImageOutputFormat.JPG,
             selectedBgColorArgb = null,
-            passportRemoveBg = true,
-            passportBgColorArgb = 0xFFFFFFFF.toInt()
+            passportRemoveBg = false,
+            passportBgColorArgb = 0xFFFFFFFF.toInt(),
+            passportSizePreset = PassportSizePreset.MM_35_45,
+            passportCopyCount = 6
         )
     }
 
@@ -1625,7 +1629,8 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         removeBg: Boolean? = null,
         bgColorArgb: Int? = null,
         copyCount: Int? = null,
-        exportAsPdf: Boolean? = null
+        exportAsPdf: Boolean? = null,
+        sizePreset: PassportSizePreset? = null
     ) {
         val prevRemoveBg = _imageWorkspace.value.passportRemoveBg
         _imageWorkspace.update { state ->
@@ -1634,6 +1639,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 passportBgColorArgb = bgColorArgb ?: state.passportBgColorArgb,
                 passportCopyCount = copyCount ?: state.passportCopyCount,
                 passportExportAsPdf = exportAsPdf ?: state.passportExportAsPdf,
+                passportSizePreset = sizePreset ?: state.passportSizePreset,
                 processing = state.processing.copy(errorMessage = null)
             )
         }
@@ -1669,9 +1675,15 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     fun generatePassportSheet(onResultReady: () -> Unit) {
         val state = _imageWorkspace.value
         val info = state.pickedImage ?: return
+        val sizePreset = state.passportSizePreset
         viewModelScope.launch {
+            val label = if (state.passportCopyCount <= 1) {
+                "Creating ${sizePreset.shortLabel} single passport photo..."
+            } else {
+                "Building ${sizePreset.shortLabel} print sheet..."
+            }
             _imageWorkspace.update {
-                it.copy(processing = ProcessingState(true, 0.15f, "Building 35×45mm print sheet..."))
+                it.copy(processing = ProcessingState(true, 0.15f, label))
             }
             try {
                 val srcPath = if (state.passportRemoveBg && state.cutoutPngPath != null) {
@@ -1682,6 +1694,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val (imgResult, pdfRecord) = imageEngine.generatePassportSheet(
                     sourceOrCutoutPath = srcPath,
                     originalInfo = info,
+                    sizePreset = sizePreset,
                     removeBgEnabled = state.passportRemoveBg,
                     backgroundColorArgb = state.passportBgColorArgb,
                     copyCount = state.passportCopyCount,
