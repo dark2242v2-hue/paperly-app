@@ -68,6 +68,7 @@ import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
 import com.example.ui.components.AnimatedOptionChip
+import com.example.ui.components.SampledDrawableImage
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.viewmodel.PaperlyViewModel
@@ -189,9 +190,10 @@ fun FilesScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Image(
-                            painter = painterResource(id = R.drawable.img_empty_documents),
+                        SampledDrawableImage(
+                            resId = R.drawable.img_empty_documents,
                             contentDescription = "No files yet",
+                            maxEdgePx = 280,
                             modifier = Modifier
                                 .size(110.dp)
                                 .clip(RoundedCornerShape(14.dp)),
@@ -322,13 +324,17 @@ fun FilesScreen(
                                 IconButton(
                                     onClick = {
                                         haptics.lightTap()
-                                        val shareUri = viewModel.pdfEngine.getShareUri(record.filePath)
-                                        val intent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "application/pdf"
-                                            putExtra(Intent.EXTRA_STREAM, shareUri)
-                                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                        runCatching {
+                                            val shareUri = viewModel.pdfEngine.getShareUri(record.filePath)
+                                            val intent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "application/pdf"
+                                                putExtra(Intent.EXTRA_STREAM, shareUri)
+                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            }
+                                            context.startActivity(Intent.createChooser(intent, "Share PDF"))
+                                        }.onFailure {
+                                            viewModel.postMessage("Unable to share PDF right now.")
                                         }
-                                        context.startActivity(Intent.createChooser(intent, "Share PDF"))
                                     },
                                     modifier = Modifier.minimumInteractiveComponentSize()
                                 ) {

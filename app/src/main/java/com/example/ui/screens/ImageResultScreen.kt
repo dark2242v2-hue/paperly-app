@@ -332,13 +332,17 @@ fun ImageResultScreen(
                         OutlinedButton(
                             onClick = {
                                 haptics.lightTap()
-                                val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = result.format.mimeType
-                                    putExtra(Intent.EXTRA_STREAM, shareUri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                runCatching {
+                                    val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = result.format.mimeType
+                                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Share image"))
+                                }.onFailure {
+                                    Toast.makeText(context, "Unable to share image right now.", Toast.LENGTH_SHORT).show()
                                 }
-                                context.startActivity(Intent.createChooser(shareIntent, "Share image"))
                             },
                             shape = RoundedCornerShape(13.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),

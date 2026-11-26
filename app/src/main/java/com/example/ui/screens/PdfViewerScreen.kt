@@ -336,14 +336,18 @@ fun PdfViewerScreen(
                                         },
                                         onClick = {
                                             overflowExpanded = false
-                                            val shareTarget = record ?: activeRec
-                                            val shareUri = viewModel.pdfEngine.getShareUri(shareTarget.filePath)
-                                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "application/pdf"
-                                                putExtra(Intent.EXTRA_STREAM, shareUri)
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            runCatching {
+                                                val shareTarget = record ?: activeRec
+                                                val shareUri = viewModel.pdfEngine.getShareUri(shareTarget.filePath)
+                                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "application/pdf"
+                                                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(Intent.createChooser(intent, "Share PDF"))
+                                            }.onFailure {
+                                                viewModel.postMessage("Unable to share PDF right now.")
                                             }
-                                            context.startActivity(Intent.createChooser(intent, "Share PDF"))
                                         },
                                         modifier = Modifier.testTag("viewer_menu_share")
                                     )

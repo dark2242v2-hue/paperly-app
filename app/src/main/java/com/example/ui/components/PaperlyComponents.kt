@@ -2,12 +2,14 @@ package com.example.ui.components
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas as AndroidCanvas
 import android.graphics.Color as AndroidColor
 import android.graphics.Paint as AndroidPaint
 import android.graphics.Path as AndroidPath
 import android.graphics.drawable.GradientDrawable
 import android.net.Uri
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.Button as AndroidButton
@@ -95,8 +97,10 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -112,9 +116,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -133,8 +139,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -156,6 +164,50 @@ import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdView
+
+@Composable
+fun SampledDrawableImage(
+    resId: Int,
+    contentDescription: String?,
+    modifier: Modifier = Modifier,
+    maxEdgePx: Int = 280,
+    contentScale: ContentScale = ContentScale.Crop
+) {
+    val context = LocalContext.current
+    val sampledBitmap by produceState<Bitmap?>(initialValue = null, key1 = resId, key2 = maxEdgePx) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                val res = context.resources
+                val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeResource(res, resId, bounds)
+                var sample = 1
+                val longest = maxOf(bounds.outWidth, bounds.outHeight)
+                while (longest / sample > maxEdgePx * 2) {
+                    sample *= 2
+                }
+                val opts = BitmapFactory.Options().apply {
+                    inSampleSize = sample
+                    inPreferredConfig = Bitmap.Config.RGB_565
+                }
+                BitmapFactory.decodeResource(res, resId, opts)
+            }.getOrNull()
+        }
+    }
+
+    val bmp = sampledBitmap
+    if (bmp != null && !bmp.isRecycled) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = contentDescription,
+            modifier = modifier,
+            contentScale = contentScale
+        )
+    } else {
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+        )
+    }
+}
 
 @Composable
 fun FittedSingleLineText(
@@ -444,10 +496,18 @@ fun PaperlyBottomBarWithBanner(
     currentRoute: String?,
     isPro: Boolean,
     showHomeBanner: Boolean,
+    isAdsSdkInitialized: Boolean = true,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val haptics = rememberPaperlyHaptics()
+    var bannerMountAllowed by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        delay(800L)
+        bannerMountAllowed = true
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -462,12 +522,21 @@ fun PaperlyBottomBarWithBanner(
         ) {
             Column {
                 HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                AnchoredAdaptiveBannerSlot(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                        .testTag("home_adaptive_banner_ad")
-                )
+                if (isAdsSdkInitialized && bannerMountAllowed) {
+                    AnchoredAdaptiveBannerSlot(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                            .testTag("home_adaptive_banner_ad")
+                    )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp)
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    )
+                }
             }
         }
 
@@ -531,33 +600,41 @@ private fun AnchoredAdaptiveBannerSlot(
     ) {
         val adWidthDp = maxWidth.value.toInt().coerceAtLeast(320)
         val adView = remember(context, adWidthDp) {
-            val adSize = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidthDp)
-            AdView(context).apply {
-                adUnitId = AdUnitIds.bannerAdUnitId
-                setAdSize(adSize)
-                loadAd(AdRequest.Builder().build())
-            }
+            runCatching {
+                val adSize = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidthDp)
+                AdView(context).apply {
+                    adUnitId = AdUnitIds.bannerAdUnitId
+                    setAdSize(adSize)
+                    loadAd(AdRequest.Builder().build())
+                }
+            }.onFailure { error ->
+                Log.w("AnchoredAdaptiveBanner", "Banner AdView init skipped/failed", error)
+            }.getOrNull()
         }
 
-        DisposableEffect(adView, lifecycleOwner) {
-            val observer = LifecycleEventObserver { _, event ->
-                when (event) {
-                    Lifecycle.Event.ON_RESUME -> adView.resume()
-                    Lifecycle.Event.ON_PAUSE -> adView.pause()
-                    else -> Unit
+        if (adView != null) {
+            DisposableEffect(adView, lifecycleOwner) {
+                val observer = LifecycleEventObserver { _, event ->
+                    when (event) {
+                        Lifecycle.Event.ON_RESUME -> runCatching { adView.resume() }
+                        Lifecycle.Event.ON_PAUSE -> runCatching { adView.pause() }
+                        else -> Unit
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose {
+                    lifecycleOwner.lifecycle.removeObserver(observer)
+                    runCatching { adView.destroy() }
                 }
             }
-            lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose {
-                lifecycleOwner.lifecycle.removeObserver(observer)
-                adView.destroy()
+
+            key(adView) {
+                AndroidView(
+                    factory = { adView },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
-
-        AndroidView(
-            factory = { adView },
-            modifier = Modifier.fillMaxWidth()
-        )
     }
 }
 

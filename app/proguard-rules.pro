@@ -58,9 +58,15 @@
 -dontwarn kotlinx.coroutines.**
 
 # ------------------------------------------------------------------------------
-# PDFBox Android (suppress optional desktop Java AWT/XML references)
+# PDFBox Android & Encryption (keep SecurityHandlers & suppress AWT/XML warnings)
 # ------------------------------------------------------------------------------
+-keep class com.tom_roush.pdfbox.android.** { *; }
+-keep class com.tom_roush.pdfbox.pdmodel.encryption.** { *; }
+-keepclassmembers class * extends com.tom_roush.pdfbox.pdmodel.encryption.SecurityHandler { *; }
+-keepclassmembers class * extends com.tom_roush.pdfbox.pdmodel.encryption.ProtectionPolicy { *; }
+-keep class org.bouncycastle.** { *; }
 -dontwarn com.tom_roush.pdfbox.**
+-dontwarn com.tom_roush.fontbox.**
 -dontwarn org.apache.fontbox.**
 -dontwarn org.bouncycastle.**
 -dontwarn java.awt.**

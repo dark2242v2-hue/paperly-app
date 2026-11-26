@@ -45,6 +45,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -73,17 +74,17 @@ class PdfEngine(private val context: Context) {
         }
     }
 
-    private fun buildCacheKey(filePath: String, pageIndex: Int, maxWidth: Int): String {
-        val lastModified = runCatching { File(filePath).lastModified() }.getOrDefault(0L)
-        return "$filePath|$lastModified|$pageIndex|$maxWidth"
-    }
+    private val latestPageKeyByTarget = ConcurrentHashMap<String, String>()
+
+    private fun buildTargetKey(filePath: String, pageIndex: Int, maxWidth: Int): String =
+        "$filePath|$pageIndex|$maxWidth"
 
     fun getCachedPageThumbnail(
         filePath: String,
         pageIndex: Int = 0,
         maxWidth: Int = 720
     ): Bitmap? {
-        val key = buildCacheKey(filePath, pageIndex, maxWidth)
+        val key = latestPageKeyByTarget[buildTargetKey(filePath, pageIndex, maxWidth)] ?: return null
         return pageThumbnailCache.get(key)?.takeIf { !it.isRecycled }
     }
 
@@ -390,13 +391,18 @@ class PdfEngine(private val context: Context) {
         // fall back to stream-only PDFBox save so we never inflate a document unnecessarily.
         if (outFile.length() > file.sizeBytes) {
             val streamOut = File(context.cacheDir, "stream_${UUID.randomUUID()}.pdf")
-            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
-                doc.save(streamOut)
+            try {
+                runCatching {
+                    PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                        doc.save(streamOut)
+                    }
+                    if (streamOut.exists() && streamOut.length() > 0L && streamOut.length() < outFile.length()) {
+                        streamOut.copyTo(outFile, overwrite = true)
+                    }
+                }
+            } finally {
+                streamOut.delete()
             }
-            if (streamOut.exists() && streamOut.length() < outFile.length()) {
-                streamOut.copyTo(outFile, overwrite = true)
-            }
-            streamOut.delete()
         }
 
         onProgress(1f, "Compression complete")
@@ -647,8 +653,10 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
         onProgress(0.25f, "Opening document...")
+        var totalPages = file.pageCount
         try {
             PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                totalPages = doc.numberOfPages
                 val pageIdx = (targetPageOneBased - 1).coerceIn(0, doc.numberOfPages - 1)
                 val page = doc.getPage(pageIdx)
                 val box = page.cropBox ?: page.mediaBox ?: PDRectangle.A4
@@ -697,7 +705,7 @@ class PdfEngine(private val context: Context) {
         PdfRecordEntity(
             displayName = outFile.name,
             filePath = outFile.absolutePath,
-            pageCount = file.pageCount,
+            pageCount = totalPages,
             sizeBytes = outFile.length(),
             originalSizeBytes = file.sizeBytes,
             operationTag = "Signed"
@@ -932,7 +940,9 @@ class PdfEngine(private val context: Context) {
     ): Bitmap? = withContext(Dispatchers.IO) {
         val file = File(filePath)
         if (!file.exists()) return@withContext null
+        val targetKey = buildTargetKey(filePath, pageIndex, maxWidth)
         val cacheKey = "${filePath}|${file.lastModified()}|$pageIndex|$maxWidth"
+        latestPageKeyByTarget[targetKey] = cacheKey
         pageThumbnailCache.get(cacheKey)?.takeIf { !it.isRecycled }?.let { cached ->
             return@withContext cached
         }
@@ -956,6 +966,7 @@ class PdfEngine(private val context: Context) {
                         bmp.eraseColor(Color.WHITE)
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                         pageThumbnailCache.put(cacheKey, bmp)
+                        latestPageKeyByTarget[targetKey] = cacheKey
                         bmp
                     }
                 }

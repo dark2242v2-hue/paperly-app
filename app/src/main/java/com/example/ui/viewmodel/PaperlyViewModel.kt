@@ -163,10 +163,11 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     )
 
     val billingState: StateFlow<BillingUiState> = billingManager.uiState
+    val isAdsSdkInitialized: StateFlow<Boolean> = adManager.isSdkInitialized
 
-    private val isAppIntegrityTrusted: Boolean by lazy {
-        SecurityGuard.isAppTrusted(application)
-    }
+    private val _isAppIntegrityTrusted = MutableStateFlow(BuildConfig.DEBUG)
+    private val isAppIntegrityTrusted: Boolean
+        get() = _isAppIntegrityTrusted.value
 
     private val _homeCategory = MutableStateFlow(HomeToolCategory.PDF)
     val homeCategory: StateFlow<HomeToolCategory> = _homeCategory.asStateFlow()
@@ -209,7 +210,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private var imageJob: Job? = null
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
-        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val isDarkMode: StateFlow<Boolean> = prefsRepository.isDarkMode
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
@@ -221,10 +222,11 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), null)
 
     val isPro: StateFlow<Boolean> = combine(
+        _isAppIntegrityTrusted,
         prefsRepository.playProActive,
         prefsRepository.debugProOverride
-    ) { playActive, debugOverride ->
-        isAppIntegrityTrusted && (playActive || (BuildConfig.DEBUG && debugOverride))
+    ) { trusted, playActive, debugOverride ->
+        trusted && (playActive || (BuildConfig.DEBUG && debugOverride))
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     val defaultCompression: StateFlow<CompressionLevel> = prefsRepository.defaultCompression
@@ -250,17 +252,27 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
 
     init {
-        adManager.initialize(preloadRewarded = true)
-        if (isAppIntegrityTrusted) {
-            billingManager.initialize()
-        } else {
-            viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(180L)
+            val trusted = SecurityGuard.isAppTrusted(application)
+            _isAppIntegrityTrusted.value = trusted
+            refreshFilesCache(force = false)
+            refreshRecentImages()
+            refreshTempCacheSize()
+        }
+        viewModelScope.launch {
+            delay(450L)
+            val trusted = withContext(Dispatchers.IO) {
+                SecurityGuard.isAppTrusted(application).also { _isAppIntegrityTrusted.value = it }
+            }
+            if (trusted) {
+                billingManager.initialize()
+            } else {
                 prefsRepository.setPlayProActive(false, null)
             }
+            delay(200L)
+            adManager.initialize(preloadRewarded = true)
         }
-        refreshFilesCache(force = false)
-        refreshRecentImages()
-        refreshTempCacheSize()
     }
 
     fun refreshRecentImages() {
@@ -627,6 +639,16 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     fun selectExistingRecord(record: PdfRecordEntity) {
         viewModelScope.launch {
+            if (record.operationTag == "Locked" || pdfEngine.requiresPassword(record.filePath)) {
+                _workspace.update {
+                    it.copy(
+                        processing = ProcessingState(
+                            errorMessage = "This PDF is password-protected. Open it directly in the viewer to unlock first."
+                        )
+                    )
+                }
+                return@launch
+            }
             val info = pdfEngine.fromExistingRecord(record)
             val tool = _workspace.value.activeTool
             val updatedList = if (tool == PdfToolType.MERGE) {
@@ -649,10 +671,22 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun removePdfAt(index: Int) {
+        val currentList = _workspace.value.selectedPdfs
+        if (index !in currentList.indices) return
+        val mutable = currentList.toMutableList()
+        mutable.removeAt(index)
+        val first = mutable.firstOrNull()
         _workspace.update { state ->
-            val mutable = state.selectedPdfs.toMutableList()
-            if (index in mutable.indices) mutable.removeAt(index)
-            state.copy(selectedPdfs = mutable)
+            state.copy(
+                selectedPdfs = mutable,
+                previewThumbnail = if (first == null) null else state.previewThumbnail
+            )
+        }
+        if (index == 0 && first != null) {
+            viewModelScope.launch {
+                val preview = pdfEngine.renderPageThumbnail(first.localPath, pageIndex = 0, maxWidth = 640)
+                _workspace.update { it.copy(previewThumbnail = preview) }
+            }
         }
     }
 
@@ -955,8 +989,9 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         aiJob?.cancel()
         aiJob = viewModelScope.launch {
             _aiSummaryState.value = AiSummaryUiState.Extracting
+            var payload: com.example.data.model.PdfAiPayload? = null
             try {
-                val payload = pdfEngine.extractAiPayload(file)
+                payload = pdfEngine.extractAiPayload(file)
                 _aiSummaryState.value = AiSummaryUiState.Loading
                 val summary = aiRepository.summarizePdf(payload)
                 _aiSummaryState.value = AiSummaryUiState.Formatting
@@ -982,6 +1017,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 _aiSummaryState.value = AiSummaryUiState.Error(
                     e.localizedMessage ?: "Failed to generate AI summary."
                 )
+            } finally {
+                payload?.fallbackBitmaps?.forEach { bmp ->
+                    if (!bmp.isRecycled) bmp.recycle()
+                }
             }
         }
     }

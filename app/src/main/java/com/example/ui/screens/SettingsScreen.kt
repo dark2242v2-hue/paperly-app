@@ -109,10 +109,6 @@ fun SettingsScreen(
     var showClearDialog by remember { mutableStateOf(false) }
     var showTermsDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(Unit) {
-        onRefreshCacheSize()
-    }
-
     if (showClearDialog) {
         AlertDialog(
             onDismissRequest = { showClearDialog = false },

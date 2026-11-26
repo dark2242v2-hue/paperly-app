@@ -19,9 +19,14 @@ import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdOptions
 import com.google.android.gms.ads.rewarded.RewardedAd
 import com.google.android.gms.ads.rewarded.RewardedAdLoadCallback
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 private const val TAG = "PaperlyAdManager"
 private const val REWARDED_RETRY_DELAY_MS = 3_000L
@@ -52,8 +57,8 @@ object AdUnitIds {
 
 class PaperlyAdManager(private val appContext: Context) {
 
-    @Volatile
-    private var isInitialized = false
+    private val initScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val initStarted = AtomicBoolean(false)
 
     private val mainHandler = Handler(Looper.getMainLooper())
     private var preloadedRewardedAd: RewardedAd? = null
@@ -61,25 +66,35 @@ class PaperlyAdManager(private val appContext: Context) {
     private var preloadRetryCount = 0
     private var pendingPreloadRetry: Runnable? = null
 
+    private val _isSdkInitialized = MutableStateFlow(false)
+    val isSdkInitialized: StateFlow<Boolean> = _isSdkInitialized.asStateFlow()
+
     private val _isRewardedReady = MutableStateFlow(false)
     val isRewardedReady: StateFlow<Boolean> = _isRewardedReady.asStateFlow()
 
     fun initialize(preloadRewarded: Boolean = true) {
-        if (!isInitialized) {
-            if (BuildConfig.DEBUG) {
-                val testConfig = RequestConfiguration.Builder()
-                    .setTestDeviceIds(listOf(AdRequest.DEVICE_ID_EMULATOR))
-                    .build()
-                MobileAds.setRequestConfiguration(testConfig)
-            }
-            MobileAds.initialize(appContext) {
-                Log.d(TAG, "Google Mobile Ads SDK initialized (debug=${BuildConfig.DEBUG})")
-                if (preloadRewarded) {
-                    preloadRewardedAd(resetRetries = true)
+        if (initStarted.compareAndSet(false, true)) {
+            initScope.launch {
+                runCatching {
+                    if (BuildConfig.DEBUG) {
+                        val testConfig = RequestConfiguration.Builder()
+                            .setTestDeviceIds(listOf(AdRequest.DEVICE_ID_EMULATOR))
+                            .build()
+                        MobileAds.setRequestConfiguration(testConfig)
+                    }
+                    MobileAds.initialize(appContext) {
+                        Log.d(TAG, "Google Mobile Ads SDK initialized (debug=${BuildConfig.DEBUG})")
+                        _isSdkInitialized.value = true
+                        if (preloadRewarded) {
+                            mainHandler.post { preloadRewardedAd(resetRetries = true) }
+                        }
+                    }
+                }.onFailure { error ->
+                    Log.w(TAG, "Google Mobile Ads SDK initialization skipped/failed", error)
+                    initStarted.set(false)
                 }
             }
-            isInitialized = true
-        } else if (preloadRewarded && preloadedRewardedAd == null) {
+        } else if (preloadRewarded && _isSdkInitialized.value && preloadedRewardedAd == null) {
             preloadRewardedAd(resetRetries = true)
         }
     }
@@ -88,6 +103,10 @@ class PaperlyAdManager(private val appContext: Context) {
         resetRetries: Boolean = true,
         onLoaded: ((Boolean) -> Unit)? = null
     ) {
+        if (!_isSdkInitialized.value) {
+            initialize(preloadRewarded = true)
+            return
+        }
         if (Looper.myLooper() != Looper.getMainLooper()) {
             mainHandler.post { preloadRewardedAd(resetRetries, onLoaded) }
             return
@@ -106,39 +125,46 @@ class PaperlyAdManager(private val appContext: Context) {
         if (isLoadingRewarded) return
         isLoadingRewarded = true
 
-        val request = AdRequest.Builder().build()
-        RewardedAd.load(
-            appContext,
-            AdUnitIds.rewardedAdUnitId,
-            request,
-            object : RewardedAdLoadCallback() {
-                override fun onAdLoaded(ad: RewardedAd) {
-                    Log.d(TAG, "RewardedAd preloaded")
-                    preloadRetryCount = 0
-                    preloadedRewardedAd = ad
-                    isLoadingRewarded = false
-                    _isRewardedReady.value = true
-                    onLoaded?.invoke(true)
-                }
+        runCatching {
+            val request = AdRequest.Builder().build()
+            RewardedAd.load(
+                appContext,
+                AdUnitIds.rewardedAdUnitId,
+                request,
+                object : RewardedAdLoadCallback() {
+                    override fun onAdLoaded(ad: RewardedAd) {
+                        Log.d(TAG, "RewardedAd preloaded")
+                        preloadRetryCount = 0
+                        preloadedRewardedAd = ad
+                        isLoadingRewarded = false
+                        _isRewardedReady.value = true
+                        onLoaded?.invoke(true)
+                    }
 
-                override fun onAdFailedToLoad(loadError: LoadAdError) {
-                    Log.w(TAG, "RewardedAd failed to load (code=${loadError.code}): ${loadError.message}")
-                    preloadedRewardedAd = null
-                    isLoadingRewarded = false
-                    _isRewardedReady.value = false
-                    onLoaded?.invoke(false)
+                    override fun onAdFailedToLoad(loadError: LoadAdError) {
+                        Log.w(TAG, "RewardedAd failed to load (code=${loadError.code}): ${loadError.message}")
+                        preloadedRewardedAd = null
+                        isLoadingRewarded = false
+                        _isRewardedReady.value = false
+                        onLoaded?.invoke(false)
 
-                    if (preloadRetryCount < MAX_PRELOAD_RETRIES) {
-                        preloadRetryCount++
-                        val retryRunnable = Runnable {
-                            preloadRewardedAd(resetRetries = false)
+                        if (preloadRetryCount < MAX_PRELOAD_RETRIES) {
+                            preloadRetryCount++
+                            val retryRunnable = Runnable {
+                                preloadRewardedAd(resetRetries = false)
+                            }
+                            pendingPreloadRetry = retryRunnable
+                            mainHandler.postDelayed(retryRunnable, REWARDED_RETRY_DELAY_MS)
                         }
-                        pendingPreloadRetry = retryRunnable
-                        mainHandler.postDelayed(retryRunnable, REWARDED_RETRY_DELAY_MS)
                     }
                 }
-            }
-        )
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "RewardedAd.load failed cleanly", error)
+            isLoadingRewarded = false
+            _isRewardedReady.value = false
+            onLoaded?.invoke(false)
+        }
     }
 
     fun showRewardedAd(
@@ -179,55 +205,61 @@ class PaperlyAdManager(private val appContext: Context) {
             onLoadFailed(false, "Unable to present video ad right now.")
             return
         }
-        val request = AdRequest.Builder().build()
-        RewardedAd.load(
-            appContext,
-            AdUnitIds.rewardedAdUnitId,
-            request,
-            object : RewardedAdLoadCallback() {
-                override fun onAdLoaded(ad: RewardedAd) {
-                    preloadRetryCount = 0
-                    preloadedRewardedAd = ad
-                    _isRewardedReady.value = true
-                    if (activity.isFinishing || activity.isDestroyed) {
-                        onLoadFailed(false, "Unable to present video ad right now.")
-                        return
-                    }
-                    presentRewardedAd(
-                        activity = activity,
-                        ad = ad,
-                        onUserEarnedReward = onUserEarnedReward,
-                        onDismissedWithoutReward = onDismissedWithoutReward,
-                        onShowFailed = { msg -> onLoadFailed(false, msg) }
-                    )
-                }
-
-                override fun onAdFailedToLoad(error: LoadAdError) {
-                    Log.w(TAG, "On-demand RewardedAd failed (code=${error.code}, retriesLeft=$retriesRemaining): ${error.message}")
-                    _isRewardedReady.value = false
-                    if (retriesRemaining > 0 && !activity.isFinishing && !activity.isDestroyed) {
-                        mainHandler.postDelayed({
-                            loadAndShowOnDemand(
-                                activity = activity,
-                                retriesRemaining = retriesRemaining - 1,
-                                onUserEarnedReward = onUserEarnedReward,
-                                onDismissedWithoutReward = onDismissedWithoutReward,
-                                onLoadFailed = onLoadFailed
-                            )
-                        }, ON_DEMAND_RETRY_DELAY_MS)
-                    } else {
-                        // Schedule a background reload after 3s for subsequent attempts
-                        val retryRunnable = Runnable {
-                            preloadRewardedAd(resetRetries = false)
+        runCatching {
+            val request = AdRequest.Builder().build()
+            RewardedAd.load(
+                appContext,
+                AdUnitIds.rewardedAdUnitId,
+                request,
+                object : RewardedAdLoadCallback() {
+                    override fun onAdLoaded(ad: RewardedAd) {
+                        preloadRetryCount = 0
+                        preloadedRewardedAd = ad
+                        _isRewardedReady.value = true
+                        if (activity.isFinishing || activity.isDestroyed) {
+                            onLoadFailed(false, "Unable to present video ad right now.")
+                            return
                         }
-                        pendingPreloadRetry?.let { mainHandler.removeCallbacks(it) }
-                        pendingPreloadRetry = retryRunnable
-                        mainHandler.postDelayed(retryRunnable, REWARDED_RETRY_DELAY_MS)
-                        onLoadFailed(true, "Ad sponsor busy right now — please try again in a moment.")
+                        presentRewardedAd(
+                            activity = activity,
+                            ad = ad,
+                            onUserEarnedReward = onUserEarnedReward,
+                            onDismissedWithoutReward = onDismissedWithoutReward,
+                            onShowFailed = { msg -> onLoadFailed(false, msg) }
+                        )
+                    }
+
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        Log.w(TAG, "On-demand RewardedAd failed (code=${error.code}, retriesLeft=$retriesRemaining): ${error.message}")
+                        _isRewardedReady.value = false
+                        if (retriesRemaining > 0 && !activity.isFinishing && !activity.isDestroyed) {
+                            mainHandler.postDelayed({
+                                loadAndShowOnDemand(
+                                    activity = activity,
+                                    retriesRemaining = retriesRemaining - 1,
+                                    onUserEarnedReward = onUserEarnedReward,
+                                    onDismissedWithoutReward = onDismissedWithoutReward,
+                                    onLoadFailed = onLoadFailed
+                                )
+                            }, ON_DEMAND_RETRY_DELAY_MS)
+                        } else {
+                            // Schedule a background reload after 3s for subsequent attempts
+                            val retryRunnable = Runnable {
+                                preloadRewardedAd(resetRetries = false)
+                            }
+                            pendingPreloadRetry?.let { mainHandler.removeCallbacks(it) }
+                            pendingPreloadRetry = retryRunnable
+                            mainHandler.postDelayed(retryRunnable, REWARDED_RETRY_DELAY_MS)
+                            onLoadFailed(true, "Ad sponsor busy right now — please try again in a moment.")
+                        }
                     }
                 }
-            }
-        )
+            )
+        }.onFailure { error ->
+            Log.w(TAG, "On-demand RewardedAd.load threw", error)
+            _isRewardedReady.value = false
+            onLoadFailed(true, "Ad sponsor busy right now — please try again in a moment.")
+        }
     }
 
     private fun presentRewardedAd(
@@ -256,9 +288,14 @@ class PaperlyAdManager(private val appContext: Context) {
             }
         }
 
-        ad.show(activity) { _ ->
-            rewardEarned = true
-            onUserEarnedReward()
+        runCatching {
+            ad.show(activity) { _ ->
+                rewardEarned = true
+                onUserEarnedReward()
+            }
+        }.onFailure { error ->
+            Log.w(TAG, "RewardedAd.show failed cleanly", error)
+            onShowFailed("Could not display video ad. Please try again.")
         }
     }
 
@@ -266,24 +303,33 @@ class PaperlyAdManager(private val appContext: Context) {
         onAdLoaded: (NativeAd) -> Unit,
         onAdFailed: (String) -> Unit
     ) {
-        val loader = AdLoader.Builder(appContext, AdUnitIds.nativeAdUnitId)
-            .forNativeAd { nativeAd ->
-                onAdLoaded(nativeAd)
-            }
-            .withAdListener(object : AdListener() {
-                override fun onAdFailedToLoad(error: LoadAdError) {
-                    Log.w(TAG, "NativeAd failed to load: ${error.message}")
-                    onAdFailed(error.message)
+        if (!_isSdkInitialized.value) {
+            onAdFailed("Ads SDK still initializing")
+            return
+        }
+        runCatching {
+            val loader = AdLoader.Builder(appContext, AdUnitIds.nativeAdUnitId)
+                .forNativeAd { nativeAd ->
+                    onAdLoaded(nativeAd)
                 }
-            })
-            .withNativeAdOptions(
-                NativeAdOptions.Builder()
-                    .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
-                    .build()
-            )
-            .build()
+                .withAdListener(object : AdListener() {
+                    override fun onAdFailedToLoad(error: LoadAdError) {
+                        Log.w(TAG, "NativeAd failed to load: ${error.message}")
+                        onAdFailed(error.message)
+                    }
+                })
+                .withNativeAdOptions(
+                    NativeAdOptions.Builder()
+                        .setAdChoicesPlacement(NativeAdOptions.ADCHOICES_TOP_RIGHT)
+                        .build()
+                )
+                .build()
 
-        loader.loadAd(AdRequest.Builder().build())
+            loader.loadAd(AdRequest.Builder().build())
+        }.onFailure { error ->
+            Log.w(TAG, "NativeAd load threw", error)
+            onAdFailed(error.message ?: "Native ad unavailable")
+        }
     }
 }
 

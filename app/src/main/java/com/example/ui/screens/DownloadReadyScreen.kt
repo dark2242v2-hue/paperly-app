@@ -385,13 +385,17 @@ fun DownloadReadyScreen(
                                     OutlinedButton(
                                         onClick = {
                                             haptics.lightTap()
-                                            val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
-                                            val intent = Intent(Intent.ACTION_SEND).apply {
-                                                type = "application/pdf"
-                                                putExtra(Intent.EXTRA_STREAM, shareUri)
-                                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                            runCatching {
+                                                val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
+                                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                                    type = "application/pdf"
+                                                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                                }
+                                                context.startActivity(Intent.createChooser(intent, "Share PDF"))
+                                            }.onFailure {
+                                                Toast.makeText(context, "Unable to share PDF right now.", Toast.LENGTH_SHORT).show()
                                             }
-                                            context.startActivity(Intent.createChooser(intent, "Share PDF"))
                                         },
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                                         modifier = Modifier

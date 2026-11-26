@@ -85,26 +85,33 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb()),
+            navigationBarStyle = SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+        )
 
         setContent {
             val viewModel: PaperlyViewModel = viewModel()
             val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
             val pendingExternalPdfUri by pendingExternalPdfUriState
+            var appliedDarkMode by remember { mutableStateOf(false) }
 
             LaunchedEffect(isDarkMode) {
-                enableEdgeToEdge(
-                    statusBarStyle = if (isDarkMode) {
-                        SystemBarStyle.dark(Color.Transparent.toArgb())
-                    } else {
-                        SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
-                    },
-                    navigationBarStyle = if (isDarkMode) {
-                        SystemBarStyle.dark(Color.Transparent.toArgb())
-                    } else {
-                        SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
-                    }
-                )
+                if (appliedDarkMode != isDarkMode) {
+                    appliedDarkMode = isDarkMode
+                    enableEdgeToEdge(
+                        statusBarStyle = if (isDarkMode) {
+                            SystemBarStyle.dark(Color.Transparent.toArgb())
+                        } else {
+                            SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+                        },
+                        navigationBarStyle = if (isDarkMode) {
+                            SystemBarStyle.dark(Color.Transparent.toArgb())
+                        } else {
+                            SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+                        }
+                    )
+                }
             }
 
             PaperlyTheme(darkTheme = isDarkMode) {
@@ -168,15 +175,21 @@ fun PaperlyApp(
     val aiSummaryState by viewModel.aiSummaryState.collectAsStateWithLifecycle()
     val proSheetState by viewModel.proSheetState.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
+    val isAdsSdkInitialized by viewModel.isAdsSdkInitialized.collectAsStateWithLifecycle()
 
     val activity = LocalContext.current.findActivity()
     val lifecycleOwner = LocalLifecycleOwner.current
     val snackbarHostState = remember { SnackbarHostState() }
 
     DisposableEffect(lifecycleOwner) {
+        var hasPausedOnce = false
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshBillingOnResume()
+            when (event) {
+                Lifecycle.Event.ON_PAUSE -> hasPausedOnce = true
+                Lifecycle.Event.ON_RESUME -> if (hasPausedOnce) {
+                    viewModel.refreshBillingOnResume()
+                }
+                else -> Unit
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -271,6 +284,7 @@ fun PaperlyApp(
                     currentRoute = activeMainTab,
                     isPro = isPro,
                     showHomeBanner = activeMainTab == PaperlyRoutes.HOME,
+                    isAdsSdkInitialized = isAdsSdkInitialized,
                     onNavigate = { targetRoute ->
                         activeMainTab = targetRoute
                     }
@@ -308,6 +322,14 @@ fun PaperlyApp(
                     val homeSelected = activeMainTab == PaperlyRoutes.HOME
                     val filesSelected = activeMainTab == PaperlyRoutes.FILES
                     val settingsSelected = activeMainTab == PaperlyRoutes.SETTINGS
+
+                    var hasVisitedFiles by rememberSaveable { mutableStateOf(false) }
+                    var hasVisitedSettings by rememberSaveable { mutableStateOf(false) }
+
+                    LaunchedEffect(activeMainTab) {
+                        if (activeMainTab == PaperlyRoutes.FILES) hasVisitedFiles = true
+                        if (activeMainTab == PaperlyRoutes.SETTINGS) hasVisitedSettings = true
+                    }
 
                     val homeAlpha by animateFloatAsState(
                         targetValue = if (homeSelected) 1f else 0f,
@@ -357,6 +379,7 @@ fun PaperlyApp(
                                     navController.navigate(PaperlyRoutes.IMAGE_RESULT)
                                 },
                                 onSeeAllFiles = {
+                                    hasVisitedFiles = true
                                     activeMainTab = PaperlyRoutes.FILES
                                 },
                                 getCachedImageThumbnail = viewModel.imageEngine::getCachedPreview,
@@ -372,35 +395,39 @@ fun PaperlyApp(
                             )
                         }
 
-                        Box(modifier = tabLayerModifier(selected = filesSelected, alpha = filesAlpha)) {
-                            FilesScreen(
-                                records = recentRecords,
-                                viewModel = viewModel,
-                                onOpenViewer = { id ->
-                                    navController.navigate(PaperlyRoutes.pdfViewer(id))
-                                }
-                            )
+                        if (filesSelected || hasVisitedFiles) {
+                            Box(modifier = tabLayerModifier(selected = filesSelected, alpha = filesAlpha)) {
+                                FilesScreen(
+                                    records = recentRecords,
+                                    viewModel = viewModel,
+                                    onOpenViewer = { id ->
+                                        navController.navigate(PaperlyRoutes.pdfViewer(id))
+                                    }
+                                )
+                            }
                         }
 
-                        Box(modifier = tabLayerModifier(selected = settingsSelected, alpha = settingsAlpha)) {
-                            SettingsScreen(
-                                isDarkMode = isDarkMode,
-                                isPro = isPro,
-                                activePlanProductId = activePlanProductId,
-                                isRestoringPurchases = billingState.isRestoring,
-                                debugProOverride = debugProOverride,
-                                defaultCompression = defaultCompression,
-                                savedFileCount = recentRecords.size,
-                                tempCacheSizeBytes = tempCacheSizeBytes,
-                                onToggleDarkMode = viewModel::toggleDarkMode,
-                                onOpenProSheet = viewModel::openProSheet,
-                                onRestorePurchases = viewModel::restorePurchases,
-                                onToggleDebugPro = viewModel::setDebugProOverride,
-                                onSelectCompression = viewModel::setDefaultCompression,
-                                onRefreshCacheSize = viewModel::refreshTempCacheSize,
-                                onClearTempCache = viewModel::clearTempCache,
-                                onClearAllFiles = viewModel::clearAllLocalFiles
-                            )
+                        if (settingsSelected || hasVisitedSettings) {
+                            Box(modifier = tabLayerModifier(selected = settingsSelected, alpha = settingsAlpha)) {
+                                SettingsScreen(
+                                    isDarkMode = isDarkMode,
+                                    isPro = isPro,
+                                    activePlanProductId = activePlanProductId,
+                                    isRestoringPurchases = billingState.isRestoring,
+                                    debugProOverride = debugProOverride,
+                                    defaultCompression = defaultCompression,
+                                    savedFileCount = recentRecords.size,
+                                    tempCacheSizeBytes = tempCacheSizeBytes,
+                                    onToggleDarkMode = viewModel::toggleDarkMode,
+                                    onOpenProSheet = viewModel::openProSheet,
+                                    onRestorePurchases = viewModel::restorePurchases,
+                                    onToggleDebugPro = viewModel::setDebugProOverride,
+                                    onSelectCompression = viewModel::setDefaultCompression,
+                                    onRefreshCacheSize = viewModel::refreshTempCacheSize,
+                                    onClearTempCache = viewModel::clearTempCache,
+                                    onClearAllFiles = viewModel::clearAllLocalFiles
+                                )
+                            }
                         }
                     }
                 }

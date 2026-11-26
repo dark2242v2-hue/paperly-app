@@ -88,6 +88,7 @@ import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.data.model.RecentImageItem
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.SampledDrawableImage
 import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyAmber
@@ -132,142 +133,146 @@ fun HomeScreen(
     modifier: Modifier = Modifier
 ) {
     val haptics = rememberPaperlyHaptics()
-    val pdfToolItems = listOf(
-        HomeToolItem(
-            key = PdfToolType.MERGE.routeArg,
-            titleRes = R.string.tool_merge_title,
-            descRes = R.string.tool_merge_desc,
-            icon = Icons.AutoMirrored.Filled.MergeType,
-            accent = PaperlyIndigo,
-            softBg = PaperlyIndigoTint,
-            onClick = { onToolSelected(PdfToolType.MERGE) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.SPLIT.routeArg,
-            titleRes = R.string.tool_split_title,
-            descRes = R.string.tool_split_desc,
-            icon = Icons.AutoMirrored.Filled.CallSplit,
-            accent = PaperlySky,
-            softBg = PaperlySkySoft,
-            onClick = { onToolSelected(PdfToolType.SPLIT) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.COMPRESS.routeArg,
-            titleRes = R.string.tool_compress_title,
-            descRes = R.string.tool_compress_desc,
-            icon = Icons.Filled.Compress,
-            accent = PaperlyEmerald,
-            softBg = PaperlyEmeraldSoft,
-            onClick = { onToolSelected(PdfToolType.COMPRESS) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.SCAN.routeArg,
-            titleRes = R.string.tool_scan_title,
-            descRes = R.string.tool_scan_desc,
-            icon = Icons.Filled.DocumentScanner,
-            accent = PaperlyAmber,
-            softBg = PaperlyAmberSoft,
-            onClick = { onToolSelected(PdfToolType.SCAN) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.AI_SUMMARIZE.routeArg,
-            titleRes = R.string.tool_ai_title,
-            descRes = R.string.tool_ai_desc,
-            icon = Icons.Filled.AutoAwesome,
-            accent = PaperlyViolet,
-            softBg = PaperlyVioletSoft,
-            badge = "AI",
-            onClick = { onToolSelected(PdfToolType.AI_SUMMARIZE) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.SIGN.routeArg,
-            titleRes = R.string.tool_sign_title,
-            descRes = R.string.tool_sign_desc,
-            icon = Icons.Filled.Draw,
-            accent = PaperlyRose,
-            softBg = PaperlyRoseSoft,
-            onClick = { onToolSelected(PdfToolType.SIGN) }
-        ),
-        HomeToolItem(
-            key = PdfToolType.LOCK.routeArg,
-            titleRes = R.string.tool_lock_title,
-            descRes = R.string.tool_lock_desc,
-            icon = Icons.Filled.Lock,
-            accent = PaperlyEmerald,
-            softBg = PaperlyEmeraldSoft,
-            onClick = { onToolSelected(PdfToolType.LOCK) }
+    val pdfToolItems = remember(onToolSelected) {
+        listOf(
+            HomeToolItem(
+                key = PdfToolType.MERGE.routeArg,
+                titleRes = R.string.tool_merge_title,
+                descRes = R.string.tool_merge_desc,
+                icon = Icons.AutoMirrored.Filled.MergeType,
+                accent = PaperlyIndigo,
+                softBg = PaperlyIndigoTint,
+                onClick = { onToolSelected(PdfToolType.MERGE) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.SPLIT.routeArg,
+                titleRes = R.string.tool_split_title,
+                descRes = R.string.tool_split_desc,
+                icon = Icons.AutoMirrored.Filled.CallSplit,
+                accent = PaperlySky,
+                softBg = PaperlySkySoft,
+                onClick = { onToolSelected(PdfToolType.SPLIT) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.COMPRESS.routeArg,
+                titleRes = R.string.tool_compress_title,
+                descRes = R.string.tool_compress_desc,
+                icon = Icons.Filled.Compress,
+                accent = PaperlyEmerald,
+                softBg = PaperlyEmeraldSoft,
+                onClick = { onToolSelected(PdfToolType.COMPRESS) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.SCAN.routeArg,
+                titleRes = R.string.tool_scan_title,
+                descRes = R.string.tool_scan_desc,
+                icon = Icons.Filled.DocumentScanner,
+                accent = PaperlyAmber,
+                softBg = PaperlyAmberSoft,
+                onClick = { onToolSelected(PdfToolType.SCAN) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.AI_SUMMARIZE.routeArg,
+                titleRes = R.string.tool_ai_title,
+                descRes = R.string.tool_ai_desc,
+                icon = Icons.Filled.AutoAwesome,
+                accent = PaperlyViolet,
+                softBg = PaperlyVioletSoft,
+                badge = "AI",
+                onClick = { onToolSelected(PdfToolType.AI_SUMMARIZE) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.SIGN.routeArg,
+                titleRes = R.string.tool_sign_title,
+                descRes = R.string.tool_sign_desc,
+                icon = Icons.Filled.Draw,
+                accent = PaperlyRose,
+                softBg = PaperlyRoseSoft,
+                onClick = { onToolSelected(PdfToolType.SIGN) }
+            ),
+            HomeToolItem(
+                key = PdfToolType.LOCK.routeArg,
+                titleRes = R.string.tool_lock_title,
+                descRes = R.string.tool_lock_desc,
+                icon = Icons.Filled.Lock,
+                accent = PaperlyEmerald,
+                softBg = PaperlyEmeraldSoft,
+                onClick = { onToolSelected(PdfToolType.LOCK) }
+            )
         )
-    )
+    }
 
-    val imageToolItems = listOf(
-        HomeToolItem(
-            key = ImageToolType.COMPRESS_IMAGE.routeArg,
-            titleRes = R.string.img_tool_compress_title,
-            descRes = R.string.img_tool_compress_desc,
-            icon = Icons.Filled.PhotoSizeSelectLarge,
-            accent = PaperlyEmerald,
-            softBg = PaperlyEmeraldSoft,
-            badge = "KB",
-            onClick = { onImageToolSelected(ImageToolType.COMPRESS_IMAGE) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.CROP_RESIZE.routeArg,
-            titleRes = R.string.img_tool_crop_title,
-            descRes = R.string.img_tool_crop_desc,
-            icon = Icons.Filled.Crop,
-            accent = PaperlySky,
-            softBg = PaperlySkySoft,
-            onClick = { onImageToolSelected(ImageToolType.CROP_RESIZE) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.IMAGE_TO_TEXT.routeArg,
-            titleRes = R.string.img_tool_ocr_title,
-            descRes = R.string.img_tool_ocr_desc,
-            icon = Icons.Filled.TextFields,
-            accent = PaperlyIndigo,
-            softBg = PaperlyIndigoTint,
-            badge = "OCR",
-            onClick = { onImageToolSelected(ImageToolType.IMAGE_TO_TEXT) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.TEXT_TO_IMAGE.routeArg,
-            titleRes = R.string.img_tool_gen_title,
-            descRes = R.string.img_tool_gen_desc,
-            icon = Icons.Filled.AutoAwesome,
-            accent = PaperlyViolet,
-            softBg = PaperlyVioletSoft,
-            badge = "AI",
-            onClick = { onImageToolSelected(ImageToolType.TEXT_TO_IMAGE) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.UPSCALER.routeArg,
-            titleRes = R.string.img_tool_upscale_title,
-            descRes = R.string.img_tool_upscale_desc,
-            icon = Icons.Filled.HighQuality,
-            accent = PaperlyAmber,
-            softBg = PaperlyAmberSoft,
-            badge = "16K",
-            onClick = { onImageToolSelected(ImageToolType.UPSCALER) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.BG_REMOVER.routeArg,
-            titleRes = R.string.img_tool_bg_title,
-            descRes = R.string.img_tool_bg_desc,
-            icon = Icons.Filled.AutoFixHigh,
-            accent = PaperlyRose,
-            softBg = PaperlyRoseSoft,
-            onClick = { onImageToolSelected(ImageToolType.BG_REMOVER) }
-        ),
-        HomeToolItem(
-            key = ImageToolType.PASSPORT_SHEET.routeArg,
-            titleRes = R.string.img_tool_passport_title,
-            descRes = R.string.img_tool_passport_desc,
-            icon = Icons.Filled.Badge,
-            accent = PaperlyIndigo,
-            softBg = PaperlyIndigoTint,
-            onClick = { onImageToolSelected(ImageToolType.PASSPORT_SHEET) }
+    val imageToolItems = remember(onImageToolSelected) {
+        listOf(
+            HomeToolItem(
+                key = ImageToolType.COMPRESS_IMAGE.routeArg,
+                titleRes = R.string.img_tool_compress_title,
+                descRes = R.string.img_tool_compress_desc,
+                icon = Icons.Filled.PhotoSizeSelectLarge,
+                accent = PaperlyEmerald,
+                softBg = PaperlyEmeraldSoft,
+                badge = "KB",
+                onClick = { onImageToolSelected(ImageToolType.COMPRESS_IMAGE) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.CROP_RESIZE.routeArg,
+                titleRes = R.string.img_tool_crop_title,
+                descRes = R.string.img_tool_crop_desc,
+                icon = Icons.Filled.Crop,
+                accent = PaperlySky,
+                softBg = PaperlySkySoft,
+                onClick = { onImageToolSelected(ImageToolType.CROP_RESIZE) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.IMAGE_TO_TEXT.routeArg,
+                titleRes = R.string.img_tool_ocr_title,
+                descRes = R.string.img_tool_ocr_desc,
+                icon = Icons.Filled.TextFields,
+                accent = PaperlyIndigo,
+                softBg = PaperlyIndigoTint,
+                badge = "OCR",
+                onClick = { onImageToolSelected(ImageToolType.IMAGE_TO_TEXT) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.TEXT_TO_IMAGE.routeArg,
+                titleRes = R.string.img_tool_gen_title,
+                descRes = R.string.img_tool_gen_desc,
+                icon = Icons.Filled.AutoAwesome,
+                accent = PaperlyViolet,
+                softBg = PaperlyVioletSoft,
+                badge = "AI",
+                onClick = { onImageToolSelected(ImageToolType.TEXT_TO_IMAGE) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.UPSCALER.routeArg,
+                titleRes = R.string.img_tool_upscale_title,
+                descRes = R.string.img_tool_upscale_desc,
+                icon = Icons.Filled.HighQuality,
+                accent = PaperlyAmber,
+                softBg = PaperlyAmberSoft,
+                badge = "16K",
+                onClick = { onImageToolSelected(ImageToolType.UPSCALER) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.BG_REMOVER.routeArg,
+                titleRes = R.string.img_tool_bg_title,
+                descRes = R.string.img_tool_bg_desc,
+                icon = Icons.Filled.AutoFixHigh,
+                accent = PaperlyRose,
+                softBg = PaperlyRoseSoft,
+                onClick = { onImageToolSelected(ImageToolType.BG_REMOVER) }
+            ),
+            HomeToolItem(
+                key = ImageToolType.PASSPORT_SHEET.routeArg,
+                titleRes = R.string.img_tool_passport_title,
+                descRes = R.string.img_tool_passport_desc,
+                icon = Icons.Filled.Badge,
+                accent = PaperlyIndigo,
+                softBg = PaperlyIndigoTint,
+                onClick = { onImageToolSelected(ImageToolType.PASSPORT_SHEET) }
+            )
         )
-    )
+    }
 
     BoxWithConstraints(
         modifier = modifier.fillMaxSize(),
@@ -498,9 +503,10 @@ fun HomeScreen(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(14.dp)
                                 ) {
-                                    Image(
-                                        painter = painterResource(id = R.drawable.img_empty_documents),
+                                    SampledDrawableImage(
+                                        resId = R.drawable.img_empty_documents,
                                         contentDescription = "Empty documents illustration",
+                                        maxEdgePx = 192,
                                         modifier = Modifier
                                             .size(64.dp)
                                             .clip(RoundedCornerShape(12.dp)),
@@ -610,8 +616,8 @@ fun HomeScreen(
                                 items(recentImages.take(10), key = { it.filePath }) { img ->
                                     RecentImageCard(
                                         item = img,
-                                        cachedThumbnail = getCachedImageThumbnail(img.filePath, 280),
-                                        loadThumbnail = { loadImageThumbnail(img.filePath, 280) },
+                                        cachedThumbnail = getCachedImageThumbnail(img.filePath, 200),
+                                        loadThumbnail = { loadImageThumbnail(img.filePath, 200) },
                                         onClick = {
                                             haptics.lightTap()
                                             onRecentImageSelected(img)

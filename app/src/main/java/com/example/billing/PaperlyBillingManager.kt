@@ -28,7 +28,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.text.NumberFormat
 import java.util.Currency
 import java.util.Locale
@@ -98,6 +101,7 @@ class PaperlyBillingManager(
 
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val connectionMutex = Mutex()
 
     private val _uiState = MutableStateFlow(BillingUiState())
     val uiState: StateFlow<BillingUiState> = _uiState.asStateFlow()
@@ -142,22 +146,30 @@ class PaperlyBillingManager(
         }
     }
 
-    private val billingClient: BillingClient = BillingClient.newBuilder(appContext)
-        .setListener(purchasesUpdatedListener)
-        .enablePendingPurchases(
-            PendingPurchasesParams.newBuilder()
-                .enableOneTimeProducts()
-                .enablePrepaidPlans()
-                .build()
-        )
-        .enableAutoServiceReconnection()
-        .build()
+    private val billingClientDelegate = lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        BillingClient.newBuilder(appContext)
+            .setListener(purchasesUpdatedListener)
+            .enablePendingPurchases(
+                PendingPurchasesParams.newBuilder()
+                    .enableOneTimeProducts()
+                    .enablePrepaidPlans()
+                    .build()
+            )
+            .enableAutoServiceReconnection()
+            .build()
+    }
+    private val billingClient: BillingClient
+        get() = billingClientDelegate.value
 
     fun initialize() {
         scope.launch {
-            if (ensureConnected()) {
-                queryProductDetails()
-                refreshActiveSubscriptions(userInitiatedRestore = false)
+            runCatching {
+                if (ensureConnected()) {
+                    queryProductDetails()
+                    refreshActiveSubscriptions(userInitiatedRestore = false)
+                }
+            }.onFailure { error ->
+                Log.w(TAG, "Billing initialize failed cleanly", error)
             }
         }
     }
@@ -167,11 +179,15 @@ class PaperlyBillingManager(
     }
 
     suspend fun refreshOnResume() {
-        if (ensureConnected()) {
-            if (!_uiState.value.monthlyPlan.isLoadedFromPlay || !_uiState.value.yearlyPlan.isLoadedFromPlay) {
-                queryProductDetails()
+        runCatching {
+            if (ensureConnected()) {
+                if (!_uiState.value.monthlyPlan.isLoadedFromPlay || !_uiState.value.yearlyPlan.isLoadedFromPlay) {
+                    queryProductDetails()
+                }
+                refreshActiveSubscriptions(userInitiatedRestore = false)
             }
-            refreshActiveSubscriptions(userInitiatedRestore = false)
+        }.onFailure { error ->
+            Log.w(TAG, "Billing refreshOnResume failed cleanly", error)
         }
     }
 
@@ -247,12 +263,15 @@ class PaperlyBillingManager(
                 .setProductDetailsParamsList(listOf(productDetailsParams))
                 .build()
 
-            val launchResult = billingClient.launchBillingFlow(activity, billingFlowParams)
-            if (launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+            val launchResult = runCatching {
+                billingClient.launchBillingFlow(activity, billingFlowParams)
+            }.getOrNull()
+            if (launchResult == null || launchResult.responseCode != BillingClient.BillingResponseCode.OK) {
+                val msg = launchResult?.debugMessage ?: "Play Billing unavailable"
                 _uiState.update {
                     it.copy(
                         isPurchasing = false,
-                        statusMessage = "Unable to start Google Play checkout (${launchResult.debugMessage})."
+                        statusMessage = "Unable to start Google Play checkout ($msg)."
                     )
                 }
             }
@@ -260,29 +279,47 @@ class PaperlyBillingManager(
     }
 
     fun destroy() {
-        runCatching { billingClient.endConnection() }
+        if (billingClientDelegate.isInitialized()) {
+            runCatching { billingClient.endConnection() }
+        }
         scope.cancel()
     }
 
-    private suspend fun ensureConnected(): Boolean {
-        if (billingClient.isReady) {
-            _uiState.update { it.copy(isConnected = true) }
-            return true
+    private suspend fun ensureConnected(): Boolean = connectionMutex.withLock {
+        val client = runCatching { billingClient }.getOrElse { error ->
+            Log.w(TAG, "BillingClient creation failed", error)
+            return@withLock false
         }
-        return suspendCancellableCoroutine { cont ->
-            billingClient.startConnection(object : BillingClientStateListener {
-                override fun onBillingSetupFinished(billingResult: BillingResult) {
-                    val ready = billingResult.responseCode == BillingClient.BillingResponseCode.OK
-                    _uiState.update { it.copy(isConnected = ready) }
-                    if (cont.isActive) cont.resume(ready)
-                }
+        if (client.isReady) {
+            _uiState.update { it.copy(isConnected = true) }
+            return@withLock true
+        }
+        val connected = withTimeoutOrNull(8_000L) {
+            suspendCancellableCoroutine { cont ->
+                runCatching {
+                    client.startConnection(object : BillingClientStateListener {
+                        override fun onBillingSetupFinished(billingResult: BillingResult) {
+                            val ready = billingResult.responseCode == BillingClient.BillingResponseCode.OK
+                            _uiState.update { it.copy(isConnected = ready) }
+                            if (cont.isActive) cont.resume(ready)
+                        }
 
-                override fun onBillingServiceDisconnected() {
+                        override fun onBillingServiceDisconnected() {
+                            _uiState.update { it.copy(isConnected = false) }
+                            if (cont.isActive) cont.resume(false)
+                        }
+                    })
+                }.onFailure { error ->
+                    Log.w(TAG, "Billing startConnection failed cleanly", error)
                     _uiState.update { it.copy(isConnected = false) }
                     if (cont.isActive) cont.resume(false)
                 }
-            })
+            }
+        } ?: false
+        if (!connected) {
+            _uiState.update { it.copy(isConnected = false) }
         }
+        connected
     }
 
     private suspend fun queryProductDetails() {
@@ -298,10 +335,10 @@ class PaperlyBillingManager(
             .build()
 
         val result = withContext(Dispatchers.IO) {
-            billingClient.queryProductDetails(params)
+            runCatching { billingClient.queryProductDetails(params) }.getOrNull()
         }
 
-        if (result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
+        if (result != null && result.billingResult.responseCode == BillingClient.BillingResponseCode.OK) {
             val detailsList = result.productDetailsList.orEmpty()
             val monthlyDetails = detailsList.firstOrNull { it.productId == PRODUCT_MONTHLY }
             val yearlyDetails = detailsList.firstOrNull { it.productId == PRODUCT_YEARLY }
@@ -320,7 +357,7 @@ class PaperlyBillingManager(
                 )
             }
         } else {
-            Log.w(TAG, "queryProductDetails failed: ${result.billingResult.debugMessage}")
+            Log.w(TAG, "queryProductDetails failed: ${result?.billingResult?.debugMessage ?: "error"}")
             _uiState.update { it.copy(isLoadingProducts = false) }
         }
     }
@@ -433,7 +470,8 @@ class PaperlyBillingManager(
     )
 
     private suspend fun refreshActiveSubscriptions(userInitiatedRestore: Boolean): Boolean {
-        if (!SecurityGuard.isAppTrusted(appContext)) {
+        val trusted = withContext(Dispatchers.IO) { SecurityGuard.isAppTrusted(appContext) }
+        if (!trusted) {
             onEntitlementUpdated(false, null)
             return false
         }
@@ -443,11 +481,11 @@ class PaperlyBillingManager(
             .build()
 
         val result = withContext(Dispatchers.IO) {
-            billingClient.queryPurchasesAsync(params)
+            runCatching { billingClient.queryPurchasesAsync(params) }.getOrNull()
         }
 
-        if (result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) {
-            Log.w(TAG, "queryPurchasesAsync failed: ${result.billingResult.debugMessage}")
+        if (result == null || result.billingResult.responseCode != BillingClient.BillingResponseCode.OK) {
+            Log.w(TAG, "queryPurchasesAsync failed: ${result?.billingResult?.debugMessage ?: "error"}")
             return false
         }
 
@@ -464,7 +502,8 @@ class PaperlyBillingManager(
     }
 
     private suspend fun handlePurchasedList(purchases: List<Purchase>): PurchaseVerificationOutcome {
-        if (!SecurityGuard.isAppTrusted(appContext)) {
+        val trusted = withContext(Dispatchers.IO) { SecurityGuard.isAppTrusted(appContext) }
+        if (!trusted) {
             return PurchaseVerificationOutcome(
                 activeProductId = null,
                 failureMessage = "Pro verification requires the official Google Play release."
@@ -487,12 +526,12 @@ class PaperlyBillingManager(
                             .setPurchaseToken(purchase.purchaseToken)
                             .build()
                         val ackResult = withContext(Dispatchers.IO) {
-                            billingClient.acknowledgePurchase(ackParams)
+                            runCatching { billingClient.acknowledgePurchase(ackParams) }.getOrNull()
                         }
-                        if (ackResult.responseCode == BillingClient.BillingResponseCode.OK) {
+                        if (ackResult != null && ackResult.responseCode == BillingClient.BillingResponseCode.OK) {
                             true
                         } else {
-                            Log.w(TAG, "Failed to acknowledge purchase: ${ackResult.debugMessage}")
+                            Log.w(TAG, "Failed to acknowledge purchase: ${ackResult?.debugMessage ?: "error"}")
                             lastError = "Subscription could not be acknowledged yet. Please tap Restore Purchases."
                             false
                         }

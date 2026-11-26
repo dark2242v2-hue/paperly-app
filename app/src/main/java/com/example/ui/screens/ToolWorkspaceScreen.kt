@@ -522,12 +522,16 @@ fun ToolWorkspaceScreen(
                                     },
                                     onShareSummary = { summaryText ->
                                         haptics.lightTap()
-                                        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                            type = "text/plain"
-                                            putExtra(Intent.EXTRA_SUBJECT, "Paperly AI Summary")
-                                            putExtra(Intent.EXTRA_TEXT, stripMarkdownForPlainText(summaryText))
+                                        runCatching {
+                                            val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                                type = "text/plain"
+                                                putExtra(Intent.EXTRA_SUBJECT, "Paperly AI Summary")
+                                                putExtra(Intent.EXTRA_TEXT, stripMarkdownForPlainText(summaryText))
+                                            }
+                                            context.startActivity(Intent.createChooser(shareIntent, "Share summary"))
+                                        }.onFailure {
+                                            viewModel.postMessage("Unable to share summary right now.")
                                         }
-                                        context.startActivity(Intent.createChooser(shareIntent, "Share summary"))
                                     },
                                     onExportPdf = { fileName, summaryText ->
                                         haptics.lightTap()
@@ -1610,8 +1614,8 @@ private fun SignControlsCard(
     onCanvasSizeChanged: (IntSize) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
-    val signaturePreviewBmp = remember(strokes.toList(), canvasSize) {
-        renderSignatureBitmap(strokes, canvasSize)
+    val signaturePreviewBmp = remember(strokes.size, canvasSize) {
+        if (strokes.isEmpty()) null else renderSignatureBitmap(strokes, canvasSize)
     }
 
     Card(

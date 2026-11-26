@@ -292,13 +292,17 @@ fun ImageWorkspaceScreen(
             onShare = {
                 haptics.lightTap()
                 val res = processedResult!!
-                val shareUri = viewModel.imageEngine.getShareUri(res.filePath)
-                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                    type = res.format.mimeType
-                    putExtra(Intent.EXTRA_STREAM, shareUri)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                runCatching {
+                    val shareUri = viewModel.imageEngine.getShareUri(res.filePath)
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = res.format.mimeType
+                        putExtra(Intent.EXTRA_STREAM, shareUri)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    context.startActivity(Intent.createChooser(shareIntent, "Share passport photo"))
+                }.onFailure {
+                    viewModel.postMessage("Unable to share image right now.")
                 }
-                context.startActivity(Intent.createChooser(shareIntent, "Share passport photo"))
             },
             onSaveToGallery = {
                 haptics.confirmSuccess()
@@ -460,6 +464,33 @@ fun ImageWorkspaceScreen(
                             onSnapCamera = { launchCameraForOcr() }
                         )
                     }
+                    if (state.pickedImage == null && state.processing.isProcessing) {
+                        item {
+                            Card(
+                                shape = RoundedCornerShape(16.dp),
+                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                ) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(22.dp),
+                                        strokeWidth = 2.5.dp
+                                    )
+                                    Text(
+                                        text = state.processing.message.ifBlank { "Preparing image..." },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
 
                 when (tool) {
@@ -502,11 +533,15 @@ fun ImageWorkspaceScreen(
                                 },
                                 onShareText = { text ->
                                     haptics.lightTap()
-                                    val sendIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "text/plain"
-                                        putExtra(Intent.EXTRA_TEXT, text)
+                                    runCatching {
+                                        val sendIntent = Intent(Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(Intent.EXTRA_TEXT, text)
+                                        }
+                                        context.startActivity(Intent.createChooser(sendIntent, "Share extracted text"))
+                                    }.onFailure {
+                                        viewModel.postMessage("Unable to share text right now.")
                                     }
-                                    context.startActivity(Intent.createChooser(sendIntent, "Share extracted text"))
                                 },
                                 onSaveAsPdf = { text ->
                                     haptics.lightTap()

@@ -54,6 +54,7 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
@@ -75,19 +76,24 @@ class ImageEngine(private val context: Context) {
         }
     }
 
+    private val latestPreviewKeyByTarget = ConcurrentHashMap<String, String>()
+
     fun getCachedPreview(filePath: String, maxEdge: Int): Bitmap? {
-        val mod = runCatching { File(filePath).lastModified() }.getOrDefault(0L)
-        return previewCache.get("$filePath|$mod|$maxEdge")?.takeIf { !it.isRecycled }
+        val key = latestPreviewKeyByTarget["$filePath|$maxEdge"] ?: return null
+        return previewCache.get(key)?.takeIf { !it.isRecycled }
     }
 
     suspend fun decodePreviewBitmap(filePath: String, maxEdge: Int = 1400): Bitmap? =
         withContext(Dispatchers.IO) {
             val file = File(filePath)
             if (!file.exists()) return@withContext null
+            val targetKey = "$filePath|$maxEdge"
             val key = "$filePath|${file.lastModified()}|$maxEdge"
+            latestPreviewKeyByTarget[targetKey] = key
             previewCache.get(key)?.takeIf { !it.isRecycled }?.let { return@withContext it }
             val bmp = decodeSampledFileBitmap(file, maxEdge) ?: return@withContext null
             previewCache.put(key, bmp)
+            latestPreviewKeyByTarget[targetKey] = key
             bmp
         }
 
