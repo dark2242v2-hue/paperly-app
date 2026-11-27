@@ -79,6 +79,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -103,22 +104,26 @@ private enum class DragCorner { NONE, MOVE, TL, TR, BL, BR }
 
 @Composable
 fun TransparencyCheckerboardCanvas(modifier: Modifier = Modifier) {
-    Canvas(modifier = modifier) {
-        val cell = 14.dp.toPx().coerceAtLeast(8f)
-        val cols = (size.width / cell).toInt() + 1
-        val rows = (size.height / cell).toInt() + 1
-        val light = Color(0xFFF8FAFC)
-        val gray = Color(0xFFE2E8F0)
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val color = if ((r + c) % 2 == 0) light else gray
-                drawRect(
-                    color = color,
-                    topLeft = Offset(c * cell, r * cell),
-                    size = Size(cell + 0.5f, cell + 0.5f)
-                )
-            }
+    val density = LocalDensity.current
+    val cellPx = remember(density) {
+        with(density) { 14.dp.toPx().roundToInt().coerceAtLeast(8) }
+    }
+    val tilePaint = remember(cellPx) {
+        val tileSize = cellPx * 2
+        val tileBitmap = Bitmap.createBitmap(tileSize, tileSize, Bitmap.Config.ARGB_8888)
+        val c = AndroidCanvas(tileBitmap)
+        val lightPaint = AndroidPaint().apply { color = AndroidColor.parseColor("#F8FAFC") }
+        val grayPaint = AndroidPaint().apply { color = AndroidColor.parseColor("#E2E8F0") }
+        c.drawRect(0f, 0f, cellPx.toFloat(), cellPx.toFloat(), lightPaint)
+        c.drawRect(cellPx.toFloat(), cellPx.toFloat(), tileSize.toFloat(), tileSize.toFloat(), lightPaint)
+        c.drawRect(cellPx.toFloat(), 0f, tileSize.toFloat(), cellPx.toFloat(), grayPaint)
+        c.drawRect(0f, cellPx.toFloat(), cellPx.toFloat(), tileSize.toFloat(), grayPaint)
+        AndroidPaint().apply {
+            shader = BitmapShader(tileBitmap, Shader.TileMode.REPEAT, Shader.TileMode.REPEAT)
         }
+    }
+    Canvas(modifier = modifier) {
+        drawContext.canvas.nativeCanvas.drawRect(0f, 0f, size.width, size.height, tilePaint)
     }
 }
 
@@ -517,6 +522,30 @@ fun BgTouchUpPreview(
                     )
                 }
 
+                if (cutoutBitmap == null) {
+                    ShimmerBox(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer { alpha = if (bmp != null) 0.52f else 1f },
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.65f),
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 10.dp)
+                    ) {
+                        Text(
+                            text = "Isolating subject...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+
                 // Touch-up gesture overlay (only active when cutout is ready)
                 if (cutoutBitmap != null) {
                     Canvas(
@@ -668,6 +697,11 @@ fun PassportFramingPreview(
                         dstSize = IntSize(drawW.roundToInt().coerceAtLeast(1), drawH.roundToInt().coerceAtLeast(1))
                     )
                 }
+            } else {
+                ShimmerBox(
+                    modifier = Modifier.fillMaxSize(),
+                    shape = RoundedCornerShape(12.dp)
+                )
             }
         }
     }
@@ -721,6 +755,11 @@ fun SplitBeforeAfterComparisonPreview(
                                 scaleX = s
                                 scaleY = s
                             }
+                    )
+                } else {
+                    ShimmerBox(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(14.dp)
                     )
                 }
 

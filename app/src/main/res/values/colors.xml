@@ -7,4 +7,6 @@
     <color name="teal_700">#FF018786</color>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    <color name="paperly_launch_indigo">#FF5B46F6</color>
+    <color name="paperly_launch_dark">#FF121212</color>
 </resources>

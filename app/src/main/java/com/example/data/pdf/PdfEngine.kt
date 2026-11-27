@@ -127,43 +127,62 @@ class PdfEngine(private val context: Context) {
         )
     }
 
+    fun peekExternalDisplayName(uri: Uri): String? = resolveDisplayName(uri)
+
     suspend fun importExternalPdfRecord(uri: Uri): PdfRecordEntity = withContext(Dispatchers.IO) {
-        ensurePdfBoxInit()
         val displayName = resolveDisplayName(uri) ?: "Shared_Document.pdf"
         val cleanName = ensurePdfExtension(sanitizeFileName(displayName))
         val outFile = uniqueOutputFile(cleanName)
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(outFile).use { output ->
-                input.copyTo(output)
+        try {
+            val openedStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+                ?: if (uri.scheme.equals("file", ignoreCase = true)) {
+                    uri.path?.let { path -> File(path).takeIf { it.exists() && it.canRead() }?.inputStream() }
+                } else {
+                    null
+                }
+                ?: throw IllegalStateException("Unable to read opened PDF file.")
+
+            openedStream.use { input ->
+                FileOutputStream(outFile).use { output ->
+                    input.copyTo(output)
+                }
             }
-        } ?: throw IllegalStateException("Unable to read opened PDF file.")
 
-        val pageCount = countPages(outFile)
-        if (pageCount > 0) {
-            return@withContext PdfRecordEntity(
-                displayName = outFile.name,
-                filePath = outFile.absolutePath,
-                pageCount = pageCount,
-                sizeBytes = outFile.length(),
-                originalSizeBytes = null,
-                operationTag = "Opened"
-            )
+            if (!outFile.exists() || outFile.length() <= 0L) {
+                throw IllegalStateException("Opened PDF file is empty.")
+            }
+
+            val pageCount = countPages(outFile)
+            if (pageCount > 0) {
+                return@withContext PdfRecordEntity(
+                    displayName = outFile.name,
+                    filePath = outFile.absolutePath,
+                    pageCount = pageCount,
+                    sizeBytes = outFile.length(),
+                    originalSizeBytes = null,
+                    operationTag = "Opened"
+                )
+            }
+
+            ensurePdfBoxInit()
+            if (requiresPasswordSync(outFile)) {
+                return@withContext PdfRecordEntity(
+                    displayName = outFile.name,
+                    filePath = outFile.absolutePath,
+                    pageCount = 0,
+                    sizeBytes = outFile.length(),
+                    originalSizeBytes = null,
+                    operationTag = "Locked"
+                )
+            }
+
+            outFile.delete()
+            throw IllegalStateException("Opened file is not a valid PDF.")
+        } catch (t: Throwable) {
+            runCatching { if (outFile.exists()) outFile.delete() }
+            throw t
         }
-
-        if (requiresPasswordSync(outFile)) {
-            return@withContext PdfRecordEntity(
-                displayName = outFile.name,
-                filePath = outFile.absolutePath,
-                pageCount = 0,
-                sizeBytes = outFile.length(),
-                originalSizeBytes = null,
-                operationTag = "Locked"
-            )
-        }
-
-        outFile.delete()
-        throw IllegalStateException("Opened file is not a valid PDF.")
     }
 
     suspend fun requiresPassword(filePath: String): Boolean = withContext(Dispatchers.IO) {
@@ -1162,15 +1181,20 @@ class PdfEngine(private val context: Context) {
     }
 
     private fun resolveDisplayName(uri: Uri): String? {
-        if (uri.scheme == "content") {
-            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
-                if (cursor.moveToFirst()) {
-                    val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0) return cursor.getString(idx)
+        if (uri.scheme.equals("content", ignoreCase = true)) {
+            val queried = runCatching {
+                context.contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                        if (idx >= 0) cursor.getString(idx) else null
+                    } else {
+                        null
+                    }
                 }
-            }
+            }.getOrNull()
+            if (!queried.isNullOrBlank()) return queried
         }
-        return uri.lastPathSegment?.substringAfterLast('/')
+        return runCatching { uri.lastPathSegment?.substringAfterLast('/') }.getOrNull()
     }
 
     private fun sanitizeFileName(raw: String): String {

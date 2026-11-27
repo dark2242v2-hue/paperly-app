@@ -139,6 +139,9 @@ import com.example.ui.components.CustomColorPickerDialog
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.InteractiveCropPreview
 import com.example.ui.components.PassportFramingPreview
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerPreviewCard
+import com.example.ui.components.ShimmerTextLine
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.components.rememberPaperlyHaptics
@@ -243,7 +246,11 @@ fun ImageWorkspaceScreen(
         ImageToolType.CROP_RESIZE -> "Save Cropped & Resized"
         ImageToolType.IMAGE_TO_TEXT -> ""
         ImageToolType.TEXT_TO_IMAGE -> "Generate AI Image"
-        ImageToolType.UPSCALER -> "Upscale to ${state.upscaleTarget.label}"
+        ImageToolType.UPSCALER -> if (state.upscaleTarget == UpscaleTarget.HD_2X) {
+            "Upscale 2x HD (Free)"
+        } else {
+            "Upscale to ${state.upscaleTarget.label}"
+        }
         ImageToolType.BG_REMOVER -> "Export Cutout"
         ImageToolType.PASSPORT_SHEET -> if (state.passportCopyCount <= 1) {
             "Create Single Passport Photo"
@@ -466,28 +473,17 @@ fun ImageWorkspaceScreen(
                     }
                     if (state.pickedImage == null && state.processing.isProcessing) {
                         item {
-                            Card(
-                                shape = RoundedCornerShape(16.dp),
-                                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-                            ) {
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(22.dp),
-                                        strokeWidth = 2.5.dp
-                                    )
-                                    Text(
-                                        text = state.processing.message.ifBlank { "Preparing image..." },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                ShimmerPreviewCard(
+                                    previewHeight = 190.dp,
+                                    modifier = Modifier.testTag("image_import_shimmer_card")
+                                )
+                                Text(
+                                    text = state.processing.message.ifBlank { "Preparing image..." },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(horizontal = 4.dp)
+                                )
                             }
                         }
                     }
@@ -508,12 +504,19 @@ fun ImageWorkspaceScreen(
                     }
 
                     ImageToolType.CROP_RESIZE -> {
-                        if (state.pickedImage != null && state.previewBitmap != null) {
+                        if (state.pickedImage != null) {
                             item {
-                                CropAndResizeWorkspaceCard(
-                                    state = state,
-                                    viewModel = viewModel
-                                )
+                                if (state.previewBitmap != null) {
+                                    CropAndResizeWorkspaceCard(
+                                        state = state,
+                                        viewModel = viewModel
+                                    )
+                                } else {
+                                    ShimmerPreviewCard(
+                                        previewHeight = 240.dp,
+                                        modifier = Modifier.testTag("crop_preview_shimmer")
+                                    )
+                                }
                             }
                         }
                     }
@@ -739,7 +742,12 @@ private fun PassportPreviewConfirmDialog(
                                     .clip(RoundedCornerShape(8.dp))
                             )
                         } else {
-                            CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
+                            ShimmerBox(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(8.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            )
                         }
                     }
                 }
@@ -902,7 +910,8 @@ private fun ImageCompressionControlsCard(
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        state.previewBitmap?.let { bmp ->
+        val bmp = state.previewBitmap
+        if (bmp != null) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -919,6 +928,8 @@ private fun ImageCompressionControlsCard(
                         .padding(10.dp)
                 )
             }
+        } else {
+            ShimmerPreviewCard(previewHeight = 180.dp)
         }
 
         Card(
@@ -1197,23 +1208,34 @@ private fun OcrWorkspaceCard(
             Card(
                 shape = RoundedCornerShape(18.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                modifier = Modifier.testTag("ocr_scanning_shimmer")
             ) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(20.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(14.dp)
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(26.dp), strokeWidth = 2.5.dp)
-                    Column {
-                        Text("Recognizing Text...", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "Running Google ML Kit Text Recognition locally",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.5.dp)
+                        Column {
+                            Text("Recognizing Text...", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                "Running Google ML Kit Text Recognition locally",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        ShimmerTextLine(widthFraction = 0.94f, height = 12.dp)
+                        ShimmerTextLine(widthFraction = 0.86f, height = 12.dp)
+                        ShimmerTextLine(widthFraction = 0.72f, height = 12.dp)
+                        ShimmerTextLine(widthFraction = 0.56f, height = 12.dp)
                     }
                 }
             }
@@ -1487,10 +1509,11 @@ private fun UpscalerWorkspaceCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Free upscales left: $credits",
+                        text = "2x HD is free • Ultra/16K credits left: $credits",
                         style = MaterialTheme.typography.labelLarge,
                         color = PaperlyIndigo,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f)
                     )
                     Surface(
                         shape = CircleShape,
@@ -1509,7 +1532,8 @@ private fun UpscalerWorkspaceCard(
             }
         }
 
-        state.previewBitmap?.let { bmp ->
+        val bmp = state.previewBitmap
+        if (bmp != null) {
             Surface(
                 shape = RoundedCornerShape(16.dp),
                 color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -1526,6 +1550,8 @@ private fun UpscalerWorkspaceCard(
                         .padding(10.dp)
                 )
             }
+        } else {
+            ShimmerPreviewCard(previewHeight = 180.dp)
         }
 
         Card(
@@ -1544,6 +1570,7 @@ private fun UpscalerWorkspaceCard(
 
                 UpscaleTarget.entries.forEach { target ->
                     val selected = state.upscaleTarget == target
+                    val isFreeTarget = target == UpscaleTarget.HD_2X
                     val desiredEdge = when (target) {
                         UpscaleTarget.HD_2X -> min(target.maxEdgePx, (srcMax * 2))
                         UpscaleTarget.ULTRA_4X -> min(target.maxEdgePx, (srcMax * 4))
@@ -1556,10 +1583,37 @@ private fun UpscalerWorkspaceCard(
                     AnimatedSelectableCard(
                         selected = selected,
                         onClick = { onTargetSelected(target) },
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("upscale_target_${target.name.lowercase()}")
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(target.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(target.label, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (isFreeTarget) {
+                                        PaperlyEmerald.copy(alpha = 0.14f)
+                                    } else {
+                                        PaperlyIndigo.copy(alpha = 0.12f)
+                                    }
+                                ) {
+                                    Text(
+                                        text = when {
+                                            isFreeTarget -> "Free"
+                                            isPro -> "Pro"
+                                            else -> "Pro / Credit"
+                                        },
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = if (isFreeTarget) PaperlyEmerald else PaperlyIndigo,
+                                        modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
                             Text(
                                 text = "Up to ${outW}×${outH} px (memory-safe multi-pass HD)",
                                 style = MaterialTheme.typography.bodySmall,

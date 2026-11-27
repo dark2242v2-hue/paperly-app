@@ -12,6 +12,7 @@ import android.net.Uri
 import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.Button as AndroidButton
 import android.widget.ImageView
 import android.widget.TextView
@@ -159,9 +160,11 @@ import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyIndigo
 import com.example.ui.theme.PaperlyViolet
 import com.example.ui.viewmodel.ProSheetUiState
+import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
 import com.google.android.gms.ads.AdSize
 import com.google.android.gms.ads.AdView
+import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.nativead.NativeAd
 import com.google.android.gms.ads.nativead.NativeAdView
 
@@ -203,8 +206,9 @@ fun SampledDrawableImage(
             contentScale = contentScale
         )
     } else {
-        Box(
-            modifier = modifier.background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+        ShimmerBox(
+            modifier = modifier,
+            shape = androidx.compose.ui.graphics.RectangleShape
         )
     }
 }
@@ -515,21 +519,17 @@ fun PaperlyBottomBarWithBanner(
             .background(MaterialTheme.colorScheme.surface)
     ) {
         // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
-        AnimatedVisibility(
-            visible = showHomeBanner && !isPro,
-            enter = EnterTransition.None,
-            exit = ExitTransition.None
-        ) {
-            Column {
-                HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                if (isAdsSdkInitialized && bannerMountAllowed) {
-                    AnchoredAdaptiveBannerSlot(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
-                            .testTag("home_adaptive_banner_ad")
-                    )
-                } else {
+        if (!isPro) {
+            if (isAdsSdkInitialized && bannerMountAllowed) {
+                AnchoredAdaptiveBannerSlot(
+                    isVisible = showHomeBanner,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("home_adaptive_banner_ad")
+                )
+            } else if (showHomeBanner) {
+                Column {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -589,13 +589,17 @@ fun PaperlyBottomBarWithBanner(
 
 @Composable
 private fun AnchoredAdaptiveBannerSlot(
+    isVisible: Boolean,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
+    var bannerFailed by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
-        modifier = modifier,
+        modifier = modifier.then(
+            if (isVisible && !bannerFailed) Modifier else Modifier.height(0.dp)
+        ),
         contentAlignment = Alignment.Center
     ) {
         val adWidthDp = maxWidth.value.toInt().coerceAtLeast(320)
@@ -603,8 +607,23 @@ private fun AnchoredAdaptiveBannerSlot(
             runCatching {
                 val adSize = AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(context, adWidthDp)
                 AdView(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.WRAP_CONTENT
+                    )
+                    setBackgroundColor(AndroidColor.TRANSPARENT)
                     adUnitId = AdUnitIds.bannerAdUnitId
                     setAdSize(adSize)
+                    adListener = object : AdListener() {
+                        override fun onAdLoaded() {
+                            bannerFailed = false
+                        }
+
+                        override fun onAdFailedToLoad(error: LoadAdError) {
+                            Log.w("AnchoredAdaptiveBanner", "Banner failed to load: ${error.message}")
+                            bannerFailed = true
+                        }
+                    }
                     loadAd(AdRequest.Builder().build())
                 }
             }.onFailure { error ->
@@ -613,10 +632,18 @@ private fun AnchoredAdaptiveBannerSlot(
         }
 
         if (adView != null) {
+            LaunchedEffect(adView, isVisible, bannerFailed) {
+                runCatching {
+                    val active = isVisible && !bannerFailed
+                    adView.visibility = if (active) View.VISIBLE else View.GONE
+                    if (active) adView.resume() else adView.pause()
+                }
+            }
+
             DisposableEffect(adView, lifecycleOwner) {
                 val observer = LifecycleEventObserver { _, event ->
                     when (event) {
-                        Lifecycle.Event.ON_RESUME -> runCatching { adView.resume() }
+                        Lifecycle.Event.ON_RESUME -> if (isVisible && !bannerFailed) runCatching { adView.resume() }
                         Lifecycle.Event.ON_PAUSE -> runCatching { adView.pause() }
                         else -> Unit
                     }
@@ -628,11 +655,18 @@ private fun AnchoredAdaptiveBannerSlot(
                 }
             }
 
-            key(adView) {
-                AndroidView(
-                    factory = { adView },
-                    modifier = Modifier.fillMaxWidth()
-                )
+            Column(modifier = Modifier.fillMaxWidth()) {
+                if (isVisible && !bannerFailed) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                }
+                key(adView) {
+                    AndroidView(
+                        factory = { adView },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                    )
+                }
             }
         }
     }
@@ -781,7 +815,7 @@ fun PaperlyProSheet(
         state.triggeredByTool == PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
         state.triggeredByTool == PdfToolType.SIGN -> "Unlock E-Sign PDF"
         state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE -> "Unlock AI Text to Image"
-        state.triggeredByImageTool == ImageToolType.UPSCALER -> "Unlock AI Image Upscaler"
+        state.triggeredByImageTool == ImageToolType.UPSCALER -> "Unlock Ultra 4x–16K Upscaler"
         else -> null
     }
 
@@ -862,7 +896,7 @@ fun PaperlyProSheet(
 
             listOf(
                 "Zero banner, native, or rewarded video ads",
-                "Unlimited AI Summarize, Text-to-Image, Upscaler & E-Sign",
+                "Unlimited AI Summarize, Text-to-Image, Ultra 4x–16K Upscaler & E-Sign",
                 "100% private on-device PDF & image processing"
             ).forEach { perk ->
                 Row(
@@ -1128,7 +1162,7 @@ fun PaperlyProSheet(
                                 state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE ->
                                     "Watch a short video to unlock 1 AI image free"
                                 state.triggeredByImageTool == ImageToolType.UPSCALER ->
-                                    "Watch a short video to unlock 1 upscale free"
+                                    "Watch a short video to unlock 1 Ultra/16K upscale"
                                 else ->
                                     "Watch a short video to unlock this session free"
                             }

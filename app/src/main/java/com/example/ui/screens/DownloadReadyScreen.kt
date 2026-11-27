@@ -82,6 +82,8 @@ import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
 import com.example.data.local.PdfRecordEntity
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerFileRowCard
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
@@ -132,7 +134,7 @@ fun DownloadReadyScreen(
         isLoading = false
         if (loaded != null) {
             haptics.confirmSuccess()
-            delay(240L)
+            delay(60L)
             thumbnail = viewModel.pdfEngine.renderPageThumbnail(loaded.filePath, pageIndex = 0, maxWidth = 560)
         }
     }
@@ -179,9 +181,26 @@ fun DownloadReadyScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
-                contentAlignment = Alignment.Center
+                contentAlignment = Alignment.TopCenter
             ) {
-                CircularProgressIndicator()
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 600.dp)
+                        .padding(horizontal = 20.dp, vertical = 18.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    ShimmerBox(modifier = Modifier.size(56.dp), shape = CircleShape)
+                    ShimmerBox(modifier = Modifier.size(width = 180.dp, height = 22.dp), shape = CircleShape)
+                    ShimmerFileRowCard()
+                    ShimmerBox(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(52.dp),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                }
             }
         } else {
             val current = record
@@ -286,7 +305,10 @@ fun DownloadReadyScreen(
                                                 modifier = Modifier.size(30.dp)
                                             )
                                         } else {
-                                            Text("PDF", style = MaterialTheme.typography.labelLarge)
+                                            ShimmerBox(
+                                                modifier = Modifier.fillMaxSize(),
+                                                shape = RoundedCornerShape(10.dp)
+                                            )
                                         }
                                     }
 

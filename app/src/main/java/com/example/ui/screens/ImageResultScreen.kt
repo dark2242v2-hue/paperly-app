@@ -68,6 +68,7 @@ import com.example.core.formatSavedSummary
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ProcessedImageResult
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.ShimmerBox
 import com.example.ui.components.SplitBeforeAfterComparisonPreview
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.TransparencyCheckerboardCanvas
@@ -95,7 +96,7 @@ fun ImageResultScreen(
         if (result != null) {
             haptics.confirmSuccess()
         }
-        delay(240L)
+        delay(60L)
         previewBitmap = result?.filePath?.let { path ->
             viewModel.imageEngine.decodePreviewBitmap(path, maxEdge = 1600)
         }
@@ -228,7 +229,8 @@ fun ImageResultScreen(
                                     if (result.format == ImageOutputFormat.PNG) {
                                         TransparencyCheckerboardCanvas(modifier = Modifier.fillMaxSize())
                                     }
-                                    previewBitmap?.let { bmp ->
+                                    val bmp = previewBitmap
+                                    if (bmp != null) {
                                         Image(
                                             bitmap = bmp.asImageBitmap(),
                                             contentDescription = "Processed image output",
@@ -236,6 +238,11 @@ fun ImageResultScreen(
                                             modifier = Modifier
                                                 .fillMaxSize()
                                                 .clip(RoundedCornerShape(12.dp))
+                                        )
+                                    } else {
+                                        ShimmerBox(
+                                            modifier = Modifier.fillMaxSize(),
+                                            shape = RoundedCornerShape(12.dp)
                                         )
                                     }
                                 }

@@ -11,6 +11,7 @@ import android.print.PrintAttributes
 import android.print.PrintDocumentAdapter
 import android.print.PrintDocumentInfo
 import android.print.PrintManager
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Animatable
@@ -131,10 +132,13 @@ import androidx.compose.ui.unit.dp
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.PdfToolType
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerPreviewCard
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyViewerCanvas
 import com.example.ui.theme.PaperlyViewerChrome
+import com.example.ui.viewmodel.ExternalPdfOpenState
 import com.example.ui.viewmodel.PaperlyViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
@@ -150,23 +154,59 @@ fun PdfViewerScreen(
     recordId: Long,
     viewModel: PaperlyViewModel,
     onQuickAction: (PdfToolType, PdfRecordEntity) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    externalOpenState: ExternalPdfOpenState? = null
 ) {
     val context = LocalContext.current
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var unlockedRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var isPasswordProtected by remember { mutableStateOf(false) }
+    var loadError by remember { mutableStateOf<String?>(null) }
     var overflowExpanded by remember { mutableStateOf(false) }
     var isBookMode by rememberSaveable(recordId) { mutableStateOf(false) }
 
-    LaunchedEffect(recordId) {
-        val loaded = viewModel.loadRecordById(recordId)
-        record = loaded
-        unlockedRecord = null
-        isPasswordProtected = if (loaded != null) {
-            loaded.operationTag == "Locked" || viewModel.pdfEngine.requiresPassword(loaded.filePath)
-        } else {
-            false
+    BackHandler(onBack = onBack)
+
+    if (externalOpenState != null) {
+        LaunchedEffect(externalOpenState) {
+            when (externalOpenState) {
+                is ExternalPdfOpenState.Loading, ExternalPdfOpenState.Idle -> {
+                    record = null
+                    unlockedRecord = null
+                    isPasswordProtected = false
+                    loadError = null
+                }
+                is ExternalPdfOpenState.Ready -> {
+                    val loaded = externalOpenState.record
+                    record = loaded
+                    unlockedRecord = null
+                    loadError = null
+                    isPasswordProtected = when {
+                        loaded.operationTag == "Locked" -> true
+                        loaded.pageCount > 0 -> false
+                        else -> viewModel.pdfEngine.requiresPassword(loaded.filePath)
+                    }
+                }
+                is ExternalPdfOpenState.Error -> {
+                    record = null
+                    unlockedRecord = null
+                    isPasswordProtected = false
+                    loadError = externalOpenState.message
+                }
+            }
+        }
+    } else {
+        LaunchedEffect(recordId) {
+            val loaded = viewModel.loadRecordById(recordId)
+            record = loaded
+            unlockedRecord = null
+            loadError = if (loaded == null) "Unable to open this PDF file." else null
+            isPasswordProtected = when {
+                loaded == null -> false
+                loaded.operationTag == "Locked" -> true
+                loaded.pageCount > 0 -> false
+                else -> viewModel.pdfEngine.requiresPassword(loaded.filePath)
+            }
         }
     }
 
@@ -226,7 +266,9 @@ fun PdfViewerScreen(
                     title = {
                         Column(modifier = Modifier.padding(end = 4.dp)) {
                             Text(
-                                text = record?.displayName ?: "PDF Preview",
+                                text = record?.displayName
+                                    ?: (externalOpenState as? ExternalPdfOpenState.Loading)?.displayNameHint
+                                    ?: "PDF Preview",
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Medium,
                                 color = Color.White,
@@ -382,14 +424,60 @@ fun PdfViewerScreen(
         }
     ) { innerPadding ->
         val current = activeRecord
-        if (current == null) {
+        val errorMessage = loadError
+        if (errorMessage != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Card(
+                    shape = RoundedCornerShape(18.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    modifier = Modifier.widthIn(max = 420.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(20.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Could Not Open PDF",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = errorMessage,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center
+                        )
+                        Button(
+                            onClick = onBack,
+                            modifier = Modifier.testTag("viewer_error_back_button")
+                        ) {
+                            Text("Go Back")
+                        }
+                    }
+                }
+            }
+        } else if (current == null) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator()
+                ShimmerPreviewCard(
+                    previewHeight = 420.dp,
+                    modifier = Modifier
+                        .widthIn(max = 520.dp)
+                        .padding(20.dp)
+                        .testTag("viewer_loading_shimmer")
+                )
             }
         } else if (isLockedView) {
             LockedPdfPasswordPromptSection(
@@ -1000,16 +1088,12 @@ private fun PdfFittedPageSheet(
                 contentScale = ContentScale.Fit
             )
         } else {
-            Box(
+            ShimmerBox(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(Color.White),
-                contentAlignment = Alignment.Center
-            ) {
-                CircularProgressIndicator(
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+                    .testTag("viewer_page_shimmer_$pageIndex"),
+                shape = RoundedCornerShape(4.dp)
+            )
         }
     }
 }

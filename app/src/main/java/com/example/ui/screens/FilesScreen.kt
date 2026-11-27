@@ -69,6 +69,8 @@ import com.example.core.formatTimestamp
 import com.example.data.local.PdfRecordEntity
 import com.example.ui.components.AnimatedOptionChip
 import com.example.ui.components.SampledDrawableImage
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerFileRowCard
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.viewmodel.PaperlyViewModel
@@ -84,6 +86,7 @@ fun FilesScreen(
     val context = LocalContext.current
     val haptics = rememberPaperlyHaptics()
     val isRefreshing by viewModel.isRefreshingFiles.collectAsStateWithLifecycle()
+    val isInitialFilesLoading by viewModel.isInitialFilesLoading.collectAsStateWithLifecycle()
     var query by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf("All") }
     var pendingSaveRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
@@ -176,7 +179,17 @@ fun FilesScreen(
                 }
             }
 
-            if (filtered.isEmpty()) {
+            if (filtered.isEmpty() && (isInitialFilesLoading || isRefreshing) && query.isBlank() && selectedFilter == "All") {
+                LazyColumn(
+                    modifier = Modifier.testTag("files_shimmer_list"),
+                    contentPadding = PaddingValues(bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(5) {
+                        ShimmerFileRowCard()
+                    }
+                }
+            } else if (filtered.isEmpty()) {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(18.dp),
@@ -264,11 +277,16 @@ fun FilesScreen(
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier.fillMaxSize()
                                         )
-                                    } else {
+                                    } else if (record.operationTag == "Locked") {
                                         Icon(
-                                            imageVector = if (record.operationTag == "Locked") Icons.Filled.Lock else Icons.Filled.Description,
+                                            imageVector = Icons.Filled.Lock,
                                             contentDescription = null,
                                             tint = MaterialTheme.colorScheme.primary
+                                        )
+                                    } else {
+                                        ShimmerBox(
+                                            modifier = Modifier.fillMaxSize(),
+                                            shape = RoundedCornerShape(10.dp)
                                         )
                                     }
                                 }

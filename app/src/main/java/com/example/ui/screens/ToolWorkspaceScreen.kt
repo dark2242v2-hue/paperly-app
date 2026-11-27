@@ -148,6 +148,8 @@ import com.example.data.model.TargetSizeUnit
 import com.example.ui.components.AnimatedOptionChip
 import com.example.ui.components.AnimatedSelectableCard
 import com.example.ui.components.FittedSingleLineText
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerTextLine
 import com.example.ui.components.SignaturePad
 import com.example.ui.components.bringIntoViewAboveKeyboard
 import com.example.ui.components.pressScaleEffect
@@ -843,11 +845,12 @@ private fun SplitControlsCard(
                 }
             }
 
-            workspace.previewThumbnail?.let { bmp ->
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                val bmp = workspace.previewThumbnail
+                if (bmp != null) {
                     Image(
                         bitmap = bmp.asImageBitmap(),
                         contentDescription = "Page 1 preview",
@@ -856,12 +859,21 @@ private fun SplitControlsCard(
                             .clip(RoundedCornerShape(8.dp)),
                         contentScale = ContentScale.Crop
                     )
-                    Text(
-                        text = "Page 1 preview shown. Extracted pages preserve original vector quality.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                } else {
+                    ShimmerBox(
+                        modifier = Modifier.size(width = 56.dp, height = 74.dp),
+                        shape = RoundedCornerShape(8.dp)
                     )
                 }
+                Text(
+                    text = if (bmp != null) {
+                        "Page 1 preview shown. Extracted pages preserve original vector quality."
+                    } else {
+                        "Rendering page 1 preview..."
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
             OutputNameField(
@@ -1678,7 +1690,34 @@ private fun SignControlsCard(
                 }
             }
 
-            workspace.previewThumbnail?.let { bmp ->
+            val thumbBmp = workspace.previewThumbnail
+            if (thumbBmp == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .aspectRatio(0.72f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(14.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ShimmerBox(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(14.dp)
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.surface.copy(alpha = 0.88f)
+                    ) {
+                        Text(
+                            text = "Loading page ${workspace.signTargetPage} preview...",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+            thumbBmp?.let { bmp ->
                 val pageAspect = bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
                 BoxWithConstraints(
                     modifier = Modifier
@@ -2189,6 +2228,12 @@ private fun AiSummarizeWorkspaceSection(
                                     )
                                 }
                             }
+                        }
+
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ShimmerTextLine(widthFraction = 0.92f, height = 11.dp)
+                            ShimmerTextLine(widthFraction = 0.78f, height = 11.dp)
+                            ShimmerTextLine(widthFraction = 0.60f, height = 11.dp)
                         }
                     }
                 }

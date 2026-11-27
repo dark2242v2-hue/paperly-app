@@ -1,6 +1,7 @@
 package com.example
 
 import android.content.Intent
+import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -16,6 +17,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -23,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -55,6 +58,7 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.example.ads.findActivity
+import com.example.data.local.UserPreferencesRepository
 import com.example.data.model.ImageToolType
 import com.example.data.model.PdfToolType
 import com.example.ui.components.PaperlyBottomBarWithBanner
@@ -73,32 +77,54 @@ import com.example.ui.screens.ToolWorkspaceScreen
 import com.example.ui.theme.PaperlyTheme
 import com.example.ui.viewmodel.PaperlyViewModel
 
+data class ExternalPdfLaunchRequest(
+    val uri: Uri,
+    val token: Long = System.nanoTime()
+)
+
 class MainActivity : ComponentActivity() {
-    private val pendingExternalPdfUriState = mutableStateOf<Uri?>(null)
+    private val initialExternalPdfRequestState = mutableStateOf<ExternalPdfLaunchRequest?>(null)
+    private val warmExternalPdfRequestState = mutableStateOf<ExternalPdfLaunchRequest?>(null)
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        val initialDarkMode = UserPreferencesRepository.readBootDarkModeSync(this)
+        window.setBackgroundDrawable(
+            ColorDrawable(if (initialDarkMode) 0xFF0B1120.toInt() else 0xFFF8FAFC.toInt())
+        )
+        enableEdgeToEdge(
+            statusBarStyle = if (initialDarkMode) {
+                SystemBarStyle.dark(Color.Transparent.toArgb())
+            } else {
+                SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+            },
+            navigationBarStyle = if (initialDarkMode) {
+                SystemBarStyle.dark(Color.Transparent.toArgb())
+            } else {
+                SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
+            }
+        )
+
         super.onCreate(savedInstanceState)
 
         if (savedInstanceState == null) {
             extractIncomingPdfUri(intent)?.let { uri ->
-                pendingExternalPdfUriState.value = uri
+                initialExternalPdfRequestState.value = ExternalPdfLaunchRequest(uri)
             }
         }
-
-        enableEdgeToEdge(
-            statusBarStyle = SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb()),
-            navigationBarStyle = SystemBarStyle.light(Color.Transparent.toArgb(), Color.Transparent.toArgb())
-        )
 
         setContent {
             val viewModel: PaperlyViewModel = viewModel()
             val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
-            val pendingExternalPdfUri by pendingExternalPdfUriState
-            var appliedDarkMode by remember { mutableStateOf(false) }
+            val initialExternalPdfRequest by initialExternalPdfRequestState
+            val warmExternalPdfRequest by warmExternalPdfRequestState
+            var appliedDarkMode by remember { mutableStateOf(initialDarkMode) }
 
             LaunchedEffect(isDarkMode) {
                 if (appliedDarkMode != isDarkMode) {
                     appliedDarkMode = isDarkMode
+                    window.setBackgroundDrawable(
+                        ColorDrawable(if (isDarkMode) 0xFF0B1120.toInt() else 0xFFF8FAFC.toInt())
+                    )
                     enableEdgeToEdge(
                         statusBarStyle = if (isDarkMode) {
                             SystemBarStyle.dark(Color.Transparent.toArgb())
@@ -117,8 +143,10 @@ class MainActivity : ComponentActivity() {
             PaperlyTheme(darkTheme = isDarkMode) {
                 PaperlyApp(
                     viewModel = viewModel,
-                    pendingExternalPdfUri = pendingExternalPdfUri,
-                    onConsumeExternalPdfUri = { pendingExternalPdfUriState.value = null }
+                    initialExternalPdfRequest = initialExternalPdfRequest,
+                    onConsumeInitialExternalPdfRequest = { initialExternalPdfRequestState.value = null },
+                    warmExternalPdfRequest = warmExternalPdfRequest,
+                    onConsumeWarmExternalPdfRequest = { warmExternalPdfRequestState.value = null }
                 )
             }
         }
@@ -128,7 +156,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         extractIncomingPdfUri(intent)?.let { uri ->
-            pendingExternalPdfUriState.value = uri
+            warmExternalPdfRequestState.value = ExternalPdfLaunchRequest(uri)
         }
     }
 
@@ -148,12 +176,21 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun PaperlyApp(
     viewModel: PaperlyViewModel,
-    pendingExternalPdfUri: Uri? = null,
-    onConsumeExternalPdfUri: () -> Unit = {}
+    initialExternalPdfRequest: ExternalPdfLaunchRequest? = null,
+    onConsumeInitialExternalPdfRequest: () -> Unit = {},
+    warmExternalPdfRequest: ExternalPdfLaunchRequest? = null,
+    onConsumeWarmExternalPdfRequest: () -> Unit = {}
 ) {
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = navBackStackEntry?.destination?.route
+    val startDestination = rememberSaveable {
+        if (initialExternalPdfRequest != null) {
+            PaperlyRoutes.EXTERNAL_PDF_VIEWER
+        } else {
+            PaperlyRoutes.MAIN_TABS
+        }
+    }
 
     val isDarkMode by viewModel.isDarkMode.collectAsStateWithLifecycle()
     val isPro by viewModel.isPro.collectAsStateWithLifecycle()
@@ -168,6 +205,8 @@ fun PaperlyApp(
     val homeCategory by viewModel.homeCategory.collectAsStateWithLifecycle()
     val recentRecords by viewModel.recentRecords.collectAsStateWithLifecycle()
     val recentImages by viewModel.recentImages.collectAsStateWithLifecycle()
+    val isInitialFilesLoading by viewModel.isInitialFilesLoading.collectAsStateWithLifecycle()
+    val isInitialImagesLoading by viewModel.isInitialImagesLoading.collectAsStateWithLifecycle()
     val workspace by viewModel.workspace.collectAsStateWithLifecycle()
     val imageWorkspace by viewModel.imageWorkspace.collectAsStateWithLifecycle()
     val ocrState by viewModel.ocrState.collectAsStateWithLifecycle()
@@ -176,6 +215,7 @@ fun PaperlyApp(
     val proSheetState by viewModel.proSheetState.collectAsStateWithLifecycle()
     val snackbarMessage by viewModel.snackbarMessage.collectAsStateWithLifecycle()
     val isAdsSdkInitialized by viewModel.isAdsSdkInitialized.collectAsStateWithLifecycle()
+    val externalPdfOpenState by viewModel.externalPdfOpenState.collectAsStateWithLifecycle()
 
     val activity = LocalContext.current.findActivity()
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -206,14 +246,23 @@ fun PaperlyApp(
         }
     }
 
-    LaunchedEffect(pendingExternalPdfUri) {
-        val externalUri = pendingExternalPdfUri
-        if (externalUri != null) {
-            onConsumeExternalPdfUri()
-            viewModel.handleIncomingExternalPdf(externalUri) { openedRecordId ->
-                navController.navigate(PaperlyRoutes.pdfViewer(openedRecordId)) {
-                    launchSingleTop = true
-                }
+    var hasConsumedInitialExternal by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(initialExternalPdfRequest) {
+        val req = initialExternalPdfRequest
+        if (req != null && !hasConsumedInitialExternal) {
+            hasConsumedInitialExternal = true
+            viewModel.openExternalPdfRequest(req.uri, req.token)
+            onConsumeInitialExternalPdfRequest()
+        }
+    }
+
+    LaunchedEffect(warmExternalPdfRequest) {
+        val req = warmExternalPdfRequest
+        if (req != null) {
+            viewModel.openExternalPdfRequest(req.uri, req.token)
+            onConsumeWarmExternalPdfRequest()
+            navController.navigate(PaperlyRoutes.EXTERNAL_PDF_VIEWER) {
+                launchSingleTop = true
             }
         }
     }
@@ -252,7 +301,8 @@ fun PaperlyApp(
     }
 
     var activeMainTab by rememberSaveable { mutableStateOf(PaperlyRoutes.HOME) }
-    val isMainTab = currentRoute == null || currentRoute == PaperlyRoutes.MAIN_TABS
+    val isMainTab = currentRoute == PaperlyRoutes.MAIN_TABS ||
+        (currentRoute == null && startDestination == PaperlyRoutes.MAIN_TABS)
 
     BackHandler(enabled = isMainTab && activeMainTab != PaperlyRoutes.HOME) {
         activeMainTab = PaperlyRoutes.HOME
@@ -264,7 +314,30 @@ fun PaperlyApp(
         }
     }
 
+    var rootEntered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { rootEntered = true }
+    val rootAlpha by animateFloatAsState(
+        targetValue = if (rootEntered) 1f else 0f,
+        animationSpec = tween(durationMillis = 220, easing = EaseOutCubic),
+        label = "rootEntranceAlpha"
+    )
+    val rootScale by animateFloatAsState(
+        targetValue = if (rootEntered) 1f else 0.96f,
+        animationSpec = tween(durationMillis = 220, easing = EaseOutCubic),
+        label = "rootEntranceScale"
+    )
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
     Scaffold(
+        modifier = Modifier.graphicsLayer {
+            alpha = rootAlpha
+            scaleX = rootScale
+            scaleY = rootScale
+        },
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
         topBar = {
@@ -299,7 +372,7 @@ fun PaperlyApp(
         ) {
             NavHost(
                 navController = navController,
-                startDestination = PaperlyRoutes.MAIN_TABS,
+                startDestination = startDestination,
                 enterTransition = {
                     slideInHorizontally(tween(durationMillis = 220, easing = EaseOutCubic)) { (it * 0.20f).toInt() } +
                         fadeIn(tween(durationMillis = 220, easing = EaseOutCubic))
@@ -353,6 +426,8 @@ fun PaperlyApp(
                                 selectedCategory = homeCategory,
                                 recentRecords = recentRecords,
                                 recentImages = recentImages,
+                                isInitialFilesLoading = isInitialFilesLoading,
+                                isInitialImagesLoading = isInitialImagesLoading,
                                 onCategorySelected = viewModel::setHomeCategory,
                                 onToolSelected = { tool ->
                                     if (tool == PdfToolType.AI_SUMMARIZE ||
@@ -450,7 +525,7 @@ fun PaperlyApp(
                         onBack = { navController.popBackStack() },
                         onProcessingComplete = { recordId ->
                             navController.navigate(PaperlyRoutes.downloadReady(recordId)) {
-                                popUpTo(PaperlyRoutes.MAIN_TABS)
+                                popUpTo(startDestination)
                             }
                         }
                     )
@@ -485,7 +560,12 @@ fun PaperlyApp(
                             navController.navigate(PaperlyRoutes.pdfViewer(id))
                         },
                         onDone = {
-                            navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)
+                            if (!navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)) {
+                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
+                                    popUpTo(0) { inclusive = true }
+                                    launchSingleTop = true
+                                }
+                            }
                         }
                     )
                 }
@@ -523,7 +603,12 @@ fun PaperlyApp(
                             navController.navigate(PaperlyRoutes.pdfViewer(pdfId))
                         },
                         onDone = {
-                            navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)
+                            if (!navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)) {
+                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
+                                    popUpTo(0) { inclusive = true }
+                                    launchSingleTop = true
+                                }
+                            }
                         }
                     )
                 }
@@ -544,8 +629,30 @@ fun PaperlyApp(
                         onBack = { navController.popBackStack() }
                     )
                 }
+
+                composable(route = PaperlyRoutes.EXTERNAL_PDF_VIEWER) {
+                    PdfViewerScreen(
+                        recordId = -1L,
+                        viewModel = viewModel,
+                        externalOpenState = externalPdfOpenState,
+                        onQuickAction = { tool, rec ->
+                            viewModel.openToolWithRecord(tool, rec) {
+                                navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                            }
+                        },
+                        onBack = {
+                            if (!navController.popBackStack()) {
+                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
+                                    popUpTo(PaperlyRoutes.EXTERNAL_PDF_VIEWER) { inclusive = true }
+                                    launchSingleTop = true
+                                }
+                            }
+                        }
+                    )
+                }
             }
         }
+    }
     }
 
     PaperlyProSheet(

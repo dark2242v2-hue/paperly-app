@@ -1,6 +1,7 @@
 package com.example.data.local
 
 import android.content.Context
+import android.content.res.Configuration
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -10,8 +11,12 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.model.CompressionLevel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 
 private val Context.paperlyDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "paperly_prefs"
@@ -35,8 +40,20 @@ class UserPreferencesRepository(private val context: Context) {
         val COURTESY_UNLOCK_USED = booleanPreferencesKey("courtesy_unlock_used")
     }
 
+    private fun isSystemNightMode(): Boolean {
+        val nightMask = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK
+        return nightMask == Configuration.UI_MODE_NIGHT_YES
+    }
+
+    fun getBootDarkModeSync(): Boolean = readBootDarkModeSync(context)
+
     val isDarkMode: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
-        prefs[Keys.DARK_MODE] ?: false
+        val resolved = prefs[Keys.DARK_MODE] ?: isSystemNightMode()
+        val bootPrefs = context.getSharedPreferences(BOOT_PREFS_NAME, Context.MODE_PRIVATE)
+        if (!bootPrefs.contains(BOOT_KEY_DARK_MODE) || bootPrefs.getBoolean(BOOT_KEY_DARK_MODE, resolved) != resolved) {
+            bootPrefs.edit().putBoolean(BOOT_KEY_DARK_MODE, resolved).apply()
+        }
+        resolved
     }
 
     val playProActive: Flow<Boolean> = context.paperlyDataStore.data.map { prefs ->
@@ -81,6 +98,10 @@ class UserPreferencesRepository(private val context: Context) {
     }
 
     suspend fun setDarkMode(enabled: Boolean) {
+        context.getSharedPreferences(BOOT_PREFS_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .putBoolean(BOOT_KEY_DARK_MODE, enabled)
+            .apply()
         context.paperlyDataStore.edit { it[Keys.DARK_MODE] = enabled }
     }
 
@@ -175,6 +196,31 @@ class UserPreferencesRepository(private val context: Context) {
     suspend fun markCourtesyUnlockUsed() {
         context.paperlyDataStore.edit {
             it[Keys.COURTESY_UNLOCK_USED] = true
+        }
+    }
+
+    companion object {
+        private const val BOOT_PREFS_NAME = "paperly_boot_prefs"
+        private const val BOOT_KEY_DARK_MODE = "dark_mode"
+
+        fun readBootDarkModeSync(context: Context): Boolean {
+            val appCtx = context.applicationContext
+            val bootPrefs = appCtx.getSharedPreferences(BOOT_PREFS_NAME, Context.MODE_PRIVATE)
+            if (bootPrefs.contains(BOOT_KEY_DARK_MODE)) {
+                return bootPrefs.getBoolean(BOOT_KEY_DARK_MODE, false)
+            }
+            val nightDefault = (appCtx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+                Configuration.UI_MODE_NIGHT_YES
+            val fromDataStore = runCatching {
+                runBlocking(Dispatchers.IO) {
+                    withTimeoutOrNull(250L) {
+                        appCtx.paperlyDataStore.data.first()[Keys.DARK_MODE]
+                    }
+                }
+            }.getOrNull()
+            val resolved = fromDataStore ?: nightDefault
+            bootPrefs.edit().putBoolean(BOOT_KEY_DARK_MODE, resolved).apply()
+            return resolved
         }
     }
 }

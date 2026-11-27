@@ -89,6 +89,9 @@ import com.example.data.model.PdfToolType
 import com.example.data.model.RecentImageItem
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.SampledDrawableImage
+import com.example.ui.components.ShimmerBox
+import com.example.ui.components.ShimmerRecentImageCard
+import com.example.ui.components.ShimmerRecentPdfCard
 import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyAmber
@@ -120,6 +123,8 @@ fun HomeScreen(
     selectedCategory: HomeToolCategory,
     recentRecords: List<PdfRecordEntity>,
     recentImages: List<RecentImageItem>,
+    isInitialFilesLoading: Boolean = false,
+    isInitialImagesLoading: Boolean = false,
     onCategorySelected: (HomeToolCategory) -> Unit,
     onToolSelected: (PdfToolType) -> Unit,
     onImageToolSelected: (ImageToolType) -> Unit,
@@ -488,7 +493,17 @@ fun HomeScreen(
                             }
                         }
 
-                        if (recentRecords.isEmpty()) {
+                        if (recentRecords.isEmpty() && isInitialFilesLoading) {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("recent_pdfs_shimmer_row")
+                            ) {
+                                items(3) {
+                                    ShimmerRecentPdfCard()
+                                }
+                            }
+                        } else if (recentRecords.isEmpty()) {
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -563,7 +578,17 @@ fun HomeScreen(
                             )
                         }
 
-                        if (recentImages.isEmpty()) {
+                        if (recentImages.isEmpty() && isInitialImagesLoading) {
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 20.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                modifier = Modifier.testTag("recent_images_shimmer_row")
+                            ) {
+                                items(3) {
+                                    ShimmerRecentImageCard()
+                                }
+                            }
+                        } else if (recentImages.isEmpty()) {
                             Card(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -839,12 +864,17 @@ private fun RecentPdfCard(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()
                         )
-                    } else {
+                    } else if (record.operationTag == "Locked") {
                         Icon(
-                            imageVector = if (record.operationTag == "Locked") Icons.Filled.Lock else Icons.Filled.Description,
+                            imageVector = Icons.Filled.Lock,
                             contentDescription = null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(18.dp)
+                        )
+                    } else {
+                        ShimmerBox(
+                            modifier = Modifier.fillMaxSize(),
+                            shape = RoundedCornerShape(8.dp)
                         )
                     }
                 }
@@ -927,11 +957,9 @@ private fun RecentImageCard(
                         modifier = Modifier.fillMaxSize()
                     )
                 } else {
-                    Icon(
-                        imageVector = Icons.Filled.Image,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(26.dp)
+                    ShimmerBox(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(10.dp)
                     )
                 }
                 Surface(

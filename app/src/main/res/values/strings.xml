@@ -43,7 +43,7 @@
     <string name="img_tool_gen_title">AI Text to Image</string>
     <string name="img_tool_gen_desc">Create art from prompts</string>
     <string name="img_tool_upscale_title">AI Upscaler 16K</string>
-    <string name="img_tool_upscale_desc">2x to 16K HD enhance</string>
+    <string name="img_tool_upscale_desc">Free 2x HD • 4x–16K Pro</string>
     <string name="img_tool_bg_title">BG Remover</string>
     <string name="img_tool_bg_desc">1-tap subject cutout</string>
     <string name="img_tool_passport_title">Passport Maker</string>

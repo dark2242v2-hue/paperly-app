@@ -141,6 +141,13 @@ data class ProSheetUiState(
     val rewardedError: String? = null
 )
 
+sealed interface ExternalPdfOpenState {
+    data object Idle : ExternalPdfOpenState
+    data class Loading(val token: Long, val displayNameHint: String?) : ExternalPdfOpenState
+    data class Ready(val token: Long, val record: PdfRecordEntity) : ExternalPdfOpenState
+    data class Error(val token: Long, val message: String) : ExternalPdfOpenState
+}
+
 class PaperlyViewModel(application: Application) : AndroidViewModel(application) {
 
     private val database = PaperlyDatabase.getInstance(application)
@@ -205,15 +212,26 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val _isRefreshingFiles = MutableStateFlow(false)
     val isRefreshingFiles: StateFlow<Boolean> = _isRefreshingFiles.asStateFlow()
 
+    private val _isInitialFilesLoading = MutableStateFlow(true)
+    val isInitialFilesLoading: StateFlow<Boolean> = _isInitialFilesLoading.asStateFlow()
+
+    private val _isInitialImagesLoading = MutableStateFlow(true)
+    val isInitialImagesLoading: StateFlow<Boolean> = _isInitialImagesLoading.asStateFlow()
+
     private var hasScannedFilesOnce = false
     private var aiJob: Job? = null
     private var imageJob: Job? = null
+    private var externalPdfJob: Job? = null
+    private var activeExternalToken: Long = 0L
+
+    private val _externalPdfOpenState = MutableStateFlow<ExternalPdfOpenState>(ExternalPdfOpenState.Idle)
+    val externalPdfOpenState: StateFlow<ExternalPdfOpenState> = _externalPdfOpenState.asStateFlow()
 
     val recentRecords: StateFlow<List<PdfRecordEntity>> = recordRepository.recentRecords
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val isDarkMode: StateFlow<Boolean> = prefsRepository.isDarkMode
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
+        .stateIn(viewModelScope, SharingStarted.Eagerly, prefsRepository.getBootDarkModeSync())
 
     val debugProOverride: StateFlow<Boolean> = prefsRepository.debugProOverride
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), false)
@@ -277,10 +295,14 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     fun refreshRecentImages() {
         viewModelScope.launch(Dispatchers.IO) {
-            runCatching {
-                imageEngine.listRecentImages(limit = 15)
-            }.onSuccess { list ->
-                _recentImages.value = list
+            try {
+                runCatching {
+                    imageEngine.listRecentImages(limit = 15)
+                }.onSuccess { list ->
+                    _recentImages.value = list
+                }
+            } finally {
+                _isInitialImagesLoading.value = false
             }
         }
     }
@@ -341,6 +363,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 Log.w(TAG, "Silent files cache sync failed", e)
             } finally {
                 _isRefreshingFiles.value = false
+                _isInitialFilesLoading.value = false
             }
         }
     }
@@ -456,6 +479,36 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 navigateOnUnlock = true,
                 preloadedRecord = record
             )
+        }
+    }
+
+    fun openExternalPdfRequest(uri: Uri, token: Long) {
+        if (activeExternalToken == token && _externalPdfOpenState.value !is ExternalPdfOpenState.Idle) {
+            return
+        }
+        activeExternalToken = token
+        externalPdfJob?.cancel()
+        val hintName = pdfEngine.peekExternalDisplayName(uri)
+        _externalPdfOpenState.value = ExternalPdfOpenState.Loading(token = token, displayNameHint = hintName)
+        externalPdfJob = viewModelScope.launch {
+            try {
+                val record = pdfEngine.importExternalPdfRecord(uri)
+                val insertedId = recordRepository.insert(record)
+                if (activeExternalToken == token) {
+                    _externalPdfOpenState.value = ExternalPdfOpenState.Ready(
+                        token = token,
+                        record = record.copy(id = insertedId)
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to open external PDF", e)
+                val msg = e.localizedMessage ?: "Could not open this PDF file."
+                if (activeExternalToken == token) {
+                    _externalPdfOpenState.value = ExternalPdfOpenState.Error(token = token, message = msg)
+                }
+            }
         }
     }
 
@@ -1091,7 +1144,6 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
         val canProceed = when (tool) {
             ImageToolType.TEXT_TO_IMAGE -> isPro.value || aiImageCredits.value > 0
-            ImageToolType.UPSCALER -> isPro.value || upscaleCredits.value > 0
             else -> true
         }
         if (canProceed) {
@@ -1535,11 +1587,12 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun runImageUpscale(onResultReady: () -> Unit, skipCreditCheck: Boolean = false) {
-        if (!skipCreditCheck && !isPro.value && upscaleCredits.value <= 0) {
+        val state = _imageWorkspace.value
+        val needsProOrCredit = state.upscaleTarget != UpscaleTarget.HD_2X
+        if (needsProOrCredit && !skipCreditCheck && !isPro.value && upscaleCredits.value <= 0) {
             openImagePaywallInWorkspace(ImageToolType.UPSCALER)
             return
         }
-        val state = _imageWorkspace.value
         val info = state.pickedImage ?: return
         imageJob?.cancel()
         imageJob = viewModelScope.launch {
@@ -1550,7 +1603,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val result = imageEngine.upscaleImage(info, state.upscaleTarget, state.outputFormat) { p, msg ->
                     _imageWorkspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
                 }
-                if (!isPro.value) {
+                if (needsProOrCredit && !isPro.value) {
                     prefsRepository.consumeUpscaleCredit()
                 }
                 _processedImageResult.value = result

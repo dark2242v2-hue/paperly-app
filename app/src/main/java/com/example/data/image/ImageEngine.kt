@@ -48,6 +48,11 @@ import com.tom_roush.pdfbox.pdmodel.graphics.image.JPEGFactory
 import com.tom_roush.pdfbox.pdmodel.graphics.image.LosslessFactory
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -201,6 +206,7 @@ class ImageEngine(private val context: Context) {
 
         try {
             for ((stepIndex, scale) in scaleSteps.withIndex()) {
+                currentCoroutineContext().ensureActive()
                 val p = 0.2f + 0.7f * ((stepIndex + 1).toFloat() / scaleSteps.size)
                 onProgress(p, "Encoding pass ${stepIndex + 1} of ${scaleSteps.size} (${(scale * 100).roundToInt()}%)...")
 
@@ -481,6 +487,7 @@ class ImageEngine(private val context: Context) {
         var pass = 1
         try {
             while (current.width < targetW || current.height < targetH) {
+                currentCoroutineContext().ensureActive()
                 val nextW = min(targetW, current.width * 2)
                 val nextH = min(targetH, current.height * 2)
                 onProgress(
@@ -1015,106 +1022,126 @@ class ImageEngine(private val context: Context) {
         return tile
     }
 
-    private fun applyMultiRadiusClarityEnhance(src: Bitmap): Bitmap {
+    private suspend fun applyMultiRadiusClarityEnhance(src: Bitmap): Bitmap {
         val w = src.width
         val h = src.height
         val totalPixels = w.toLong() * h.toLong()
-        if (w < 4 || h < 4) return src
-        // If ultra-large 16K exceeds fast pixel pass budget, downscale-sharpen-blend or run lightweight 3x3
+        if (w < 6 || h < 6) return src
         val useMultiRadius = totalPixels <= 38_000_000L
         if (totalPixels > 120_000_000L) return src
 
-        return runCatching {
-            val rowPrev2 = IntArray(w)
-            val rowPrev1 = IntArray(w)
-            val rowCurr = IntArray(w)
-            val rowNext1 = IntArray(w)
-            val rowNext2 = IntArray(w)
-            val rowOut = IntArray(w)
+        return try {
             val out = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
-
-            src.getPixels(rowPrev2, 0, w, 0, 0, w, 1)
-            src.getPixels(rowPrev1, 0, w, 0, 1, w, 1)
-            out.setPixels(rowPrev2, 0, w, 0, 0, w, 1)
-            out.setPixels(rowPrev1, 0, w, 0, 1, w, 1)
-
-            src.getPixels(rowCurr, 0, w, 0, 2, w, 1)
-            src.getPixels(rowNext1, 0, w, 0, 3, w, 1)
-
-            for (y in 2 until h - 2) {
-                src.getPixels(rowNext2, 0, w, 0, y + 2, w, 1)
-                rowOut[0] = rowCurr[0]
-                rowOut[1] = rowCurr[1]
-                rowOut[w - 2] = rowCurr[w - 2]
-                rowOut[w - 1] = rowCurr[w - 1]
-
-                for (x in 2 until w - 2) {
-                    val c = rowCurr[x]
-                    val a = c ushr 24
-                    val rC = (c ushr 16) and 0xFF
-                    val gC = (c ushr 8) and 0xFF
-                    val bC = c and 0xFF
-
-                    val top1 = rowPrev1[x]
-                    val bot1 = rowNext1[x]
-                    val lft1 = rowCurr[x - 1]
-                    val rgt1 = rowCurr[x + 1]
-
-                    val rFineAvg = (((top1 ushr 16) and 0xFF) + ((bot1 ushr 16) and 0xFF) +
-                        ((lft1 ushr 16) and 0xFF) + ((rgt1 ushr 16) and 0xFF)) shr 2
-                    val gFineAvg = (((top1 ushr 8) and 0xFF) + ((bot1 ushr 8) and 0xFF) +
-                        ((lft1 ushr 8) and 0xFF) + ((rgt1 ushr 8) and 0xFF)) shr 2
-                    val bFineAvg = ((top1 and 0xFF) + (bot1 and 0xFF) + (lft1 and 0xFF) + (rgt1 and 0xFF)) shr 2
-
-                    val rDiffFine = rC - rFineAvg
-                    val gDiffFine = gC - gFineAvg
-                    val bDiffFine = bC - bFineAvg
-
-                    var rDelta: Int
-                    var gDelta: Int
-                    var bDelta: Int
-
-                    if (useMultiRadius) {
-                        val top2 = rowPrev2[x]
-                        val bot2 = rowNext2[x]
-                        val lft2 = rowCurr[x - 2]
-                        val rgt2 = rowCurr[x + 2]
-                        val rCoarseAvg = (((top2 ushr 16) and 0xFF) + ((bot2 ushr 16) and 0xFF) +
-                            ((lft2 ushr 16) and 0xFF) + ((rgt2 ushr 16) and 0xFF)) shr 2
-                        val gCoarseAvg = (((top2 ushr 8) and 0xFF) + ((bot2 ushr 8) and 0xFF) +
-                            ((lft2 ushr 8) and 0xFF) + ((rgt2 ushr 8) and 0xFF)) shr 2
-                        val bCoarseAvg = ((top2 and 0xFF) + (bot2 and 0xFF) + (lft2 and 0xFF) + (rgt2 and 0xFF)) shr 2
-
-                        val rDiffCoarse = rC - rCoarseAvg
-                        val gDiffCoarse = gC - gCoarseAvg
-                        val bDiffCoarse = bC - bCoarseAvg
-
-                        // Coring: smooth tiny flat compression noise; strongly sharpen real detail & structure
-                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) -(rDiffFine / 3) else ((rDiffFine * 85 + rDiffCoarse * 40) / 100)
-                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) -(gDiffFine / 3) else ((gDiffFine * 85 + gDiffCoarse * 40) / 100)
-                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) -(bDiffFine / 3) else ((bDiffFine * 85 + bDiffCoarse * 40) / 100)
-                    } else {
-                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) 0 else ((rDiffFine * 85) / 100)
-                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) 0 else ((gDiffFine * 85) / 100)
-                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) 0 else ((bDiffFine * 85) / 100)
-                    }
-
-                    val rNew = (rC + rDelta.coerceIn(-48, 48)).coerceIn(0, 255)
-                    val gNew = (gC + gDelta.coerceIn(-48, 48)).coerceIn(0, 255)
-                    val bNew = (bC + bDelta.coerceIn(-48, 48)).coerceIn(0, 255)
-                    rowOut[x] = (a shl 24) or (rNew shl 16) or (gNew shl 8) or bNew
-                }
-
-                out.setPixels(rowOut, 0, w, 0, y, w, 1)
-                System.arraycopy(rowPrev1, 0, rowPrev2, 0, w)
-                System.arraycopy(rowCurr, 0, rowPrev1, 0, w)
-                System.arraycopy(rowNext1, 0, rowCurr, 0, w)
-                System.arraycopy(rowNext2, 0, rowNext1, 0, w)
+            val edgeRow = IntArray(w)
+            for (yEdge in listOf(0, 1, h - 2, h - 1)) {
+                src.getPixels(edgeRow, 0, w, 0, yEdge, w, 1)
+                out.setPixels(edgeRow, 0, w, 0, yEdge, w, 1)
             }
-            out.setPixels(rowCurr, 0, w, 0, h - 2, w, 1)
-            out.setPixels(rowNext1, 0, w, 0, h - 1, w, 1)
+
+            val workerCount = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+            val bandHeight = 192
+            var yStart = 2
+            val interiorEnd = h - 2
+            while (yStart < interiorEnd) {
+                currentCoroutineContext().ensureActive()
+                val yEnd = min(interiorEnd, yStart + bandHeight)
+                val outRows = yEnd - yStart
+                val inStart = yStart - 2
+                val inRows = outRows + 4
+                val inBand = IntArray(inRows * w)
+                val outBand = IntArray(outRows * w)
+                src.getPixels(inBand, 0, w, 0, inStart, w, inRows)
+
+                coroutineScope {
+                    val effectiveWorkers = if (outRows >= 16) min(workerCount, outRows) else 1
+                    val rowsPerWorker = (outRows + effectiveWorkers - 1) / effectiveWorkers
+                    (0 until effectiveWorkers).map { workerIdx ->
+                        async(Dispatchers.Default) {
+                            val localStart = workerIdx * rowsPerWorker
+                            val localEnd = min(outRows, localStart + rowsPerWorker)
+                            for (localOutY in localStart until localEnd) {
+                                ensureActive()
+                                val inY = localOutY + 2
+                                val rowPrev2Off = (inY - 2) * w
+                                val rowPrev1Off = (inY - 1) * w
+                                val rowCurrOff = inY * w
+                                val rowNext1Off = (inY + 1) * w
+                                val rowNext2Off = (inY + 2) * w
+                                val outOff = localOutY * w
+
+                                outBand[outOff] = inBand[rowCurrOff]
+                                outBand[outOff + 1] = inBand[rowCurrOff + 1]
+                                outBand[outOff + w - 2] = inBand[rowCurrOff + w - 2]
+                                outBand[outOff + w - 1] = inBand[rowCurrOff + w - 1]
+
+                                for (x in 2 until w - 2) {
+                                    val c = inBand[rowCurrOff + x]
+                                    val a = c ushr 24
+                                    val rC = (c ushr 16) and 0xFF
+                                    val gC = (c ushr 8) and 0xFF
+                                    val bC = c and 0xFF
+
+                                    val top1 = inBand[rowPrev1Off + x]
+                                    val bot1 = inBand[rowNext1Off + x]
+                                    val lft1 = inBand[rowCurrOff + x - 1]
+                                    val rgt1 = inBand[rowCurrOff + x + 1]
+
+                                    val rFineAvg = (((top1 ushr 16) and 0xFF) + ((bot1 ushr 16) and 0xFF) +
+                                        ((lft1 ushr 16) and 0xFF) + ((rgt1 ushr 16) and 0xFF)) shr 2
+                                    val gFineAvg = (((top1 ushr 8) and 0xFF) + ((bot1 ushr 8) and 0xFF) +
+                                        ((lft1 ushr 8) and 0xFF) + ((rgt1 ushr 8) and 0xFF)) shr 2
+                                    val bFineAvg = ((top1 and 0xFF) + (bot1 and 0xFF) + (lft1 and 0xFF) + (rgt1 and 0xFF)) shr 2
+
+                                    val rDiffFine = rC - rFineAvg
+                                    val gDiffFine = gC - gFineAvg
+                                    val bDiffFine = bC - bFineAvg
+
+                                    val rDelta: Int
+                                    val gDelta: Int
+                                    val bDelta: Int
+
+                                    if (useMultiRadius) {
+                                        val top2 = inBand[rowPrev2Off + x]
+                                        val bot2 = inBand[rowNext2Off + x]
+                                        val lft2 = inBand[rowCurrOff + x - 2]
+                                        val rgt2 = inBand[rowCurrOff + x + 2]
+                                        val rCoarseAvg = (((top2 ushr 16) and 0xFF) + ((bot2 ushr 16) and 0xFF) +
+                                            ((lft2 ushr 16) and 0xFF) + ((rgt2 ushr 16) and 0xFF)) shr 2
+                                        val gCoarseAvg = (((top2 ushr 8) and 0xFF) + ((bot2 ushr 8) and 0xFF) +
+                                            ((lft2 ushr 8) and 0xFF) + ((rgt2 ushr 8) and 0xFF)) shr 2
+                                        val bCoarseAvg = ((top2 and 0xFF) + (bot2 and 0xFF) + (lft2 and 0xFF) + (rgt2 and 0xFF)) shr 2
+
+                                        val rDiffCoarse = rC - rCoarseAvg
+                                        val gDiffCoarse = gC - gCoarseAvg
+                                        val bDiffCoarse = bC - bCoarseAvg
+
+                                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) -(rDiffFine / 3) else ((rDiffFine * 85 + rDiffCoarse * 40) / 100)
+                                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) -(gDiffFine / 3) else ((gDiffFine * 85 + gDiffCoarse * 40) / 100)
+                                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) -(bDiffFine / 3) else ((bDiffFine * 85 + bDiffCoarse * 40) / 100)
+                                    } else {
+                                        rDelta = if (kotlin.math.abs(rDiffFine) < 3) 0 else ((rDiffFine * 85) / 100)
+                                        gDelta = if (kotlin.math.abs(gDiffFine) < 3) 0 else ((gDiffFine * 85) / 100)
+                                        bDelta = if (kotlin.math.abs(bDiffFine) < 3) 0 else ((bDiffFine * 85) / 100)
+                                    }
+
+                                    val rNew = (rC + rDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                                    val gNew = (gC + gDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                                    val bNew = (bC + bDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                                    outBand[outOff + x] = (a shl 24) or (rNew shl 16) or (gNew shl 8) or bNew
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+                out.setPixels(outBand, 0, w, 0, yStart, w, outRows)
+                yStart = yEnd
+            }
             out
-        }.getOrElse { src }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            src
+        }
     }
 
     private fun compressToByteArray(bitmap: Bitmap, format: Bitmap.CompressFormat, quality: Int): ByteArray {

@@ -14,6 +14,7 @@ object PaperlyRoutes {
     const val MULTI_SHOT_CAMERA = "multi_shot_camera"
     const val DOWNLOAD_READY = "download_ready/{recordId}"
     const val PDF_VIEWER = "pdf_viewer/{recordId}"
+    const val EXTERNAL_PDF_VIEWER = "external_pdf_viewer"
 
     fun toolWorkspace(toolType: PdfToolType): String = "tool_workspace/${toolType.routeArg}"
     fun imageWorkspace(toolType: ImageToolType): String = "image_workspace/${toolType.routeArg}"
