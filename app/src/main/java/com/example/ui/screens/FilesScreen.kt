@@ -169,7 +169,7 @@ fun FilesScreen(
             )
 
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(filters) { filter ->
+                items(filters, key = { it }) { filter ->
                     AnimatedOptionChip(
                         label = filter,
                         selected = selectedFilter == filter,
@@ -185,7 +185,7 @@ fun FilesScreen(
                     contentPadding = PaddingValues(bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    items(5) {
+                    items(5, key = { it }) {
                         ShimmerFileRowCard()
                     }
                 }
@@ -255,7 +255,8 @@ fun FilesScreen(
                                 .testTag("file_item_card_${record.id}"),
                             shape = RoundedCornerShape(16.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                         ) {
                             Row(
                                 modifier = Modifier.padding(14.dp),

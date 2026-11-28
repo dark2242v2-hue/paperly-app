@@ -71,8 +71,10 @@ import androidx.compose.material.icons.filled.LockOpen
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -132,6 +134,8 @@ import androidx.compose.ui.unit.dp
 import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.PdfToolType
+import com.example.data.pdf.PdfRenderErrorType
+import com.example.data.pdf.PdfRenderOutcome
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.ShimmerPreviewCard
 import com.example.ui.components.bringIntoViewAboveKeyboard
@@ -154,6 +158,7 @@ fun PdfViewerScreen(
     recordId: Long,
     viewModel: PaperlyViewModel,
     onQuickAction: (PdfToolType, PdfRecordEntity) -> Unit,
+    onOrganizePages: (PdfRecordEntity) -> Unit = {},
     onBack: () -> Unit,
     externalOpenState: ExternalPdfOpenState? = null
 ) {
@@ -162,6 +167,7 @@ fun PdfViewerScreen(
     var unlockedRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var isPasswordProtected by remember { mutableStateOf(false) }
     var loadError by remember { mutableStateOf<String?>(null) }
+    var renderErrorDialogMessage by remember { mutableStateOf<String?>(null) }
     var overflowExpanded by remember { mutableStateOf(false) }
     var isBookMode by rememberSaveable(recordId) { mutableStateOf(false) }
 
@@ -326,6 +332,17 @@ fun PdfViewerScreen(
                                     expanded = overflowExpanded,
                                     onDismissRequest = { overflowExpanded = false }
                                 ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Organize Pages") },
+                                        leadingIcon = {
+                                            Icon(Icons.Filled.ViewCarousel, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            onOrganizePages(activeRec)
+                                        },
+                                        modifier = Modifier.testTag("viewer_menu_organize")
+                                    )
                                     DropdownMenuItem(
                                         text = { Text("Compress PDF") },
                                         leadingIcon = {
@@ -500,11 +517,50 @@ fun PdfViewerScreen(
                 pageCount = current.pageCount,
                 isBookMode = isBookMode,
                 viewModel = viewModel,
+                onRenderError = { errType ->
+                    when (errType) {
+                        PdfRenderErrorType.PASSWORD_PROTECTED -> {
+                            if (unlockedRecord == null) {
+                                isPasswordProtected = true
+                            } else {
+                                renderErrorDialogMessage = "This PDF is password-protected or corrupted."
+                            }
+                        }
+                        PdfRenderErrorType.CORRUPTED -> {
+                            renderErrorDialogMessage = "This PDF is password-protected or corrupted."
+                        }
+                        PdfRenderErrorType.NONE -> Unit
+                    }
+                },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
             )
         }
+    }
+
+    val dialogError = renderErrorDialogMessage
+    if (dialogError != null) {
+        AlertDialog(
+            onDismissRequest = {
+                renderErrorDialogMessage = null
+                onBack()
+            },
+            title = { Text("Unable to Render PDF") },
+            text = { Text(dialogError) },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        renderErrorDialogMessage = null
+                        onBack()
+                    },
+                    modifier = Modifier.testTag("viewer_corrupted_back_button")
+                ) {
+                    Text("Go Back")
+                }
+            },
+            modifier = Modifier.testTag("viewer_corrupted_dialog")
+        )
     }
 }
 
@@ -723,6 +779,7 @@ private fun HdZoomablePdfCanvas(
     pageCount: Int,
     isBookMode: Boolean,
     viewModel: PaperlyViewModel,
+    onRenderError: (PdfRenderErrorType) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
@@ -963,7 +1020,8 @@ private fun HdZoomablePdfCanvas(
                             hdRenderWidth = hdRenderWidth,
                             maxFitWidthDp = maxFitWidthDp,
                             availHeightDp = availHeightDp,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            onRenderError = onRenderError
                         )
                     }
                 }
@@ -998,7 +1056,8 @@ private fun HdZoomablePdfCanvas(
                             hdRenderWidth = hdRenderWidth,
                             maxFitWidthDp = maxFitWidthDp,
                             availHeightDp = availHeightDp,
-                            viewModel = viewModel
+                            viewModel = viewModel,
+                            onRenderError = onRenderError
                         )
                     }
                 }
@@ -1039,7 +1098,8 @@ private fun PdfFittedPageSheet(
     hdRenderWidth: Int,
     maxFitWidthDp: androidx.compose.ui.unit.Dp,
     availHeightDp: androidx.compose.ui.unit.Dp,
-    viewModel: PaperlyViewModel
+    viewModel: PaperlyViewModel,
+    onRenderError: (PdfRenderErrorType) -> Unit
 ) {
     val cachedInitial = remember(filePath, pageIndex, hdRenderWidth) {
         viewModel.pdfEngine.getCachedPageThumbnail(
@@ -1048,22 +1108,26 @@ private fun PdfFittedPageSheet(
             maxWidth = hdRenderWidth
         )
     }
-    val pageBitmap by produceState<Bitmap?>(
-        initialValue = cachedInitial,
+    val renderOutcome by produceState(
+        initialValue = PdfRenderOutcome(cachedInitial, PdfRenderErrorType.NONE),
         filePath,
         pageIndex,
         hdRenderWidth
     ) {
-        if (value == null) {
-            value = viewModel.pdfEngine.renderPageThumbnail(
+        if (value.bitmap == null) {
+            val outcome = viewModel.pdfEngine.renderPageThumbnailWithStatus(
                 filePath = filePath,
                 pageIndex = pageIndex,
                 maxWidth = hdRenderWidth
             )
+            value = outcome
+            if (outcome.errorType != PdfRenderErrorType.NONE) {
+                onRenderError(outcome.errorType)
+            }
         }
     }
 
-    val bmp = pageBitmap
+    val bmp = renderOutcome.bitmap
     val pageAspect = if (bmp != null) {
         bmp.width.toFloat() / bmp.height.coerceAtLeast(1).toFloat()
     } else {

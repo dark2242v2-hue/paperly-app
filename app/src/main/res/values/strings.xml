@@ -8,7 +8,7 @@
     <string name="nav_settings">Settings</string>
 
     <string name="home_headline">Your pocket PDF &amp; Image studio</string>
-    <string name="home_subheadline">Fast, 100% local document &amp; photo tools</string>
+    <string name="home_subheadline">Ready in seconds • Private on-device tools</string>
     <string name="recent_pdfs_title">Recent PDFs</string>
     <string name="see_all">See all</string>
     <string name="recent_empty_title">No PDFs processed yet</string>
@@ -22,32 +22,32 @@
     <string name="tool_merge_title">Merge PDF</string>
     <string name="tool_merge_desc">Combine &amp; reorder files</string>
     <string name="tool_split_title">Split PDF</string>
-    <string name="tool_split_desc">Extract page ranges</string>
+    <string name="tool_split_desc">Extract or arrange pages</string>
     <string name="tool_compress_title">Compress PDF</string>
-    <string name="tool_compress_desc">Shrink size locally</string>
+    <string name="tool_compress_desc">Shrink PDF file size</string>
     <string name="tool_scan_title">Scan to PDF</string>
-    <string name="tool_scan_desc">Camera or photos to PDF</string>
+    <string name="tool_scan_desc">100% clarity page scans</string>
     <string name="tool_ai_title">AI Summarize</string>
-    <string name="tool_ai_desc">Instant Gemini insights</string>
+    <string name="tool_ai_desc">Ready in seconds</string>
     <string name="tool_sign_title">E-Sign PDF</string>
     <string name="tool_sign_desc">Draw, drag &amp; resize</string>
     <string name="tool_lock_title">Lock PDF</string>
-    <string name="tool_lock_desc">Password-protect locally</string>
+    <string name="tool_lock_desc">Password-protect PDF</string>
 
     <string name="img_tool_compress_title">Compress Image</string>
     <string name="img_tool_compress_desc">Exact KB / MB target</string>
     <string name="img_tool_crop_title">Crop &amp; Resize</string>
     <string name="img_tool_crop_desc">Aspect ratios &amp; px size</string>
     <string name="img_tool_ocr_title">Image to Text</string>
-    <string name="img_tool_ocr_desc">Instant offline OCR</string>
+    <string name="img_tool_ocr_desc">Instant offline text</string>
     <string name="img_tool_gen_title">AI Text to Image</string>
     <string name="img_tool_gen_desc">Create art from prompts</string>
     <string name="img_tool_upscale_title">AI Upscaler 16K</string>
-    <string name="img_tool_upscale_desc">Free 2x HD • 4x–16K Pro</string>
+    <string name="img_tool_upscale_desc">2x HD free • 4x–16K Pro</string>
     <string name="img_tool_bg_title">BG Remover</string>
     <string name="img_tool_bg_desc">1-tap subject cutout</string>
     <string name="img_tool_passport_title">Passport Maker</string>
-    <string name="img_tool_passport_desc">35×45mm print sheets</string>
+    <string name="img_tool_passport_desc">1-photo or print sheets</string>
 
     <string name="banner_ad_label">Ad</string>
     <string name="banner_ad_copy">Paperly Pro — Remove all ads &amp; unlock unlimited AI</string>
@@ -55,7 +55,7 @@
 
     <string name="process_pdf">Process PDF</string>
     <string name="download_ready_title">Download Ready</string>
-    <string name="download_ready_subtitle">Processed 100% locally on your device</string>
+    <string name="download_ready_subtitle">Ready in seconds • Processed privately on your device</string>
     <string name="download_pdf">Download PDF</string>
     <string name="share_pdf">Share</string>
     <string name="open_viewer">Preview PDF</string>

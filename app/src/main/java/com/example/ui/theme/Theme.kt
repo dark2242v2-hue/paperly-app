@@ -32,7 +32,7 @@ private val PaperlyDarkColorScheme = darkColorScheme(
     surfaceVariant = PaperlyDarkSurfaceVariant,
     onSurfaceVariant = PaperlyDarkMuted,
     outline = PaperlyDarkOutline,
-    outlineVariant = Color(0xFF1E293B),
+    outlineVariant = Color(0xFF232732),
     error = PaperlyRose,
     onError = Color.White
 )
@@ -55,7 +55,7 @@ private val PaperlyLightColorScheme = lightColorScheme(
     surfaceVariant = PaperlyLightSurfaceVariant,
     onSurfaceVariant = PaperlySlateMuted,
     outline = PaperlyLightOutline,
-    outlineVariant = Color(0xFFF1F5F9),
+    outlineVariant = Color(0xFFEEF0F4),
     error = PaperlyRose,
     onError = Color.White
 )

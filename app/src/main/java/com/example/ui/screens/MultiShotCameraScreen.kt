@@ -204,7 +204,8 @@ fun MultiShotCameraScreen(
                     .also { it.surfaceProvider = previewView.surfaceProvider }
 
                 val capture = ImageCapture.Builder()
-                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY)
+                    .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+                    .setJpegQuality(100)
                     .setFlashMode(flashMode)
                     .setTargetRotation(targetRotation)
                     .build()

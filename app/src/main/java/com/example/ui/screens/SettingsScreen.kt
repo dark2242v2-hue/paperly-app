@@ -117,6 +117,7 @@ fun SettingsScreen(
             confirmButton = {
                 Button(
                     onClick = {
+                        haptics.lightTap()
                         onClearAllFiles()
                         showClearDialog = false
                     },
@@ -276,7 +277,10 @@ fun SettingsScreen(
 
                         if (!isPro) {
                             Button(
-                                onClick = onOpenProSheet,
+                                onClick = {
+                                    haptics.lightTap()
+                                    onOpenProSheet()
+                                },
                                 shape = RoundedCornerShape(12.dp),
                                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                                 modifier = Modifier
@@ -295,7 +299,10 @@ fun SettingsScreen(
                         }
 
                         OutlinedButton(
-                            onClick = onRestorePurchases,
+                            onClick = {
+                                haptics.lightTap()
+                                onRestorePurchases()
+                            },
                             enabled = !isRestoringPurchases,
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -357,7 +364,8 @@ fun SettingsScreen(
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -390,7 +398,7 @@ fun SettingsScreen(
                                 Column {
                                     Text("Dark Mode", style = MaterialTheme.typography.titleSmall)
                                     Text(
-                                        text = if (isDarkMode) "Midnight slate theme" else "Clean #F8FAFC paper white",
+                                        text = if (isDarkMode) "Rich charcoal slate theme" else "Warm alabaster light theme",
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -495,7 +503,8 @@ fun SettingsScreen(
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -530,7 +539,10 @@ fun SettingsScreen(
                         }
 
                         OutlinedButton(
-                            onClick = onClearTempCache,
+                            onClick = {
+                                haptics.lightTap()
+                                onClearTempCache()
+                            },
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                             modifier = Modifier
@@ -544,7 +556,10 @@ fun SettingsScreen(
                         }
 
                         OutlinedButton(
-                            onClick = { showClearDialog = true },
+                            onClick = {
+                                haptics.lightTap()
+                                showClearDialog = true
+                            },
                             enabled = savedFileCount > 0,
                             shape = RoundedCornerShape(12.dp),
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -566,7 +581,8 @@ fun SettingsScreen(
                 Card(
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(
                         modifier = Modifier
@@ -711,11 +727,15 @@ private fun SettingsActionRow(
     testTagName: String,
     onClick: () -> Unit
 ) {
+    val haptics = rememberPaperlyHaptics()
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .minimumInteractiveComponentSize()
-            .clickable(onClick = onClick)
+            .clickable {
+                haptics.selectionClick()
+                onClick()
+            }
             .padding(horizontal = 16.dp, vertical = 12.dp)
             .testTag(testTagName),
         verticalAlignment = Alignment.CenterVertically,

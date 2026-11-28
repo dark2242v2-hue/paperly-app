@@ -57,6 +57,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.filled.RotateRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
@@ -64,6 +65,7 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DeleteOutline
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DocumentScanner
 import androidx.compose.material.icons.filled.ErrorOutline
@@ -73,8 +75,10 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material.icons.filled.PictureAsPdf
+import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.UploadFile
+import androidx.compose.material.icons.filled.ViewCarousel
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.WorkspacePremium
@@ -105,6 +109,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -141,9 +146,12 @@ import com.example.core.formatFileSize
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.AiSummaryUiState
 import com.example.data.model.CompressionLevel
+import com.example.data.model.OrganizedPageItem
 import com.example.data.model.PdfToolType
 import com.example.data.model.PickedPdfInfo
+import com.example.data.model.ScanFilterMode
 import com.example.data.model.SignaturePlacement
+import com.example.data.model.SplitWorkspaceMode
 import com.example.data.model.TargetSizeUnit
 import com.example.ui.components.AnimatedOptionChip
 import com.example.ui.components.AnimatedSelectableCard
@@ -266,7 +274,11 @@ fun ToolWorkspaceScreen(
 
     val canProcess = when (tool) {
         PdfToolType.MERGE -> workspace.selectedPdfs.size >= 2
-        PdfToolType.SPLIT -> workspace.selectedPdfs.isNotEmpty() && workspace.splitPageRange.isNotBlank()
+        PdfToolType.SPLIT -> if (workspace.splitMode == SplitWorkspaceMode.ORGANIZE) {
+            workspace.selectedPdfs.isNotEmpty() && workspace.organizedPages.isNotEmpty()
+        } else {
+            workspace.selectedPdfs.isNotEmpty() && workspace.splitPageRange.isNotBlank()
+        }
         PdfToolType.COMPRESS -> workspace.selectedPdfs.isNotEmpty()
         PdfToolType.SCAN -> workspace.scanImageUris.isNotEmpty()
         PdfToolType.SIGN -> workspace.selectedPdfs.isNotEmpty() && signatureStrokes.isNotEmpty()
@@ -373,7 +385,7 @@ fun ToolWorkspaceScreen(
                     item {
                         ScanWorkspaceContent(
                             imageUris = workspace.scanImageUris,
-                            enhanceContrast = workspace.scanEnhanceContrast,
+                            filterMode = workspace.scanFilterMode,
                             outputName = workspace.outputFileName,
                             isLaunchingSmartScanner = isLaunchingSmartScanner,
                             onSmartScan = { launchSmartDocumentScanner() },
@@ -387,7 +399,7 @@ fun ToolWorkspaceScreen(
                             onMoveRight = viewModel::moveScanImageRight,
                             onRemoveImage = viewModel::removeScanImageAt,
                             onClearAll = viewModel::clearScanImages,
-                            onToggleEnhance = viewModel::toggleScanEnhance,
+                            onSelectFilterMode = viewModel::selectScanFilterMode,
                             onOutputNameChange = viewModel::updateOutputFileName
                         )
                     }
@@ -442,6 +454,7 @@ fun ToolWorkspaceScreen(
                                     SplitControlsCard(
                                         pdf = pdf,
                                         workspace = workspace,
+                                        viewModel = viewModel,
                                         onRangeChange = viewModel::updateSplitPageRange,
                                         onOutputNameChange = viewModel::updateOutputFileName
                                     )
@@ -612,8 +625,14 @@ fun ToolWorkspaceScreen(
                                     .testTag("process_pdf_button"),
                                 shape = RoundedCornerShape(14.dp)
                             ) {
+                                val ctaLabel = when {
+                                    workspace.processing.isProcessing -> "Processing..."
+                                    tool == PdfToolType.SPLIT && workspace.splitMode == SplitWorkspaceMode.ORGANIZE ->
+                                        "Save Organized PDF (${workspace.organizedPages.size} pages)"
+                                    else -> stringResource(R.string.process_pdf)
+                                }
                                 FittedSingleLineText(
-                                    text = if (workspace.processing.isProcessing) "Processing..." else stringResource(R.string.process_pdf),
+                                    text = ctaLabel,
                                     style = MaterialTheme.typography.labelLarge
                                 )
                             }
@@ -800,9 +819,11 @@ private fun SelectedPdfItemCard(
 private fun SplitControlsCard(
     pdf: PickedPdfInfo,
     workspace: WorkspaceUiState,
+    viewModel: PaperlyViewModel,
     onRangeChange: (String) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
+    val haptics = rememberPaperlyHaptics()
     Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -812,68 +833,165 @@ private fun SplitControlsCard(
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Text(
-                text = "Pages to Extract (1–${pdf.pageCount})",
-                style = MaterialTheme.typography.titleSmall
-            )
-
-            OutlinedTextField(
-                value = workspace.splitPageRange,
-                onValueChange = onRangeChange,
-                label = { Text("Page range (e.g. 1-3, 5)") },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .bringIntoViewAboveKeyboard()
-                    .testTag("split_range_input")
-            )
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                val presets = buildList {
-                    add("Page 1" to "1")
-                    if (pdf.pageCount >= 2) add("First 2" to "1-2")
-                    if (pdf.pageCount >= 3) add("Last Page" to "${pdf.pageCount}")
-                    add("All" to "all")
-                }
-                items(presets) { (label, value) ->
-                    AnimatedOptionChip(
-                        label = label,
-                        selected = workspace.splitPageRange.equals(value, ignoreCase = true),
-                        onClick = { onRangeChange(value) }
-                    )
-                }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                AnimatedOptionChip(
+                    label = "Extract Range",
+                    selected = workspace.splitMode == SplitWorkspaceMode.RANGE,
+                    onClick = { viewModel.setSplitMode(SplitWorkspaceMode.RANGE) },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("split_mode_range")
+                )
+                AnimatedOptionChip(
+                    label = "Organize Pages",
+                    selected = workspace.splitMode == SplitWorkspaceMode.ORGANIZE,
+                    onClick = { viewModel.setSplitMode(SplitWorkspaceMode.ORGANIZE) },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Filled.ViewCarousel,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("split_mode_organize")
+                )
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                val bmp = workspace.previewThumbnail
-                if (bmp != null) {
-                    Image(
-                        bitmap = bmp.asImageBitmap(),
-                        contentDescription = "Page 1 preview",
-                        modifier = Modifier
-                            .size(width = 56.dp, height = 74.dp)
-                            .clip(RoundedCornerShape(8.dp)),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    ShimmerBox(
-                        modifier = Modifier.size(width = 56.dp, height = 74.dp),
-                        shape = RoundedCornerShape(8.dp)
+            if (workspace.splitMode == SplitWorkspaceMode.RANGE) {
+                Text(
+                    text = "Pages to Extract (1–${pdf.pageCount})",
+                    style = MaterialTheme.typography.titleSmall
+                )
+
+                OutlinedTextField(
+                    value = workspace.splitPageRange,
+                    onValueChange = onRangeChange,
+                    label = { Text("Page range (e.g. 1-3, 5)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .bringIntoViewAboveKeyboard()
+                        .testTag("split_range_input")
+                )
+
+                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    val presets = buildList {
+                        add("Page 1" to "1")
+                        if (pdf.pageCount >= 2) add("First 2" to "1-2")
+                        if (pdf.pageCount >= 3) add("Last Page" to "${pdf.pageCount}")
+                        add("All" to "all")
+                    }
+                    items(presets, key = { it.second }) { (label, value) ->
+                        AnimatedOptionChip(
+                            label = label,
+                            selected = workspace.splitPageRange.equals(value, ignoreCase = true),
+                            onClick = { onRangeChange(value) }
+                        )
+                    }
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    val bmp = workspace.previewThumbnail
+                    if (bmp != null) {
+                        Image(
+                            bitmap = bmp.asImageBitmap(),
+                            contentDescription = "Page 1 preview",
+                            modifier = Modifier
+                                .size(width = 56.dp, height = 74.dp)
+                                .clip(RoundedCornerShape(8.dp)),
+                            contentScale = ContentScale.Crop
+                        )
+                    } else {
+                        ShimmerBox(
+                            modifier = Modifier.size(width = 56.dp, height = 74.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        )
+                    }
+                    Text(
+                        text = if (bmp != null) {
+                            "Page 1 preview shown. Extracted pages preserve original vector quality."
+                        } else {
+                            "Rendering page 1 preview..."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Text(
-                    text = if (bmp != null) {
-                        "Page 1 preview shown. Extracted pages preserve original vector quality."
-                    } else {
-                        "Rendering page 1 preview..."
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Organize Pages (${workspace.organizedPages.size} of ${pdf.pageCount})",
+                            style = MaterialTheme.typography.titleSmall
+                        )
+                        Text(
+                            text = "Rotate 90°, reorder left/right, or remove pages",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    TextButton(
+                        onClick = {
+                            haptics.lightTap()
+                            viewModel.resetOrganizedPages()
+                        },
+                        modifier = Modifier
+                            .heightIn(min = 48.dp)
+                            .testTag("organizer_reset_button")
+                    ) {
+                        Icon(Icons.Filled.RestartAlt, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Reset")
+                    }
+                }
+
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    contentPadding = PaddingValues(vertical = 2.dp),
+                    modifier = Modifier.testTag("organizer_pages_row")
+                ) {
+                    itemsIndexed(
+                        items = workspace.organizedPages,
+                        key = { _, page -> page.id }
+                    ) { index, pageItem ->
+                        OrganizerPageCard(
+                            pdfPath = pdf.localPath,
+                            pageItem = pageItem,
+                            index = index,
+                            total = workspace.organizedPages.size,
+                            viewModel = viewModel,
+                            onRotate = {
+                                haptics.selectionClick()
+                                viewModel.rotateOrganizedPage90(index)
+                            },
+                            onMoveLeft = {
+                                haptics.lightTap()
+                                viewModel.moveOrganizedPageLeft(index)
+                            },
+                            onMoveRight = {
+                                haptics.lightTap()
+                                viewModel.moveOrganizedPageRight(index)
+                            },
+                            onDelete = {
+                                haptics.lightTap()
+                                viewModel.deleteOrganizedPage(index)
+                            }
+                        )
+                    }
+                }
             }
 
             OutputNameField(
@@ -881,6 +999,165 @@ private fun SplitControlsCard(
                 onValueChange = onOutputNameChange,
                 helper = null
             )
+        }
+    }
+}
+
+@Composable
+private fun OrganizerPageCard(
+    pdfPath: String,
+    pageItem: OrganizedPageItem,
+    index: Int,
+    total: Int,
+    viewModel: PaperlyViewModel,
+    onRotate: () -> Unit,
+    onMoveLeft: () -> Unit,
+    onMoveRight: () -> Unit,
+    onDelete: () -> Unit
+) {
+    val thumb by produceState<android.graphics.Bitmap?>(
+        initialValue = viewModel.pdfEngine.getCachedPageThumbnail(pdfPath, pageItem.originalPageIndex, 240),
+        pdfPath,
+        pageItem.originalPageIndex
+    ) {
+        if (value == null) {
+            value = viewModel.pdfEngine.renderPageThumbnail(pdfPath, pageItem.originalPageIndex, 240)
+        }
+    }
+
+    Card(
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        modifier = Modifier
+            .width(142.dp)
+            .testTag("organizer_card_$index")
+    ) {
+        Column(
+            modifier = Modifier.padding(8.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(142.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White),
+                contentAlignment = Alignment.Center
+            ) {
+                val bmp = thumb
+                if (bmp != null) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Page ${pageItem.originalPageIndex + 1}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(4.dp)
+                            .graphicsLayer {
+                                rotationZ = pageItem.rotationDegrees.toFloat()
+                            }
+                    )
+                } else {
+                    ShimmerBox(
+                        modifier = Modifier.fillMaxSize(),
+                        shape = RoundedCornerShape(10.dp)
+                    )
+                }
+
+                Surface(
+                    shape = CircleShape,
+                    color = Color.Black.copy(alpha = 0.68f),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(6.dp)
+                ) {
+                    Text(
+                        text = "#${pageItem.originalPageIndex + 1}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = Color.White,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                    )
+                }
+
+                if (pageItem.rotationDegrees != 0) {
+                    Surface(
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(6.dp)
+                    ) {
+                        Text(
+                            text = "${pageItem.rotationDegrees}°",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(
+                    onClick = onMoveLeft,
+                    enabled = index > 0,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("organizer_left_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                        contentDescription = "Move page left",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onRotate,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("organizer_rotate_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.RotateRight,
+                        contentDescription = "Rotate 90 degrees",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onMoveRight,
+                    enabled = index < total - 1,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("organizer_right_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = "Move page right",
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+                IconButton(
+                    onClick = onDelete,
+                    enabled = total > 1,
+                    modifier = Modifier
+                        .size(34.dp)
+                        .testTag("organizer_delete_$index")
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.DeleteOutline,
+                        contentDescription = "Delete page",
+                        tint = if (total > 1) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
         }
     }
 }
@@ -1015,7 +1292,7 @@ private fun CompressControlsCard(
                     }
 
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(presets) { (label, valueStr, unit) ->
+                        items(presets, key = { it.first }) { (label, valueStr, unit) ->
                             val isSelected = useExactTarget && targetValue == valueStr && targetUnit == unit
                             AnimatedOptionChip(
                                 label = label,
@@ -1069,7 +1346,7 @@ private fun CompressControlsCard(
 @Composable
 private fun ScanWorkspaceContent(
     imageUris: List<Uri>,
-    enhanceContrast: Boolean,
+    filterMode: ScanFilterMode,
     outputName: String,
     isLaunchingSmartScanner: Boolean,
     onSmartScan: () -> Unit,
@@ -1079,7 +1356,7 @@ private fun ScanWorkspaceContent(
     onMoveRight: (Int) -> Unit,
     onRemoveImage: (Int) -> Unit,
     onClearAll: () -> Unit,
-    onToggleEnhance: (Boolean) -> Unit,
+    onSelectFilterMode: (ScanFilterMode) -> Unit,
     onOutputNameChange: (String) -> Unit
 ) {
     val context = LocalContext.current
@@ -1107,7 +1384,7 @@ private fun ScanWorkspaceContent(
                 subtitle = stringResource(R.string.scan_mode_smart_desc),
                 icon = Icons.Filled.DocumentScanner,
                 iconTint = MaterialTheme.colorScheme.primary,
-                iconContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.14f),
+                iconContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
                 badgeText = stringResource(R.string.scan_mode_smart_badge),
                 pillTags = if (isLaunchingSmartScanner) {
                     listOf("Opening Smart Scanner…")
@@ -1118,7 +1395,10 @@ private fun ScanWorkspaceContent(
                 enabled = !isLaunchingSmartScanner,
                 isLoading = isLaunchingSmartScanner,
                 testTagName = "scan_mode_smart_card",
-                onClick = onSmartScan
+                onClick = {
+                    haptics.selectionClick()
+                    onSmartScan()
+                }
             )
 
             // Card 2: Normal Camera (Multi-Shot)
@@ -1127,14 +1407,17 @@ private fun ScanWorkspaceContent(
                 subtitle = stringResource(R.string.scan_mode_normal_desc),
                 icon = Icons.Filled.CameraAlt,
                 iconTint = MaterialTheme.colorScheme.secondary,
-                iconContainerColor = MaterialTheme.colorScheme.secondaryContainer,
-                badgeText = null,
-                pillTags = listOf("Multi-Shot", "Live Strip"),
+                iconContainerColor = MaterialTheme.colorScheme.secondary.copy(alpha = 0.12f),
+                badgeText = "Full Sensor",
+                pillTags = listOf("Max Clarity", "Multi-Shot"),
                 highlighted = false,
                 enabled = true,
                 isLoading = false,
                 testTagName = "scan_mode_normal_card",
-                onClick = onOpenMultiShotCamera
+                onClick = {
+                    haptics.selectionClick()
+                    onOpenMultiShotCamera()
+                }
             )
 
             // Card 3: Import from Gallery
@@ -1143,14 +1426,17 @@ private fun ScanWorkspaceContent(
                 subtitle = stringResource(R.string.scan_mode_gallery_desc),
                 icon = Icons.Filled.PhotoLibrary,
                 iconTint = MaterialTheme.colorScheme.tertiary,
-                iconContainerColor = MaterialTheme.colorScheme.tertiaryContainer,
+                iconContainerColor = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.12f),
                 badgeText = null,
                 pillTags = listOf("Multi-Select", "Photos & Screenshots"),
                 highlighted = false,
                 enabled = true,
                 isLoading = false,
                 testTagName = "scan_mode_gallery_card",
-                onClick = onPickFromGallery
+                onClick = {
+                    haptics.selectionClick()
+                    onPickFromGallery()
+                }
             )
 
             if (imageUris.isNotEmpty()) {
@@ -1326,9 +1612,9 @@ private fun ScanWorkspaceContent(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(36.dp)
-                                        .clip(RoundedCornerShape(10.dp))
-                                        .background(MaterialTheme.colorScheme.primaryContainer),
+                                        .size(38.dp)
+                                        .clip(RoundedCornerShape(12.dp))
+                                        .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Icon(
@@ -1339,18 +1625,33 @@ private fun ScanWorkspaceContent(
                                     )
                                 }
                                 Column(modifier = Modifier.weight(1f)) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = "Scan Quality & Filter",
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.SemiBold,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        if (filterMode == ScanFilterMode.ORIGINAL) {
+                                            Surface(
+                                                shape = CircleShape,
+                                                color = PaperlyEmerald.copy(alpha = 0.14f)
+                                            ) {
+                                                Text(
+                                                    text = "100% Clarity",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = PaperlyEmerald,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+                                    }
                                     Text(
-                                        text = "Scan Color Mode",
-                                        style = MaterialTheme.typography.titleSmall,
-                                        fontWeight = FontWeight.SemiBold,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    Text(
-                                        text = if (enhanceContrast) {
-                                            "High-contrast black & white document filter"
-                                        } else {
-                                            "Keeps natural or Smart Scanner colors"
-                                        },
+                                        text = filterMode.description,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -1369,81 +1670,60 @@ private fun ScanWorkspaceContent(
                                         .padding(4.dp),
                                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                                 ) {
-                                    val originalSelected = !enhanceContrast
-                                    val originalBg by animateColorAsState(
-                                        targetValue = if (originalSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                                        label = "scan_orig_bg"
-                                    )
-                                    val originalTextColor by animateColorAsState(
-                                        targetValue = if (originalSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                                        label = "scan_orig_text"
-                                    )
-                                    val origInteraction = remember { MutableInteractionSource() }
+                                    ScanFilterMode.entries.forEach { mode ->
+                                        val isSelected = filterMode == mode
+                                        val pillBg by animateColorAsState(
+                                            targetValue = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                                            animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                            label = "scan_mode_bg_${mode.name}"
+                                        )
+                                        val pillTextColor by animateColorAsState(
+                                            targetValue = if (isSelected) {
+                                                MaterialTheme.colorScheme.onPrimary
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
+                                            animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                                            label = "scan_mode_text_${mode.name}"
+                                        )
+                                        val modeInteraction = remember { MutableInteractionSource() }
 
-                                    Surface(
-                                        onClick = {
-                                            haptics.selectionClick()
-                                            onToggleEnhance(false)
-                                        },
-                                        interactionSource = origInteraction,
-                                        shape = CircleShape,
-                                        color = originalBg,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .heightIn(min = 48.dp)
-                                            .pressScaleEffect(origInteraction)
-                                            .testTag("scan_color_mode_original")
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "Original",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = if (originalSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = originalTextColor
-                                            )
-                                        }
-                                    }
-
-                                    val bwSelected = enhanceContrast
-                                    val bwBg by animateColorAsState(
-                                        targetValue = if (bwSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                                        label = "scan_bw_bg"
-                                    )
-                                    val bwTextColor by animateColorAsState(
-                                        targetValue = if (bwSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
-                                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                                        label = "scan_bw_text"
-                                    )
-                                    val bwInteraction = remember { MutableInteractionSource() }
-
-                                    Surface(
-                                        onClick = {
-                                            haptics.selectionClick()
-                                            onToggleEnhance(true)
-                                        },
-                                        interactionSource = bwInteraction,
-                                        shape = CircleShape,
-                                        color = bwBg,
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .heightIn(min = 48.dp)
-                                            .pressScaleEffect(bwInteraction)
-                                            .testTag("scan_color_mode_bw")
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "Crisp B&W",
-                                                style = MaterialTheme.typography.labelLarge,
-                                                fontWeight = if (bwSelected) FontWeight.Bold else FontWeight.Medium,
-                                                color = bwTextColor
-                                            )
+                                        Surface(
+                                            onClick = {
+                                                haptics.selectionClick()
+                                                onSelectFilterMode(mode)
+                                            },
+                                            interactionSource = modeInteraction,
+                                            shape = CircleShape,
+                                            color = pillBg,
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .heightIn(min = 48.dp)
+                                                .pressScaleEffect(modeInteraction)
+                                                .testTag("scan_color_mode_${mode.name.lowercase()}")
+                                        ) {
+                                            Box(
+                                                contentAlignment = Alignment.Center,
+                                                modifier = Modifier.padding(horizontal = 6.dp)
+                                            ) {
+                                                FittedSingleLineText(
+                                                    text = mode.shortLabel,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                                    color = pillTextColor
+                                                )
+                                            }
                                         }
                                     }
                                 }
                             }
+
+                            Text(
+                                text = "100% crystal clarity • Need smaller KB for a portal? Use Compress PDF",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.testTag("scan_clarity_helper_hint")
+                            )
                         }
                     }
 
@@ -1477,7 +1757,7 @@ private fun ScanModeOptionCard(
     Card(
         onClick = onClick,
         enabled = enabled,
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (highlighted) {
                 MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
@@ -1493,6 +1773,7 @@ private fun ScanModeOptionCard(
                 MaterialTheme.colorScheme.outline
             }
         ),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (highlighted) 2.dp else 1.dp),
         modifier = Modifier
             .fillMaxWidth()
             .testTag(testTagName)
@@ -1500,14 +1781,14 @@ private fun ScanModeOptionCard(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(14.dp))
                     .background(iconContainerColor),
                 contentAlignment = Alignment.Center
             ) {
@@ -1857,7 +2138,7 @@ private fun SignControlsCard(
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("Quick Snap Position", style = MaterialTheme.typography.labelMedium)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(SignaturePlacement.entries) { placement ->
+                    items(SignaturePlacement.entries, key = { it.name }) { placement ->
                         AnimatedOptionChip(
                             label = placement.label,
                             selected = workspace.signPlacement == placement,

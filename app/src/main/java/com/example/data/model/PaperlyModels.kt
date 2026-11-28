@@ -35,6 +35,28 @@ enum class SignaturePlacement(val label: String) {
     CENTER("Center")
 }
 
+enum class ScanFilterMode(
+    val label: String,
+    val shortLabel: String,
+    val description: String
+) {
+    ORIGINAL(
+        label = "Original (100% Clarity)",
+        shortLabel = "Original",
+        description = "Full native sensor clarity with zero compression or filtering"
+    ),
+    MAGIC_COLOR(
+        label = "Magic Color",
+        shortLabel = "Magic Color",
+        description = "Brightens paper & sharpens ink while keeping natural color"
+    ),
+    CRISP_BW(
+        label = "Crisp B&W",
+        shortLabel = "Crisp B&W",
+        description = "High-contrast black & white document filter"
+    )
+}
+
 data class PickedPdfInfo(
     val id: String,
     val displayName: String,
@@ -174,8 +196,28 @@ data class ProcessedImageResult(
     val originalHeight: Int?,
     val operationLabel: String,
     val secondaryPdfRecordId: Long? = null,
-    val originalFilePath: String? = null
+    val originalFilePath: String? = null,
+    val batchExportFilePath: String? = null,
+    val batchExportMimeType: String? = null,
+    val batchFileCount: Int = 1
 )
+
+enum class SplitWorkspaceMode(val label: String) {
+    RANGE("Page Range"),
+    ORGANIZE("Organize Pages")
+}
+
+data class OrganizedPageItem(
+    val id: String,
+    val originalPageIndex: Int,
+    val rotationDegrees: Int = 0
+)
+
+enum class BatchCompressExportMode(val label: String, val subtitle: String) {
+    SINGLE_PDF("Single PDF", "Combine all compressed photos into 1 PDF"),
+    ZIP_ARCHIVE("ZIP Archive", "Bundle all compressed images into a .zip"),
+    GALLERY_IMAGES("Save Images", "Save each compressed photo to Gallery")
+}
 
 data class RecentImageItem(
     val displayName: String,
@@ -204,4 +246,5 @@ sealed interface OcrUiState {
     data class Success(val text: String, val wordCount: Int, val charCount: Int) : OcrUiState
     data class Error(val message: String) : OcrUiState
 }
+
 

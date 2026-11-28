@@ -22,8 +22,10 @@ import android.text.TextPaint
 import android.util.LruCache
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.CompressionLevel
+import com.example.data.model.OrganizedPageItem
 import com.example.data.model.PdfAiPayload
 import com.example.data.model.PickedPdfInfo
+import com.example.data.model.ScanFilterMode
 import com.example.data.model.SignaturePlacement
 import com.tom_roush.pdfbox.android.PDFBoxResourceLoader
 import com.tom_roush.pdfbox.io.MemoryUsageSetting
@@ -44,6 +46,8 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
@@ -53,6 +57,17 @@ import kotlin.math.roundToInt
 data class UnlockedPdfResult(
     val unlockedFilePath: String,
     val pageCount: Int
+)
+
+enum class PdfRenderErrorType {
+    NONE,
+    PASSWORD_PROTECTED,
+    CORRUPTED
+}
+
+data class PdfRenderOutcome(
+    val bitmap: Bitmap? = null,
+    val errorType: PdfRenderErrorType = PdfRenderErrorType.NONE
 )
 
 class PdfEngine(private val context: Context) {
@@ -102,11 +117,17 @@ class PdfEngine(private val context: Context) {
         val safeName = sanitizeFileName(displayName)
         val tempFile = File(context.cacheDir, "picked_${UUID.randomUUID()}_$safeName")
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(tempFile).use { output ->
-                input.copyTo(output)
+        val copied = runCatching {
+            openUriInputStream(uri)?.use { input ->
+                FileOutputStream(tempFile).use { output ->
+                    input.copyTo(output)
+                }
             }
-        } ?: throw IllegalStateException("Unable to read selected PDF file.")
+        }.getOrNull()
+        if (copied == null || !tempFile.exists() || tempFile.length() <= 0L) {
+            runCatching { tempFile.delete() }
+            throw IllegalStateException("Unable to read selected PDF file.")
+        }
 
         val pageCount = countPages(tempFile)
         if (pageCount <= 0) {
@@ -135,12 +156,7 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(cleanName)
 
         try {
-            val openedStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
-                ?: if (uri.scheme.equals("file", ignoreCase = true)) {
-                    uri.path?.let { path -> File(path).takeIf { it.exists() && it.canRead() }?.inputStream() }
-                } else {
-                    null
-                }
+            val openedStream = openUriInputStream(uri)
                 ?: throw IllegalStateException("Unable to read opened PDF file.")
 
             openedStream.use { input ->
@@ -342,6 +358,60 @@ class PdfEngine(private val context: Context) {
         )
     }
 
+    suspend fun organizePdfPages(
+        file: PickedPdfInfo,
+        organizedPages: List<OrganizedPageItem>,
+        outputName: String,
+        onProgress: (Float, String) -> Unit
+    ): PdfRecordEntity = withContext(Dispatchers.IO) {
+        ensurePdfBoxInit()
+        val srcFile = File(file.localPath)
+        require(srcFile.exists()) { "Source PDF not found." }
+        require(organizedPages.isNotEmpty()) { "Keep at least 1 page before saving." }
+
+        val baseName = outputName.ifBlank {
+            file.displayName.removeSuffix(".pdf") + "_organized"
+        }
+        val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
+
+        onProgress(0.15f, "Loading PDF pages...")
+        try {
+            PDDocument.load(srcFile, MemoryUsageSetting.setupTempFileOnly()).use { sourceDoc ->
+                PDDocument().use { targetDoc ->
+                    val sourceCount = sourceDoc.numberOfPages
+                    organizedPages.forEachIndexed { idx, spec ->
+                        require(spec.originalPageIndex in 0 until sourceCount) {
+                            "Invalid page index ${spec.originalPageIndex + 1}."
+                        }
+                        val imported = targetDoc.importPage(sourceDoc.getPage(spec.originalPageIndex))
+                        val combinedRot = (((imported.rotation + spec.rotationDegrees) % 360) + 360) % 360
+                        imported.rotation = combinedRot
+                        val progress = 0.20f + 0.68f * ((idx + 1).toFloat() / organizedPages.size)
+                        onProgress(progress, "Arranging page ${idx + 1} of ${organizedPages.size}...")
+                    }
+                    onProgress(0.92f, "Saving organized PDF...")
+                    targetDoc.save(outFile)
+                }
+            }
+        } catch (e: InvalidPasswordException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: Exception) {
+            outFile.delete()
+            throw e
+        }
+
+        onProgress(1f, "Organized PDF saved")
+        PdfRecordEntity(
+            displayName = outFile.name,
+            filePath = outFile.absolutePath,
+            pageCount = organizedPages.size,
+            sizeBytes = outFile.length(),
+            originalSizeBytes = file.sizeBytes,
+            operationTag = "Organized"
+        )
+    }
+
     suspend fun compressPdf(
         file: PickedPdfInfo,
         level: CompressionLevel,
@@ -358,9 +428,8 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
         onProgress(0.10f, "Inspecting ${file.pageCount} pages...")
-        val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
         try {
-            pfd.use { descriptor ->
+            ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 PdfRenderer(descriptor).use { renderer ->
                     val pageCount = renderer.pageCount
                     PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { outDoc ->
@@ -401,6 +470,9 @@ class PdfEngine(private val context: Context) {
         } catch (e: SecurityException) {
             outFile.delete()
             throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: IOException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF appears corrupted or unreadable.", e)
         } catch (e: Exception) {
             outFile.delete()
             throw e
@@ -452,9 +524,8 @@ class PdfEngine(private val context: Context) {
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
         onProgress(0.08f, "Analyzing ${file.pageCount} pages for target size...")
-        val pfd = ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY)
         try {
-            pfd.use { descriptor ->
+            ParcelFileDescriptor.open(srcFile, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 PdfRenderer(descriptor).use { renderer ->
                 val pageCount = max(1, renderer.pageCount)
                 val pdfOverhead = 2_400L + pageCount * 520L
@@ -558,6 +629,9 @@ class PdfEngine(private val context: Context) {
         } catch (e: SecurityException) {
             outFile.delete()
             throw IllegalStateException("This PDF is password-protected. Unlock it in the viewer first.", e)
+        } catch (e: IOException) {
+            outFile.delete()
+            throw IllegalStateException("This PDF appears corrupted or unreadable.", e)
         } catch (e: Exception) {
             outFile.delete()
             throw e
@@ -582,63 +656,65 @@ class PdfEngine(private val context: Context) {
 
     suspend fun imagesToPdf(
         imageUris: List<Uri>,
-        grayscaleEnhance: Boolean,
+        filterMode: ScanFilterMode = ScanFilterMode.ORIGINAL,
         outputName: String,
         onProgress: (Float, String) -> Unit
     ): PdfRecordEntity = withContext(Dispatchers.IO) {
         require(imageUris.isNotEmpty()) { "Add at least 1 photo or scan to create a PDF." }
-        ensurePdfBoxInit()
 
         val baseName = outputName.ifBlank { "Paperly_Scan" }
         val outFile = uniqueOutputFile(ensurePdfExtension(sanitizeFileName(baseName)))
 
-        onProgress(0.10f, "Preparing ${imageUris.size} scanned page(s)...")
-        PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+        onProgress(0.08f, "Preparing ${imageUris.size} full-clarity page(s)...")
+        val pdfDocument = PdfDocument()
+        val drawPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+
+        try {
             imageUris.forEachIndexed { idx, uri ->
-                val rawBitmap = decodeSampledBitmap(uri, maxDimension = 1800)
+                val rawBitmap = decodeFullResolutionScanBitmap(uri)
                     ?: throw IllegalStateException("Could not decode image #${idx + 1}")
-                val processedBitmap = if (grayscaleEnhance) {
-                    applyDocumentScanFilter(rawBitmap).also { rawBitmap.recycle() }
-                } else {
-                    rawBitmap
+
+                val processedBitmap = when (filterMode) {
+                    ScanFilterMode.ORIGINAL -> rawBitmap
+                    ScanFilterMode.MAGIC_COLOR -> try {
+                        applyMagicColorFilter(rawBitmap)
+                    } finally {
+                        if (!rawBitmap.isRecycled) rawBitmap.recycle()
+                    }
+                    ScanFilterMode.CRISP_BW -> try {
+                        applyCrispBwFilter(rawBitmap)
+                    } finally {
+                        if (!rawBitmap.isRecycled) rawBitmap.recycle()
+                    }
                 }
 
-                val isLandscape = processedBitmap.width > processedBitmap.height
-                val pageRect = if (isLandscape) {
-                    PDRectangle(PDRectangle.A4.height, PDRectangle.A4.width)
-                } else {
-                    PDRectangle.A4
-                }
-                val page = PDPage(pageRect)
-                doc.addPage(page)
-
-                val margin = 24f
-                val availW = pageRect.width - margin * 2f
-                val availH = pageRect.height - margin * 2f
-                val scale = min(
-                    availW / processedBitmap.width.toFloat(),
-                    availH / processedBitmap.height.toFloat()
-                )
-                val drawW = processedBitmap.width * scale
-                val drawH = processedBitmap.height * scale
-                val drawX = (pageRect.width - drawW) / 2f
-                val drawY = (pageRect.height - drawH) / 2f
-
-                val baos = ByteArrayOutputStream()
-                processedBitmap.compress(Bitmap.CompressFormat.JPEG, 86, baos)
-                processedBitmap.recycle()
-
-                val pdImage = JPEGFactory.createFromStream(doc, ByteArrayInputStream(baos.toByteArray()))
-                PDPageContentStream(doc, page).use { cs ->
-                    cs.drawImage(pdImage, drawX, drawY, drawW, drawH)
+                try {
+                    val pageWidth = processedBitmap.width.coerceAtLeast(1)
+                    val pageHeight = processedBitmap.height.coerceAtLeast(1)
+                    val pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, idx + 1).create()
+                    val page = pdfDocument.startPage(pageInfo)
+                    page.canvas.drawColor(Color.WHITE)
+                    page.canvas.drawBitmap(processedBitmap, 0f, 0f, drawPaint)
+                    pdfDocument.finishPage(page)
+                } finally {
+                    if (!processedBitmap.isRecycled) {
+                        processedBitmap.recycle()
+                    }
                 }
 
-                val progress = 0.15f + 0.75f * ((idx + 1).toFloat() / imageUris.size)
-                onProgress(progress, "Processing page ${idx + 1} of ${imageUris.size}...")
+                val progress = 0.14f + 0.74f * ((idx + 1).toFloat() / imageUris.size)
+                onProgress(progress, "Embedding page ${idx + 1} of ${imageUris.size} at 100% clarity...")
             }
 
-            onProgress(0.95f, "Saving scanned PDF...")
-            doc.save(outFile)
+            onProgress(0.94f, "Saving crystal-clear PDF...")
+            FileOutputStream(outFile).use { fos ->
+                pdfDocument.writeTo(fos)
+            }
+        } catch (t: Throwable) {
+            runCatching { if (outFile.exists()) outFile.delete() }
+            throw t
+        } finally {
+            pdfDocument.close()
         }
 
         onProgress(1f, "Scan PDF ready")
@@ -956,19 +1032,27 @@ class PdfEngine(private val context: Context) {
         filePath: String,
         pageIndex: Int = 0,
         maxWidth: Int = 720
-    ): Bitmap? = withContext(Dispatchers.IO) {
+    ): Bitmap? = renderPageThumbnailWithStatus(filePath, pageIndex, maxWidth).bitmap
+
+    suspend fun renderPageThumbnailWithStatus(
+        filePath: String,
+        pageIndex: Int = 0,
+        maxWidth: Int = 720
+    ): PdfRenderOutcome = withContext(Dispatchers.IO) {
         val file = File(filePath)
-        if (!file.exists()) return@withContext null
+        if (!file.exists()) return@withContext PdfRenderOutcome(null, PdfRenderErrorType.CORRUPTED)
         val targetKey = buildTargetKey(filePath, pageIndex, maxWidth)
         val cacheKey = "${filePath}|${file.lastModified()}|$pageIndex|$maxWidth"
         latestPageKeyByTarget[targetKey] = cacheKey
         pageThumbnailCache.get(cacheKey)?.takeIf { !it.isRecycled }?.let { cached ->
-            return@withContext cached
+            return@withContext PdfRenderOutcome(cached, PdfRenderErrorType.NONE)
         }
-        runCatching {
+        try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
-                    if (renderer.pageCount == 0) return@runCatching null
+                    if (renderer.pageCount == 0) {
+                        return@withContext PdfRenderOutcome(null, PdfRenderErrorType.CORRUPTED)
+                    }
                     val clampedIndex = pageIndex.coerceIn(0, renderer.pageCount - 1)
                     renderer.openPage(clampedIndex).use { page ->
                         val ratio = page.height.toFloat() / max(1, page.width).toFloat()
@@ -986,18 +1070,24 @@ class PdfEngine(private val context: Context) {
                         page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
                         pageThumbnailCache.put(cacheKey, bmp)
                         latestPageKeyByTarget[targetKey] = cacheKey
-                        bmp
+                        PdfRenderOutcome(bmp, PdfRenderErrorType.NONE)
                     }
                 }
             }
-        }.getOrNull()
+        } catch (_: SecurityException) {
+            PdfRenderOutcome(null, PdfRenderErrorType.PASSWORD_PROTECTED)
+        } catch (_: IOException) {
+            PdfRenderOutcome(null, PdfRenderErrorType.CORRUPTED)
+        } catch (_: Throwable) {
+            PdfRenderOutcome(null, PdfRenderErrorType.CORRUPTED)
+        }
     }
 
     private fun renderPreviewPages(filePath: String, maxPages: Int, maxWidth: Int): List<Bitmap> {
         val file = File(filePath)
         if (!file.exists()) return emptyList()
         val result = mutableListOf<Bitmap>()
-        runCatching {
+        try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
                 PdfRenderer(pfd).use { renderer ->
                     val count = min(renderer.pageCount, maxPages)
@@ -1014,6 +1104,12 @@ class PdfEngine(private val context: Context) {
                     }
                 }
             }
+        } catch (_: SecurityException) {
+            // Password-protected PDFs cannot be rasterized directly without unlocking.
+        } catch (_: IOException) {
+            // Corrupted or unreadable PDF.
+        } catch (_: Throwable) {
+            // Defensive guard for vendor PdfRenderer quirks.
         }
         return result
     }
@@ -1047,20 +1143,20 @@ class PdfEngine(private val context: Context) {
 
     suspend fun importScanUris(uris: List<Uri>): List<Uri> = withContext(Dispatchers.IO) {
         uris.mapNotNull { sourceUri ->
-            runCatching {
-                val destFile = createScanTempFile()
-                context.contentResolver.openInputStream(sourceUri)?.use { input ->
+            val destFile = createScanTempFile()
+            val copied = runCatching {
+                openUriInputStream(sourceUri)?.use { input ->
                     FileOutputStream(destFile).use { output ->
                         input.copyTo(output)
                     }
-                } ?: return@runCatching null
-                if (destFile.length() <= 0L) {
-                    destFile.delete()
-                    null
-                } else {
-                    fileToProviderUri(destFile)
                 }
             }.getOrNull()
+            if (copied == null || !destFile.exists() || destFile.length() <= 0L) {
+                runCatching { destFile.delete() }
+                null
+            } else {
+                fileToProviderUri(destFile)
+            }
         }
     }
 
@@ -1074,16 +1170,22 @@ class PdfEngine(private val context: Context) {
     }
 
     fun countPages(file: File): Int {
-        return runCatching {
+        if (!file.exists()) return 0
+        try {
             ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
-                PdfRenderer(pfd).use { renderer -> renderer.pageCount }
+                PdfRenderer(pfd).use { renderer -> return renderer.pageCount }
             }
-        }.getOrElse {
-            runCatching {
-                ensurePdfBoxInit()
-                PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { it.numberOfPages }
-            }.getOrDefault(0)
+        } catch (_: SecurityException) {
+            return 0
+        } catch (_: IOException) {
+            // Fall back to PDFBox count below.
+        } catch (_: Throwable) {
+            // Fall back to PDFBox count below.
         }
+        return runCatching {
+            ensurePdfBoxInit()
+            PDDocument.load(file, MemoryUsageSetting.setupTempFileOnly()).use { it.numberOfPages }
+        }.getOrDefault(0)
     }
 
     private fun parsePageRange(spec: String, totalPages: Int): List<Int> {
@@ -1121,11 +1223,60 @@ class PdfEngine(private val context: Context) {
         return pages.distinct()
     }
 
+    private fun decodeFullResolutionScanBitmap(uri: Uri): Bitmap? {
+        val sampleSizes = intArrayOf(1, 2)
+        var decoded: Bitmap? = null
+        for (sample in sampleSizes) {
+            val decodeOpts = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            val candidate = try {
+                openUriInputStream(uri)?.use {
+                    BitmapFactory.decodeStream(it, null, decodeOpts)
+                }
+            } catch (_: OutOfMemoryError) {
+                System.gc()
+                null
+            } catch (_: Throwable) {
+                null
+            }
+            if (candidate != null) {
+                decoded = candidate
+                break
+            }
+        }
+        val baseBitmap = decoded ?: return null
+        val rotation = readExifRotation(uri)
+        if (rotation == 0f) return baseBitmap
+        val matrix = Matrix().apply { postRotate(rotation) }
+        return try {
+            val rotated = Bitmap.createBitmap(
+                baseBitmap,
+                0,
+                0,
+                baseBitmap.width,
+                baseBitmap.height,
+                matrix,
+                true
+            )
+            if (rotated !== baseBitmap && !baseBitmap.isRecycled) {
+                baseBitmap.recycle()
+            }
+            rotated
+        } catch (_: OutOfMemoryError) {
+            baseBitmap
+        }
+    }
+
     private fun decodeSampledBitmap(uri: Uri, maxDimension: Int): Bitmap? {
         val boundsOpts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, boundsOpts)
+        runCatching {
+            openUriInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, boundsOpts)
+            }
         }
+        if (boundsOpts.outWidth <= 0 || boundsOpts.outHeight <= 0) return null
         var sampleSize = 1
         while (boundsOpts.outWidth / sampleSize > maxDimension ||
             boundsOpts.outHeight / sampleSize > maxDimension
@@ -1134,21 +1285,25 @@ class PdfEngine(private val context: Context) {
         }
 
         val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-        val decoded = context.contentResolver.openInputStream(uri)?.use {
-            BitmapFactory.decodeStream(it, null, decodeOpts)
-        } ?: return null
+        val decoded = runCatching {
+            openUriInputStream(uri)?.use {
+                BitmapFactory.decodeStream(it, null, decodeOpts)
+            }
+        }.getOrNull() ?: return null
 
         val rotation = readExifRotation(uri)
         if (rotation == 0f) return decoded
         val matrix = Matrix().apply { postRotate(rotation) }
-        return Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also {
-            if (it !== decoded) decoded.recycle()
-        }
+        return runCatching {
+            Bitmap.createBitmap(decoded, 0, 0, decoded.width, decoded.height, matrix, true).also {
+                if (it !== decoded) decoded.recycle()
+            }
+        }.getOrElse { decoded }
     }
 
     private fun readExifRotation(uri: Uri): Float {
         return runCatching {
-            context.contentResolver.openInputStream(uri)?.use { stream ->
+            openUriInputStream(uri)?.use { stream ->
                 val exif = ExifInterface(stream)
                 when (exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)) {
                     ExifInterface.ORIENTATION_ROTATE_90 -> 90f
@@ -1160,11 +1315,46 @@ class PdfEngine(private val context: Context) {
         }.getOrDefault(0f)
     }
 
-    private fun applyDocumentScanFilter(source: Bitmap): Bitmap {
+    private fun openUriInputStream(uri: Uri): InputStream? {
+        val resolverStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+        if (resolverStream != null) return resolverStream
+        if (uri.scheme.equals("file", ignoreCase = true)) {
+            val file = uri.path?.let { File(it) }
+            if (file != null && file.exists() && file.canRead()) {
+                return runCatching { file.inputStream() }.getOrNull()
+            }
+        }
+        return null
+    }
+
+    private fun applyMagicColorFilter(source: Bitmap): Bitmap {
+        val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(out)
+        val saturation = ColorMatrix().apply { setSaturation(1.14f) }
+        val contrast = 1.18f
+        val brightnessLift = 12f
+        val translate = (-0.5f * contrast + 0.5f) * 255f + brightnessLift
+        val enhanceMatrix = ColorMatrix(
+            floatArrayOf(
+                contrast, 0f, 0f, 0f, translate,
+                0f, contrast, 0f, 0f, translate,
+                0f, 0f, contrast, 0f, translate,
+                0f, 0f, 0f, 1f, 0f
+            )
+        )
+        saturation.postConcat(enhanceMatrix)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(saturation)
+        }
+        canvas.drawBitmap(source, 0f, 0f, paint)
+        return out
+    }
+
+    private fun applyCrispBwFilter(source: Bitmap): Bitmap {
         val out = Bitmap.createBitmap(source.width, source.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(out)
         val grayscale = ColorMatrix().apply { setSaturation(0f) }
-        val contrast = 1.35f
+        val contrast = 1.38f
         val translate = (-0.5f * contrast + 0.5f) * 255f
         val contrastMatrix = ColorMatrix(
             floatArrayOf(
@@ -1175,7 +1365,9 @@ class PdfEngine(private val context: Context) {
             )
         )
         grayscale.postConcat(contrastMatrix)
-        val paint = Paint().apply { colorFilter = ColorMatrixColorFilter(grayscale) }
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG).apply {
+            colorFilter = ColorMatrixColorFilter(grayscale)
+        }
         canvas.drawBitmap(source, 0f, 0f, paint)
         return out
     }

@@ -2,28 +2,28 @@ package com.example.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Paperly Light Theme Tokens (#F8FAFC paper white + #4F46E5 deep indigo)
-val PaperlyLightBackground = Color(0xFFF8FAFC)
+// Paperly Light Studio Tokens (warm alabaster #F8F9FB + crisp #FFFFFF + hairline #E5E7EB)
+val PaperlyLightBackground = Color(0xFFF8F9FB)
 val PaperlyLightSurface = Color(0xFFFFFFFF)
-val PaperlyLightSurfaceVariant = Color(0xFFF1F5F9)
+val PaperlyLightSurfaceVariant = Color(0xFFF1F3F6)
 val PaperlyIndigo = Color(0xFF4F46E5)
 val PaperlyIndigoDark = Color(0xFF3730A3)
 val PaperlyIndigoTint = Color(0xFFEEF2FF)
 val PaperlyOnIndigoTint = Color(0xFF312E81)
 val PaperlySlateInk = Color(0xFF0F172A)
 val PaperlySlateMuted = Color(0xFF64748B)
-val PaperlyLightOutline = Color(0xFFE2E8F0)
+val PaperlyLightOutline = Color(0xFFE5E7EB)
 
-// Paperly Dark Theme Tokens
-val PaperlyDarkBackground = Color(0xFF0B1120)
-val PaperlyDarkSurface = Color(0xFF111827)
-val PaperlyDarkSurfaceVariant = Color(0xFF1E293B)
+// Paperly Dark Studio Tokens (rich charcoal slate #111318 + #1A1D24 + hairline #2A2F3A)
+val PaperlyDarkBackground = Color(0xFF111318)
+val PaperlyDarkSurface = Color(0xFF1A1D24)
+val PaperlyDarkSurfaceVariant = Color(0xFF232732)
 val PaperlyDarkIndigo = Color(0xFF6366F1)
 val PaperlyDarkIndigoTint = Color(0xFF1E1B4B)
 val PaperlyDarkOnIndigoTint = Color(0xFFE0E7FF)
 val PaperlyDarkText = Color(0xFFF8FAFC)
 val PaperlyDarkMuted = Color(0xFF94A3B8)
-val PaperlyDarkOutline = Color(0xFF283548)
+val PaperlyDarkOutline = Color(0xFF2A2F3A)
 
 // Semantic Accents
 val PaperlySky = Color(0xFF0284C7)

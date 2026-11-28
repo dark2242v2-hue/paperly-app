@@ -3,6 +3,12 @@ package com.example
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
+import com.example.data.model.BatchCompressExportMode
+import com.example.data.model.ImageOutputFormat
+import com.example.data.model.OrganizedPageItem
+import com.example.data.model.ProcessedImageResult
+import com.example.data.model.ScanFilterMode
+import com.example.data.model.SplitWorkspaceMode
 import com.example.data.model.UpscaleTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -46,5 +52,51 @@ class ExampleUnitTest {
         val proTargets = UpscaleTarget.entries.filter { it != UpscaleTarget.HD_2X }
         assertEquals(listOf(UpscaleTarget.ULTRA_4X, UpscaleTarget.RES_8K, UpscaleTarget.MAX_16K), proTargets)
         assertTrue(proTargets.all { it.maxEdgePx >= 7680 })
+    }
+
+    @Test
+    fun pageOrganizer_andBatchCompressModels_haveExpectedDefaultsAndModes() {
+        assertEquals(listOf(SplitWorkspaceMode.RANGE, SplitWorkspaceMode.ORGANIZE), SplitWorkspaceMode.entries)
+        val page = OrganizedPageItem(id = "org_0_0", originalPageIndex = 0)
+        assertEquals(0, page.rotationDegrees)
+
+        assertEquals(
+            listOf(
+                BatchCompressExportMode.SINGLE_PDF,
+                BatchCompressExportMode.ZIP_ARCHIVE,
+                BatchCompressExportMode.GALLERY_IMAGES
+            ),
+            BatchCompressExportMode.entries
+        )
+
+        val result = ProcessedImageResult(
+            filePath = "/tmp/sample.jpg",
+            displayName = "sample.jpg",
+            width = 800,
+            height = 600,
+            sizeBytes = 1024L,
+            originalSizeBytes = 4096L,
+            originalWidth = 1600,
+            originalHeight = 1200,
+            format = ImageOutputFormat.JPG,
+            operationLabel = "Compressed"
+        )
+        assertNull(result.batchExportFilePath)
+        assertNull(result.batchExportMimeType)
+        assertEquals(1, result.batchFileCount)
+    }
+
+    @Test
+    fun scanFilterMode_defaultsToOriginalAndIncludesAllModes() {
+        assertEquals(ScanFilterMode.ORIGINAL, ScanFilterMode.entries.first())
+        assertEquals("Original (100% Clarity)", ScanFilterMode.ORIGINAL.label)
+        assertEquals(
+            listOf(
+                ScanFilterMode.ORIGINAL,
+                ScanFilterMode.MAGIC_COLOR,
+                ScanFilterMode.CRISP_BW
+            ),
+            ScanFilterMode.entries
+        )
     }
 }

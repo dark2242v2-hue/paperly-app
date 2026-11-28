@@ -79,6 +79,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.R
 import com.example.core.formatFileSize
 import com.example.core.formatTimestamp
@@ -311,7 +312,7 @@ fun HomeScreen(
                     Brush.linearGradient(
                         colors = listOf(
                             PaperlyIndigoTint,
-                            Color(0xFFF1F5F9),
+                            Color(0xFFF1F3F6),
                             MaterialTheme.colorScheme.surface
                         )
                     )
@@ -416,7 +417,7 @@ fun HomeScreen(
 
                 Column(
                     modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -440,7 +441,7 @@ fun HomeScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(IntrinsicSize.Max),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            horizontalArrangement = Arrangement.spacedBy(14.dp)
                         ) {
                             rowItems.forEach { spec ->
                                 ToolActionCard(
@@ -499,7 +500,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.testTag("recent_pdfs_shimmer_row")
                             ) {
-                                items(3) {
+                                items(3, key = { it }) {
                                     ShimmerRecentPdfCard()
                                 }
                             }
@@ -584,7 +585,7 @@ fun HomeScreen(
                                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                                 modifier = Modifier.testTag("recent_images_shimmer_row")
                             ) {
-                                items(3) {
+                                items(3, key = { it }) {
                                     ShimmerRecentImageCard()
                                 }
                             }
@@ -762,20 +763,20 @@ private fun FeaturedFullWidthToolCard(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 14.dp),
+                .padding(16.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(RoundedCornerShape(13.dp))
-                    .background(spec.softBg),
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(spec.accent.copy(alpha = 0.12f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -791,14 +792,17 @@ private fun FeaturedFullWidthToolCard(
             ) {
                 Text(
                     text = stringResource(spec.titleRes),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = stringResource(spec.descRes),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
@@ -838,7 +842,8 @@ private fun RecentPdfCard(
             .testTag("recent_pdf_card_${record.id}"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
@@ -934,7 +939,8 @@ private fun RecentImageCard(
             .testTag("recent_image_card"),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -1011,18 +1017,18 @@ private fun ToolActionCard(
         },
         interactionSource = interactionSource,
         modifier = modifier
-            .defaultMinSize(minHeight = 136.dp)
+            .defaultMinSize(minHeight = 132.dp)
             .pressScaleEffect(interactionSource)
             .testTag("tool_card_${spec.key}"),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(14.dp),
+                .padding(16.dp),
             verticalArrangement = Arrangement.SpaceBetween
         ) {
             Row(
@@ -1033,22 +1039,22 @@ private fun ToolActionCard(
                 Box(
                     modifier = Modifier
                         .size(44.dp)
-                        .clip(RoundedCornerShape(13.dp))
-                        .background(spec.softBg),
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(spec.accent.copy(alpha = 0.12f)),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         imageVector = spec.icon,
                         contentDescription = stringResource(spec.titleRes),
                         tint = spec.accent,
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier.size(23.dp)
                     )
                 }
 
                 if (spec.badge != null) {
                     Surface(
                         shape = CircleShape,
-                        color = spec.accent.copy(alpha = 0.14f)
+                        color = spec.accent.copy(alpha = 0.12f)
                     ) {
                         Text(
                             text = spec.badge,
@@ -1061,23 +1067,24 @@ private fun ToolActionCard(
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(
                     text = stringResource(spec.titleRes),
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    ),
                     color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    softWrap = true,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
                     text = stringResource(spec.descRes),
-                    style = MaterialTheme.typography.bodySmall,
+                    style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    softWrap = true,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
             }

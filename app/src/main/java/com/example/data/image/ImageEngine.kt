@@ -24,6 +24,7 @@ import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.core.content.FileProvider
 import com.example.data.local.PdfRecordEntity
+import com.example.data.model.BatchCompressExportMode
 import com.example.data.model.BgBrushStroke
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.OcrUiState
@@ -54,12 +55,19 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlin.math.max
@@ -145,11 +153,17 @@ class ImageEngine(private val context: Context) {
         val pickedDir = File(context.cacheDir, "picked_images").apply { mkdirs() }
         val tempFile = File(pickedDir, "img_${UUID.randomUUID()}_$safeName")
 
-        context.contentResolver.openInputStream(uri)?.use { input ->
-            FileOutputStream(tempFile).use { out ->
-                input.copyTo(out)
+        val copied = runCatching {
+            openUriInputStream(uri)?.use { input ->
+                FileOutputStream(tempFile).use { out ->
+                    input.copyTo(out)
+                }
             }
-        } ?: throw IllegalStateException("Unable to read selected image.")
+        }.getOrNull()
+        if (copied == null || !tempFile.exists() || tempFile.length() <= 0L) {
+            runCatching { tempFile.delete() }
+            throw IllegalStateException("Unable to read selected image.")
+        }
 
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeFile(tempFile.absolutePath, bounds)
@@ -286,6 +300,278 @@ class ImageEngine(private val context: Context) {
         )
     }
 
+    suspend fun batchCompressImages(
+        items: List<PickedImageInfo>,
+        targetBytesPerImage: Long,
+        format: ImageOutputFormat,
+        exportMode: BatchCompressExportMode,
+        pdfsDir: File,
+        onProgress: (Float, String) -> Unit
+    ): Pair<ProcessedImageResult, PdfRecordEntity?> = withContext(Dispatchers.Default) {
+        require(items.isNotEmpty()) { "Select at least 1 image for batch compression." }
+        val clampedTarget = targetBytesPerImage.coerceAtLeast(2_048L)
+        val total = items.size
+        val completedCount = AtomicInteger(0)
+        val semaphore = Semaphore(permits = 3)
+
+        val compressFormat = when (format) {
+            ImageOutputFormat.JPG -> Bitmap.CompressFormat.JPEG
+            ImageOutputFormat.WEBP -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    Bitmap.CompressFormat.WEBP_LOSSY
+                } else {
+                    @Suppress("DEPRECATION")
+                    Bitmap.CompressFormat.WEBP
+                }
+            }
+            ImageOutputFormat.PNG -> Bitmap.CompressFormat.JPEG
+        }
+        val outputFormatActual = if (format == ImageOutputFormat.PNG) ImageOutputFormat.JPG else format
+
+        data class BatchCompressedItem(
+            val index: Int,
+            val fileName: String,
+            val bytes: ByteArray,
+            val width: Int,
+            val height: Int
+        )
+
+        onProgress(0.06f, "Compressing $total images in parallel...")
+        val compressedList = coroutineScope {
+            items.mapIndexed { idx, info ->
+                async(Dispatchers.Default) {
+                    semaphore.withPermit {
+                        currentCoroutineContext().ensureActive()
+                        val srcFile = File(info.localPath)
+                        require(srcFile.exists()) { "Source image missing: ${info.displayName}" }
+                        val baseBitmap = decodeSampledFileBitmap(srcFile, 3072)
+                            ?: throw IllegalStateException("Could not decode ${info.displayName}.")
+                        val scaleSteps = floatArrayOf(1.0f, 0.85f, 0.70f, 0.55f, 0.40f, 0.28f, 0.18f, 0.12f)
+                        var bestBytes: ByteArray? = null
+                        var bestW = baseBitmap.width
+                        var bestH = baseBitmap.height
+                        try {
+                            for (scale in scaleSteps) {
+                                currentCoroutineContext().ensureActive()
+                                val working = if (scale >= 0.999f) {
+                                    baseBitmap
+                                } else {
+                                    val tw = (baseBitmap.width * scale).roundToInt().coerceAtLeast(32)
+                                    val th = (baseBitmap.height * scale).roundToInt().coerceAtLeast(32)
+                                    Bitmap.createScaledBitmap(baseBitmap, tw, th, true)
+                                }
+                                try {
+                                    val hi = compressToByteArray(working, compressFormat, 92)
+                                    if (hi.size <= clampedTarget) {
+                                        bestBytes = hi
+                                        bestW = working.width
+                                        bestH = working.height
+                                        break
+                                    }
+                                    val lo = compressToByteArray(working, compressFormat, 14)
+                                    if (lo.size <= clampedTarget) {
+                                        var qLo = 14
+                                        var qHi = 92
+                                        var chosen = lo
+                                        while (qLo <= qHi) {
+                                            val mid = (qLo + qHi) ushr 1
+                                            val attempt = compressToByteArray(working, compressFormat, mid)
+                                            if (attempt.size <= clampedTarget) {
+                                                chosen = attempt
+                                                qLo = mid + 1
+                                            } else {
+                                                qHi = mid - 1
+                                            }
+                                        }
+                                        bestBytes = chosen
+                                        bestW = working.width
+                                        bestH = working.height
+                                        break
+                                    }
+                                    if (bestBytes == null || lo.size < bestBytes!!.size) {
+                                        bestBytes = lo
+                                        bestW = working.width
+                                        bestH = working.height
+                                    }
+                                } finally {
+                                    if (working !== baseBitmap) working.recycle()
+                                }
+                            }
+                        } finally {
+                            baseBitmap.recycle()
+                        }
+                        val done = completedCount.incrementAndGet()
+                        onProgress(
+                            0.10f + 0.65f * (done.toFloat() / total.toFloat()),
+                            "Compressed $done of $total images..."
+                        )
+                        val stem = sanitizeFileName(info.displayName.substringBeforeLast('.'))
+                        BatchCompressedItem(
+                            index = idx,
+                            fileName = "${stem}_${idx + 1}_compressed.${outputFormatActual.ext}",
+                            bytes = bestBytes ?: throw IllegalStateException("Compression failed for ${info.displayName}"),
+                            width = bestW,
+                            height = bestH
+                        )
+                    }
+                }
+            }.awaitAll().sortedBy { it.index }
+        }
+
+        val totalOriginalBytes = items.sumOf { it.sizeBytes }
+        val firstItem = compressedList.first()
+        val previewFile = withContext(Dispatchers.IO) {
+            val f = uniqueImageOutputFile("Batch_Preview_${System.currentTimeMillis()}.${outputFormatActual.ext}")
+            FileOutputStream(f).use { it.write(firstItem.bytes) }
+            f
+        }
+
+        when (exportMode) {
+            BatchCompressExportMode.SINGLE_PDF -> {
+                onProgress(0.82f, "Building combined PDF (${compressedList.size} pages)...")
+                val pdfRecord = withContext(Dispatchers.IO) {
+                    pdfsDir.mkdirs()
+                    PDFBoxResourceLoader.init(context.applicationContext)
+                    var pdfOut = File(pdfsDir, "Paperly_Batch_Compressed_${System.currentTimeMillis()}.pdf")
+                    var suffix = 2
+                    while (pdfOut.exists()) {
+                        pdfOut = File(pdfsDir, "Paperly_Batch_Compressed_${System.currentTimeMillis()}_$suffix.pdf")
+                        suffix++
+                    }
+                    PDDocument(MemoryUsageSetting.setupTempFileOnly()).use { doc ->
+                        compressedList.forEach { entry ->
+                            val bmp = BitmapFactory.decodeByteArray(entry.bytes, 0, entry.bytes.size)
+                                ?: throw IllegalStateException("Failed to decode compressed image.")
+                            try {
+                                val isLandscape = bmp.width > bmp.height
+                                val pageRect = if (isLandscape) {
+                                    PDRectangle(PDRectangle.A4.height, PDRectangle.A4.width)
+                                } else {
+                                    PDRectangle.A4
+                                }
+                                val pdPage = PDPage(pageRect)
+                                doc.addPage(pdPage)
+                                val margin = 20f
+                                val availW = pageRect.width - margin * 2f
+                                val availH = pageRect.height - margin * 2f
+                                val scale = min(availW / bmp.width.toFloat(), availH / bmp.height.toFloat())
+                                val drawW = bmp.width * scale
+                                val drawH = bmp.height * scale
+                                val drawX = (pageRect.width - drawW) / 2f
+                                val drawY = (pageRect.height - drawH) / 2f
+                                val pdImg = JPEGFactory.createFromStream(doc, ByteArrayInputStream(entry.bytes))
+                                PDPageContentStream(doc, pdPage).use { cs ->
+                                    cs.drawImage(pdImg, drawX, drawY, drawW, drawH)
+                                }
+                            } finally {
+                                bmp.recycle()
+                            }
+                        }
+                        doc.save(pdfOut)
+                    }
+                    PdfRecordEntity(
+                        displayName = pdfOut.name,
+                        filePath = pdfOut.absolutePath,
+                        pageCount = compressedList.size,
+                        sizeBytes = pdfOut.length(),
+                        originalSizeBytes = totalOriginalBytes,
+                        operationTag = "Batch PDF"
+                    )
+                }
+                onProgress(1f, "Batch PDF created")
+                val result = ProcessedImageResult(
+                    displayName = pdfRecord.displayName,
+                    filePath = previewFile.absolutePath,
+                    format = outputFormatActual,
+                    width = firstItem.width,
+                    height = firstItem.height,
+                    sizeBytes = pdfRecord.sizeBytes,
+                    originalSizeBytes = totalOriginalBytes,
+                    originalWidth = items.first().width,
+                    originalHeight = items.first().height,
+                    operationLabel = "Batch Compressed PDF (${compressedList.size} imgs)",
+                    batchExportFilePath = pdfRecord.filePath,
+                    batchExportMimeType = "application/pdf",
+                    batchFileCount = compressedList.size
+                )
+                result to pdfRecord
+            }
+
+            BatchCompressExportMode.ZIP_ARCHIVE -> {
+                onProgress(0.84f, "Creating ZIP archive...")
+                val zipFile = withContext(Dispatchers.IO) {
+                    val outZip = uniqueImageOutputFile("Paperly_Batch_Compressed_${System.currentTimeMillis()}.zip")
+                    val usedNames = HashSet<String>()
+                    ZipOutputStream(FileOutputStream(outZip)).use { zos ->
+                        compressedList.forEach { entry ->
+                            var entryName = entry.fileName
+                            var n = 2
+                            while (!usedNames.add(entryName)) {
+                                val stem = entry.fileName.substringBeforeLast('.')
+                                val ext = entry.fileName.substringAfterLast('.')
+                                entryName = "${stem}_$n.$ext"
+                                n++
+                            }
+                            zos.putNextEntry(ZipEntry(entryName))
+                            zos.write(entry.bytes)
+                            zos.closeEntry()
+                        }
+                    }
+                    outZip
+                }
+                onProgress(1f, "ZIP archive created")
+                val result = ProcessedImageResult(
+                    displayName = zipFile.name,
+                    filePath = previewFile.absolutePath,
+                    format = outputFormatActual,
+                    width = firstItem.width,
+                    height = firstItem.height,
+                    sizeBytes = zipFile.length(),
+                    originalSizeBytes = totalOriginalBytes,
+                    originalWidth = items.first().width,
+                    originalHeight = items.first().height,
+                    operationLabel = "Batch Compressed ZIP (${compressedList.size} imgs)",
+                    batchExportFilePath = zipFile.absolutePath,
+                    batchExportMimeType = "application/zip",
+                    batchFileCount = compressedList.size
+                )
+                result to null
+            }
+
+            BatchCompressExportMode.GALLERY_IMAGES -> {
+                onProgress(0.82f, "Saving ${compressedList.size} compressed images to Gallery...")
+                var totalCompressedBytes = 0L
+                withContext(Dispatchers.IO) {
+                    compressedList.forEachIndexed { idx, entry ->
+                        val tempFile = uniqueImageOutputFile(entry.fileName)
+                        FileOutputStream(tempFile).use { it.write(entry.bytes) }
+                        totalCompressedBytes += tempFile.length()
+                        saveImageToGallery(tempFile.absolutePath, tempFile.name, outputFormatActual)
+                        onProgress(
+                            0.82f + 0.18f * ((idx + 1).toFloat() / compressedList.size),
+                            "Saved ${idx + 1} of ${compressedList.size}..."
+                        )
+                    }
+                }
+                onProgress(1f, "All images saved to Gallery")
+                val result = ProcessedImageResult(
+                    displayName = "${compressedList.size}_compressed_images",
+                    filePath = previewFile.absolutePath,
+                    format = outputFormatActual,
+                    width = firstItem.width,
+                    height = firstItem.height,
+                    sizeBytes = totalCompressedBytes,
+                    originalSizeBytes = totalOriginalBytes,
+                    originalWidth = items.first().width,
+                    originalHeight = items.first().height,
+                    operationLabel = "Batch Compressed (${compressedList.size} Images)",
+                    batchFileCount = compressedList.size
+                )
+                result to null
+            }
+        }
+    }
+
     suspend fun cropRotateResize(
         info: PickedImageInfo,
         cropLeftNorm: Float,
@@ -396,9 +682,15 @@ class ImageEngine(private val context: Context) {
         } ?: run {
             val tempDir = File(context.cacheDir, "ocr_temp").apply { mkdirs() }
             val temp = File(tempDir, "ocr_${UUID.randomUUID()}.jpg")
-            context.contentResolver.openInputStream(imageUri)?.use { input ->
-                FileOutputStream(temp).use { out -> input.copyTo(out) }
-            } ?: throw IllegalStateException("Unable to read image for text recognition.")
+            val copied = runCatching {
+                openUriInputStream(imageUri)?.use { input ->
+                    FileOutputStream(temp).use { out -> input.copyTo(out) }
+                }
+            }.getOrNull()
+            if (copied == null || !temp.exists() || temp.length() <= 0L) {
+                runCatching { temp.delete() }
+                throw IllegalStateException("Unable to read image for text recognition.")
+            }
             tempCopiedFile = temp
             temp
         }
@@ -601,7 +893,7 @@ class ImageEngine(private val context: Context) {
     ): ProcessedImageResult = withContext(Dispatchers.IO) {
         val srcFile = File(cutoutPngPath)
         require(srcFile.exists()) { "Cutout bitmap not found." }
-        val decodedFg = BitmapFactory.decodeFile(srcFile.absolutePath)
+        val decodedFg = decodeSampledFileBitmap(srcFile, maxDimension = 4096)
             ?: throw IllegalStateException("Could not decode cutout image.")
 
         val mutableFg = if (decodedFg.isMutable) {
@@ -611,7 +903,7 @@ class ImageEngine(private val context: Context) {
         }
 
         val alignedOrig = if (strokes.any { !it.isErase } && !alignedOriginalPath.isNullOrBlank()) {
-            BitmapFactory.decodeFile(alignedOriginalPath)?.let { raw ->
+            decodeSampledFileBitmap(File(alignedOriginalPath), maxDimension = 4096)?.let { raw ->
                 if (raw.width == mutableFg.width && raw.height == mutableFg.height) {
                     raw
                 } else {
@@ -1250,6 +1542,48 @@ class ImageEngine(private val context: Context) {
             counter++
         }
         return candidate
+    }
+
+    suspend fun renameOutputFile(
+        currentPath: String,
+        requestedName: String,
+        desiredExtension: String
+    ): File = withContext(Dispatchers.IO) {
+        val srcFile = File(currentPath)
+        require(srcFile.exists()) { "Output file no longer exists." }
+        val ext = desiredExtension.trimStart('.').ifBlank { srcFile.extension.ifBlank { "jpg" } }
+        val cleanedStem = sanitizeFileName(
+            requestedName.trim()
+                .removeSuffix(".$ext")
+                .removeSuffix(".${ext.uppercase()}")
+        )
+        val parent = srcFile.parentFile ?: imagesDir
+        var destFile = File(parent, "$cleanedStem.$ext")
+        if (destFile.absolutePath == srcFile.absolutePath) return@withContext srcFile
+        var counter = 2
+        while (destFile.exists()) {
+            destFile = File(parent, "${cleanedStem}_$counter.$ext")
+            counter++
+        }
+        val moved = srcFile.renameTo(destFile) || run {
+            srcFile.copyTo(destFile, overwrite = false)
+            srcFile.delete()
+            destFile.exists()
+        }
+        check(moved) { "Could not rename file on storage." }
+        destFile
+    }
+
+    private fun openUriInputStream(uri: Uri): InputStream? {
+        val resolverStream = runCatching { context.contentResolver.openInputStream(uri) }.getOrNull()
+        if (resolverStream != null) return resolverStream
+        if (uri.scheme.equals("file", ignoreCase = true)) {
+            val file = uri.path?.let { File(it) }
+            if (file != null && file.exists() && file.canRead()) {
+                return runCatching { file.inputStream() }.getOrNull()
+            }
+        }
+        return null
     }
 
     private fun resolveDisplayName(uri: Uri): String? {

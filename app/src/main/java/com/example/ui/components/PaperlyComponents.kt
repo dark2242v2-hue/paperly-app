@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -16,6 +17,7 @@ import android.view.ViewGroup
 import android.widget.Button as AndroidButton
 import android.widget.ImageView
 import android.widget.TextView
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -56,17 +58,22 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Chat
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DocumentScanner
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material.icons.outlined.Folder
@@ -88,6 +95,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -1575,3 +1583,294 @@ fun renderSignatureBitmap(strokes: List<List<Offset>>, canvasSize: IntSize): Bit
     }
     return bitmap
 }
+
+fun shareFileToWhatsApp(
+    context: Context,
+    shareUri: Uri,
+    mimeType: String,
+    chooserTitle: String = "Share File"
+) {
+    val whatsappIntent = Intent(Intent.ACTION_SEND).apply {
+        type = mimeType
+        putExtra(Intent.EXTRA_STREAM, shareUri)
+        setPackage("com.whatsapp")
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+    val launchedWhatsApp = runCatching {
+        context.startActivity(whatsappIntent)
+        true
+    }.getOrDefault(false)
+
+    if (!launchedWhatsApp) {
+        val businessIntent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            setPackage("com.whatsapp.w4b")
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        val launchedBusiness = runCatching {
+            context.startActivity(businessIntent)
+            true
+        }.getOrDefault(false)
+
+        if (!launchedBusiness) {
+            runCatching {
+                val fallback = Intent(Intent.ACTION_SEND).apply {
+                    type = mimeType
+                    putExtra(Intent.EXTRA_STREAM, shareUri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(fallback, chooserTitle))
+            }.onFailure {
+                Toast.makeText(context, "Unable to share file right now.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+}
+
+fun shareFileViaSystemChooser(
+    context: Context,
+    shareUri: Uri,
+    mimeType: String,
+    chooserTitle: String = "Share File"
+) {
+    runCatching {
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = mimeType
+            putExtra(Intent.EXTRA_STREAM, shareUri)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        }
+        context.startActivity(Intent.createChooser(intent, chooserTitle))
+    }.onFailure {
+        Toast.makeText(context, "Unable to share file right now.", Toast.LENGTH_SHORT).show()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ExportCompletionActionSheet(
+    visible: Boolean,
+    displayName: String,
+    savingsHeadline: String,
+    beforeAfterLine: String?,
+    onOpen: () -> Unit,
+    onShareWhatsApp: () -> Unit,
+    onShareSystem: () -> Unit,
+    onRename: suspend (String) -> Boolean,
+    onDismiss: () -> Unit
+) {
+    if (!visible) return
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val coroutineScope = rememberCoroutineScope()
+    val haptics = rememberPaperlyHaptics()
+    val stemDefault = remember(displayName) { displayName.substringBeforeLast('.') }
+    var renameText by remember(displayName) { mutableStateOf(stemDefault) }
+    var isRenaming by remember { mutableStateOf(false) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = MaterialTheme.colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .verticalScroll(rememberScrollState())
+                .windowInsetsPadding(WindowInsets.navigationBars)
+                .padding(horizontal = 24.dp, vertical = 10.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(PaperlyEmerald.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.CheckCircle,
+                            contentDescription = "Exported",
+                            tint = PaperlyEmerald,
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Column {
+                        Text(
+                            text = "Export Ready!",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                        Text(
+                            text = displayName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("export_sheet_close_button")
+                ) {
+                    Icon(Icons.Filled.Close, contentDescription = "Close")
+                }
+            }
+
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = PaperlyEmerald.copy(alpha = 0.10f),
+                border = BorderStroke(1.dp, PaperlyEmerald.copy(alpha = 0.30f)),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                ) {
+                    Text(
+                        text = savingsHeadline,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = PaperlyEmerald
+                    )
+                    if (!beforeAfterLine.isNullOrBlank()) {
+                        Text(
+                            text = beforeAfterLine,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Button(
+                    onClick = {
+                        haptics.lightTap()
+                        onShareWhatsApp()
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF16A34A),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .weight(1.1f)
+                        .heightIn(min = 50.dp)
+                        .testTag("export_sheet_whatsapp_button")
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    FittedSingleLineText("WhatsApp", fontWeight = FontWeight.Bold)
+                }
+
+                OutlinedButton(
+                    onClick = {
+                        haptics.lightTap()
+                        onShareSystem()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .heightIn(min = 50.dp)
+                        .testTag("export_sheet_share_button")
+                ) {
+                    Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    FittedSingleLineText("System Share")
+                }
+            }
+
+            OutlinedButton(
+                onClick = {
+                    haptics.lightTap()
+                    onOpen()
+                },
+                shape = RoundedCornerShape(14.dp),
+                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 48.dp)
+                    .testTag("export_sheet_open_button")
+            ) {
+                Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                FittedSingleLineText("Open File")
+            }
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+
+            Text(
+                text = "Rename Output File",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = renameText,
+                    onValueChange = { renameText = it },
+                    label = { Text("File name") },
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = null)
+                    },
+                    modifier = Modifier
+                        .weight(1f)
+                        .bringIntoViewAboveKeyboard()
+                        .testTag("export_sheet_rename_input")
+                )
+                Button(
+                    onClick = {
+                        if (isRenaming || renameText.isBlank()) return@Button
+                        isRenaming = true
+                        coroutineScope.launch {
+                            val ok = onRename(renameText)
+                            isRenaming = false
+                            if (ok) haptics.confirmSuccess()
+                        }
+                    },
+                    enabled = !isRenaming && renameText.isNotBlank(),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .heightIn(min = 52.dp)
+                        .testTag("export_sheet_rename_save_button")
+                ) {
+                    if (isRenaming) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = Color.White)
+                    } else {
+                        Icon(Icons.Filled.Check, contentDescription = "Save name", modifier = Modifier.size(18.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Save")
+                    }
+                }
+            }
+        }
+    }
+}
+

@@ -1,7 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
@@ -35,7 +35,7 @@ fun Modifier.pressScaleEffect(
     val isPressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
         targetValue = if (isPressed) pressedScale else 1f,
-        animationSpec = tween(durationMillis = 100, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "press_scale"
     )
     this.graphicsLayer {
@@ -61,7 +61,7 @@ fun AnimatedOptionChip(
         } else {
             MaterialTheme.colorScheme.surface
         },
-        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "chip_bg"
     )
     val borderColor by animateColorAsState(
@@ -70,7 +70,7 @@ fun AnimatedOptionChip(
         } else {
             MaterialTheme.colorScheme.outline
         },
-        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "chip_border"
     )
     val textColor by animateColorAsState(
@@ -79,7 +79,7 @@ fun AnimatedOptionChip(
         } else {
             MaterialTheme.colorScheme.onSurfaceVariant
         },
-        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "chip_text"
     )
 
@@ -127,12 +127,12 @@ fun AnimatedSelectableCard(
 
     val containerColor by animateColorAsState(
         targetValue = if (selected) selectedContainerColor else unselectedContainerColor,
-        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "card_bg"
     )
     val borderColor by animateColorAsState(
         targetValue = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
-        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+        animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
         label = "card_border"
     )
 

@@ -25,14 +25,19 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -62,17 +67,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ProcessedImageResult
+import com.example.ui.components.ExportCompletionActionSheet
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.SplitBeforeAfterComparisonPreview
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.TransparencyCheckerboardCanvas
 import com.example.ui.components.rememberPaperlyHaptics
+import com.example.ui.components.shareFileToWhatsApp
+import com.example.ui.components.shareFileViaSystemChooser
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 import kotlinx.coroutines.delay
@@ -91,6 +100,20 @@ fun ImageResultScreen(
     val haptics = rememberPaperlyHaptics()
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var originalBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var showExportActionSheet by rememberSaveable(result?.filePath, result?.batchExportFilePath) {
+        mutableStateOf(false)
+    }
+
+    val saveZipOrPdfLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument(
+            result?.batchExportMimeType ?: "application/zip"
+        )
+    ) { destUri ->
+        val srcPath = result?.batchExportFilePath
+        if (destUri != null && !srcPath.isNullOrBlank()) {
+            viewModel.saveRecordToUri(srcPath, destUri)
+        }
+    }
 
     LaunchedEffect(result?.filePath, result?.originalFilePath, result?.operationLabel) {
         if (result != null) {
@@ -152,6 +175,11 @@ fun ImageResultScreen(
         }
 
         val savedPercent = formatReductionPercent(result.originalSizeBytes, result.sizeBytes)
+        val effectiveFilePath = result.batchExportFilePath ?: result.filePath
+        val effectiveMimeType = result.batchExportMimeType ?: result.format.mimeType
+        val isBatchZip = result.batchExportMimeType == "application/zip"
+        val batchPdfId = if (result.batchExportMimeType == "application/pdf") result.secondaryPdfRecordId else null
+        val isBatchPdf = batchPdfId != null
 
         Box(
             modifier = Modifier
@@ -196,8 +224,14 @@ fun ImageResultScreen(
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
+                                val batchCount = result.batchFileCount
+                                val subtitleStats = if (batchCount > 1) {
+                                    "$batchCount files • ${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)}"
+                                } else {
+                                    "${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}"
+                                }
                                 Text(
-                                    text = "${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}",
+                                    text = subtitleStats,
                                     style = MaterialTheme.typography.bodySmall,
                                     color = if (savedPercent != null && savedPercent > 0) {
                                         PaperlyEmerald
@@ -314,7 +348,11 @@ fun ImageResultScreen(
                     Button(
                         onClick = {
                             haptics.lightTap()
-                            viewModel.saveResultImageToGallery()
+                            when {
+                                batchPdfId != null -> onOpenPdfViewer(batchPdfId)
+                                isBatchZip -> saveZipOrPdfLauncher.launch(result.displayName)
+                                else -> viewModel.saveResultImageToGallery()
+                            }
                         },
                         shape = RoundedCornerShape(13.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
@@ -323,10 +361,18 @@ fun ImageResultScreen(
                             .heightIn(min = 48.dp)
                             .testTag("save_image_gallery_button")
                     ) {
-                        Icon(Icons.Filled.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Icon(
+                            imageVector = if (isBatchPdf) Icons.Filled.PictureAsPdf else Icons.Filled.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         FittedSingleLineText(
-                            text = "Save to Gallery",
+                            text = when {
+                                isBatchPdf -> "Open Batch PDF in Viewer"
+                                isBatchZip -> "Save ZIP Archive"
+                                else -> "Save to Gallery"
+                            },
                             style = MaterialTheme.typography.labelLarge,
                             fontWeight = FontWeight.Bold
                         )
@@ -340,15 +386,15 @@ fun ImageResultScreen(
                             onClick = {
                                 haptics.lightTap()
                                 runCatching {
-                                    val shareUri = viewModel.imageEngine.getShareUri(result.filePath)
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = result.format.mimeType
-                                        putExtra(Intent.EXTRA_STREAM, shareUri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Share image"))
+                                    val shareUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                                    shareFileViaSystemChooser(
+                                        context = context,
+                                        shareUri = shareUri,
+                                        mimeType = effectiveMimeType,
+                                        chooserTitle = if (isBatchZip) "Share ZIP Archive" else "Share file"
+                                    )
                                 }.onFailure {
-                                    Toast.makeText(context, "Unable to share image right now.", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Unable to share file right now.", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             shape = RoundedCornerShape(13.dp),
@@ -366,15 +412,19 @@ fun ImageResultScreen(
                         OutlinedButton(
                             onClick = {
                                 haptics.lightTap()
-                                val viewUri = viewModel.imageEngine.getShareUri(result.filePath)
-                                val viewIntent = Intent(Intent.ACTION_VIEW).apply {
-                                    setDataAndType(viewUri, result.format.mimeType)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
-                                }
-                                runCatching {
-                                    context.startActivity(Intent.createChooser(viewIntent, "Open image with"))
-                                }.onFailure {
-                                    Toast.makeText(context, "No compatible viewer app found.", Toast.LENGTH_SHORT).show()
+                                if (batchPdfId != null) {
+                                    onOpenPdfViewer(batchPdfId)
+                                } else {
+                                    val viewUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                                    val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                                        setDataAndType(viewUri, effectiveMimeType)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                                    }
+                                    runCatching {
+                                        context.startActivity(Intent.createChooser(viewIntent, "Open file with"))
+                                    }.onFailure {
+                                        Toast.makeText(context, "No compatible viewer app found.", Toast.LENGTH_SHORT).show()
+                                    }
                                 }
                             },
                             shape = RoundedCornerShape(13.dp),
@@ -389,23 +439,78 @@ fun ImageResultScreen(
                             FittedSingleLineText("Open File")
                         }
 
+                        if (!isBatchZip && !isBatchPdf) {
+                            OutlinedButton(
+                                onClick = {
+                                    haptics.lightTap()
+                                    viewModel.exportResultImageToPdf { pdfId ->
+                                        onOpenPdfViewer(pdfId)
+                                    }
+                                },
+                                shape = RoundedCornerShape(13.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                                    .testTag("export_image_pdf_button")
+                            ) {
+                                Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
+                                FittedSingleLineText("Save as PDF")
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Button(
+                            onClick = {
+                                haptics.lightTap()
+                                runCatching {
+                                    val shareUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                                    shareFileToWhatsApp(
+                                        context = context,
+                                        shareUri = shareUri,
+                                        mimeType = effectiveMimeType,
+                                        chooserTitle = "Share via WhatsApp"
+                                    )
+                                }.onFailure {
+                                    Toast.makeText(context, "Unable to share right now.", Toast.LENGTH_SHORT).show()
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = androidx.compose.ui.graphics.Color(0xFF16A34A),
+                                contentColor = androidx.compose.ui.graphics.Color.White
+                            ),
+                            shape = RoundedCornerShape(13.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 48.dp)
+                                .testTag("image_whatsapp_button")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Chat, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(5.dp))
+                            FittedSingleLineText("WhatsApp", fontWeight = FontWeight.Bold)
+                        }
+
                         OutlinedButton(
                             onClick = {
                                 haptics.lightTap()
-                                viewModel.exportResultImageToPdf { pdfId ->
-                                    onOpenPdfViewer(pdfId)
-                                }
+                                showExportActionSheet = true
                             },
                             shape = RoundedCornerShape(13.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .heightIn(min = 48.dp)
-                                .testTag("export_image_pdf_button")
+                                .testTag("image_rename_actions_button")
                         ) {
-                            Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.DriveFileRenameOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(5.dp))
-                            FittedSingleLineText("Save as PDF")
+                            FittedSingleLineText("Rename & More")
                         }
                     }
 
@@ -433,5 +538,69 @@ fun ImageResultScreen(
                 Spacer(modifier = Modifier.height(6.dp))
             }
         }
+
+        val savingsHeadline = when {
+            savedPercent != null && savedPercent > 0 && result.originalSizeBytes != null ->
+                "Saved! Reduced from ${formatFileSize(result.originalSizeBytes)} → ${formatFileSize(result.sizeBytes)} (-$savedPercent%)"
+            else ->
+                "${result.operationLabel} • ${formatFileSize(result.sizeBytes)}"
+        }
+        val beforeAfter = if (result.originalSizeBytes != null && result.originalSizeBytes > 0L) {
+            "Original ${formatFileSize(result.originalSizeBytes)} → Output ${formatFileSize(result.sizeBytes)}"
+        } else null
+
+        ExportCompletionActionSheet(
+            visible = showExportActionSheet,
+            displayName = result.displayName,
+            savingsHeadline = savingsHeadline,
+            beforeAfterLine = beforeAfter,
+            onOpen = {
+                showExportActionSheet = false
+                if (batchPdfId != null) {
+                    onOpenPdfViewer(batchPdfId)
+                } else {
+                    val viewUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                    val viewIntent = Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(viewUri, effectiveMimeType)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    runCatching {
+                        context.startActivity(Intent.createChooser(viewIntent, "Open file with"))
+                    }.onFailure {
+                        Toast.makeText(context, "No compatible viewer app found.", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            },
+            onShareWhatsApp = {
+                runCatching {
+                    val shareUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                    shareFileToWhatsApp(
+                        context = context,
+                        shareUri = shareUri,
+                        mimeType = effectiveMimeType,
+                        chooserTitle = "Share via WhatsApp"
+                    )
+                }.onFailure {
+                    Toast.makeText(context, "Unable to share right now.", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onShareSystem = {
+                runCatching {
+                    val shareUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
+                    shareFileViaSystemChooser(
+                        context = context,
+                        shareUri = shareUri,
+                        mimeType = effectiveMimeType,
+                        chooserTitle = "Share file"
+                    )
+                }.onFailure {
+                    Toast.makeText(context, "Unable to share right now.", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onRename = { newName ->
+                viewModel.renameProcessedImageResult(newName).isSuccess
+            },
+            onDismiss = { showExportActionSheet = false }
+        )
     }
 }

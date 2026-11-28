@@ -42,6 +42,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -57,10 +58,12 @@ import androidx.compose.material.icons.filled.AutoFixOff
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Palette
@@ -116,11 +119,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.ads.PaperlyAdManager
 import com.example.core.formatFileSize
 import com.example.data.model.AiImageAspectRatio
 import com.example.data.model.AiImageStyle
+import com.example.data.model.BatchCompressExportMode
 import com.example.data.model.BgBrushStroke
 import com.example.data.model.CropAspectPreset
 import com.example.data.model.ImageOutputFormat
@@ -186,6 +192,14 @@ fun ImageWorkspaceScreen(
         }
     }
 
+    val batchPhotoPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.PickMultipleVisualMedia(maxItems = 25)
+    ) { uris ->
+        if (uris.isNotEmpty()) {
+            viewModel.pickBatchImagesForCompress(uris)
+        }
+    }
+
     var pendingCameraUri by remember { mutableStateOf<Uri?>(null) }
     val takePictureLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.TakePicture()
@@ -242,7 +256,11 @@ fun ImageWorkspaceScreen(
     var showPassportConfirmDialog by remember { mutableStateOf(false) }
 
     val primaryCtaLabel = when (tool) {
-        ImageToolType.COMPRESS_IMAGE -> "Compress Image"
+        ImageToolType.COMPRESS_IMAGE -> if (state.batchPickedImages.isNotEmpty()) {
+            "Batch Compress ${state.batchPickedImages.size} Images"
+        } else {
+            "Compress Image"
+        }
         ImageToolType.CROP_RESIZE -> "Save Cropped & Resized"
         ImageToolType.IMAGE_TO_TEXT -> ""
         ImageToolType.TEXT_TO_IMAGE -> "Generate AI Image"
@@ -264,7 +282,7 @@ fun ImageWorkspaceScreen(
         tool == ImageToolType.TEXT_TO_IMAGE
 
     val canProcess = when (tool) {
-        ImageToolType.COMPRESS_IMAGE -> state.pickedImage != null &&
+        ImageToolType.COMPRESS_IMAGE -> (state.pickedImage != null || state.batchPickedImages.isNotEmpty()) &&
             (state.compressTargetValue.toDoubleOrNull() ?: 0.0) > 0.0
         ImageToolType.CROP_RESIZE -> state.pickedImage != null &&
             (state.resizeWidthText.toIntOrNull() ?: 0) >= 16 &&
@@ -463,15 +481,22 @@ fun ImageWorkspaceScreen(
                         ImagePickerCard(
                             pickedImage = state.pickedImage,
                             showCameraForOcr = tool == ImageToolType.IMAGE_TO_TEXT,
+                            showBatchCompressButton = tool == ImageToolType.COMPRESS_IMAGE,
+                            batchCount = state.batchPickedImages.size,
                             onPickFromGallery = {
                                 photoPickerLauncher.launch(
+                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                )
+                            },
+                            onPickBatch = {
+                                batchPhotoPickerLauncher.launch(
                                     PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
                                 )
                             },
                             onSnapCamera = { launchCameraForOcr() }
                         )
                     }
-                    if (state.pickedImage == null && state.processing.isProcessing) {
+                    if (state.pickedImage == null && state.batchPickedImages.isEmpty() && state.processing.isProcessing) {
                         item {
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 ShimmerPreviewCard(
@@ -491,14 +516,37 @@ fun ImageWorkspaceScreen(
 
                 when (tool) {
                     ImageToolType.COMPRESS_IMAGE -> {
-                        state.pickedImage?.let { info ->
+                        if (state.batchPickedImages.isNotEmpty()) {
+                            item {
+                                BatchCompressQueueCard(
+                                    state = state,
+                                    onRemoveAt = viewModel::removeBatchCompressImageAt,
+                                    onClearAll = viewModel::clearBatchCompressImages,
+                                    onSelectExportMode = viewModel::setBatchCompressExportMode
+                                )
+                            }
                             item {
                                 ImageCompressionControlsCard(
-                                    info = info,
+                                    info = state.batchPickedImages.first(),
                                     state = state,
+                                    isBatchMode = true,
+                                    batchTotalBytes = state.batchPickedImages.sumOf { it.sizeBytes },
                                     onConfigChange = viewModel::updateImageCompressionConfig,
                                     onClearPreset = viewModel::clearCompressionPresetSelection
                                 )
+                            }
+                        } else {
+                            state.pickedImage?.let { info ->
+                                item {
+                                    ImageCompressionControlsCard(
+                                        info = info,
+                                        state = state,
+                                        isBatchMode = false,
+                                        batchTotalBytes = info.sizeBytes,
+                                        onConfigChange = viewModel::updateImageCompressionConfig,
+                                        onClearPreset = viewModel::clearCompressionPresetSelection
+                                    )
+                                }
                             }
                         }
                     }
@@ -809,7 +857,10 @@ private fun PassportPreviewConfirmDialog(
 private fun ImagePickerCard(
     pickedImage: PickedImageInfo?,
     showCameraForOcr: Boolean,
+    showBatchCompressButton: Boolean = false,
+    batchCount: Int = 0,
     onPickFromGallery: () -> Unit,
+    onPickBatch: () -> Unit = {},
     onSnapCamera: () -> Unit
 ) {
     Card(
@@ -830,16 +881,20 @@ private fun ImagePickerCard(
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = pickedImage?.displayName ?: "Select an Image",
+                        text = when {
+                            batchCount > 0 -> "$batchCount Photos Selected (Batch Mode)"
+                            pickedImage != null -> pickedImage.displayName
+                            else -> "Select an Image"
+                        },
                         style = MaterialTheme.typography.titleMedium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = if (pickedImage != null) {
-                            "${pickedImage.width}×${pickedImage.height} px • ${formatFileSize(pickedImage.sizeBytes)}"
-                        } else {
-                            "Choose a photo cleanly using Android Photo Picker"
+                        text = when {
+                            batchCount > 0 -> "Parallel compression ready • Choose Single PDF, ZIP, or Gallery export below"
+                            pickedImage != null -> "${pickedImage.width}×${pickedImage.height} px • ${formatFileSize(pickedImage.sizeBytes)}"
+                            else -> "Choose a photo cleanly using Android Photo Picker"
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -866,7 +921,27 @@ private fun ImagePickerCard(
                         modifier = Modifier.size(18.dp)
                     )
                     Spacer(modifier = Modifier.width(6.dp))
-                    FittedSingleLineText(if (pickedImage == null) "Choose Photo" else "Change Photo")
+                    FittedSingleLineText(if (pickedImage == null && batchCount == 0) "Choose Photo" else "Single Photo")
+                }
+
+                if (showBatchCompressButton) {
+                    OutlinedButton(
+                        onClick = onPickBatch,
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .heightIn(min = 48.dp)
+                            .testTag("pick_batch_images_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Layers,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        FittedSingleLineText(if (batchCount > 0) "Add More ($batchCount)" else "Batch (Multi)")
+                    }
                 }
 
                 if (showCameraForOcr) {
@@ -894,13 +969,132 @@ private fun ImagePickerCard(
 }
 
 @Composable
+private fun BatchCompressQueueCard(
+    state: ImageWorkspaceUiState,
+    onRemoveAt: (Int) -> Unit,
+    onClearAll: () -> Unit,
+    onSelectExportMode: (BatchCompressExportMode) -> Unit
+) {
+    val context = LocalContext.current
+    Card(
+        shape = RoundedCornerShape(18.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Batch Queue (${state.batchPickedImages.size}/25)",
+                    style = MaterialTheme.typography.titleSmall
+                )
+                TextButton(
+                    onClick = onClearAll,
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .testTag("batch_clear_button")
+                ) {
+                    Text("Clear All")
+                }
+            }
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.testTag("batch_queue_row")
+            ) {
+                itemsIndexed(
+                    items = state.batchPickedImages,
+                    key = { idx, item -> "${item.localPath}_$idx" }
+                ) { index, item ->
+                    Box(
+                        modifier = Modifier
+                            .size(width = 86.dp, height = 96.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(context)
+                                .data(java.io.File(item.localPath))
+                                .size(220)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = item.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.65f),
+                            modifier = Modifier
+                                .align(Alignment.BottomStart)
+                                .padding(4.dp)
+                        ) {
+                            Text(
+                                text = formatFileSize(item.sizeBytes),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                            )
+                        }
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.72f),
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .padding(4.dp)
+                                .size(24.dp)
+                                .clickable { onRemoveAt(index) }
+                                .testTag("batch_remove_$index")
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    imageVector = Icons.Filled.Close,
+                                    contentDescription = "Remove ${item.displayName}",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Text(
+                text = "Batch Export Format",
+                style = MaterialTheme.typography.labelLarge
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(BatchCompressExportMode.entries, key = { it.name }) { mode ->
+                    AnimatedOptionChip(
+                        label = mode.label,
+                        selected = state.batchExportMode == mode,
+                        onClick = { onSelectExportMode(mode) },
+                        modifier = Modifier.testTag("batch_mode_${mode.name.lowercase()}")
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ImageCompressionControlsCard(
     info: PickedImageInfo,
     state: ImageWorkspaceUiState,
+    isBatchMode: Boolean,
+    batchTotalBytes: Long,
     onConfigChange: (String?, TargetSizeUnit?, ImageOutputFormat?, String?, Boolean) -> Unit,
     onClearPreset: () -> Unit
 ) {
-    val haptics = rememberPaperlyHaptics()
     val presets = listOf(
         Triple("10 KB", "10", TargetSizeUnit.KB),
         Triple("20 KB", "20", TargetSizeUnit.KB),
@@ -910,26 +1104,28 @@ private fun ImageCompressionControlsCard(
     )
 
     Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        val bmp = state.previewBitmap
-        if (bmp != null) {
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Image(
-                    bitmap = bmp.asImageBitmap(),
-                    contentDescription = "Selected image preview",
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
-                        .padding(10.dp)
-                )
+        if (!isBatchMode) {
+            val bmp = state.previewBitmap
+            if (bmp != null) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Image(
+                        bitmap = bmp.asImageBitmap(),
+                        contentDescription = "Selected image preview",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .padding(10.dp)
+                    )
+                }
+            } else {
+                ShimmerPreviewCard(previewHeight = 180.dp)
             }
-        } else {
-            ShimmerPreviewCard(previewHeight = 180.dp)
         }
 
         Card(
@@ -942,12 +1138,16 @@ private fun ImageCompressionControlsCard(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = "Target File Size • Original ${formatFileSize(info.sizeBytes)}",
+                    text = if (isBatchMode) {
+                        "Target Per Image • Total ${formatFileSize(batchTotalBytes)}"
+                    } else {
+                        "Target File Size • Original ${formatFileSize(info.sizeBytes)}"
+                    },
                     style = MaterialTheme.typography.titleSmall
                 )
 
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(presets) { (label, valStr, unit) ->
+                    items(presets, key = { it.first }) { (label, valStr, unit) ->
                         val selected = state.compressSelectedPresetLabel == label
                         AnimatedOptionChip(
                             label = label,
@@ -1048,7 +1248,7 @@ private fun CropAndResizeWorkspaceCard(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(CropAspectPreset.entries) { preset ->
+                    items(CropAspectPreset.entries, key = { it.name }) { preset ->
                         AnimatedOptionChip(
                             label = preset.label,
                             selected = state.cropAspectPreset == preset,
@@ -1158,7 +1358,7 @@ private fun CropAndResizeWorkspaceCard(
                     contentPadding = PaddingValues(horizontal = 16.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(ImageOutputFormat.entries) { fmt ->
+                    items(ImageOutputFormat.entries, key = { it.name }) { fmt ->
                         AnimatedOptionChip(
                             label = fmt.label,
                             selected = state.outputFormat == fmt,
@@ -1446,7 +1646,7 @@ private fun AiTextToImageWorkspaceCard(
 
                 Text("Quick Prompt Ideas", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(promptIdeas) { idea ->
+                    items(promptIdeas, key = { it }) { idea ->
                         AnimatedOptionChip(
                             label = idea.take(30) + "…",
                             selected = state.aiPrompt == idea,
@@ -1457,7 +1657,7 @@ private fun AiTextToImageWorkspaceCard(
 
                 Text("Art Style", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(AiImageStyle.entries) { style ->
+                    items(AiImageStyle.entries, key = { it.name }) { style ->
                         AnimatedOptionChip(
                             label = style.label,
                             selected = state.aiStyle == style,
@@ -1468,7 +1668,7 @@ private fun AiTextToImageWorkspaceCard(
 
                 Text("Aspect Ratio", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(AiImageAspectRatio.entries) { ratio ->
+                    items(AiImageAspectRatio.entries, key = { it.name }) { ratio ->
                         AnimatedOptionChip(
                             label = ratio.label,
                             selected = state.aiAspectRatio == ratio,
@@ -1789,7 +1989,7 @@ private fun BgRemoverWorkspaceCard(
                     horizontalArrangement = Arrangement.spacedBy(14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    items(presets) { (argb, label) ->
+                    items(presets, key = { it.second }) { (argb, label) ->
                         ColorSwatchCircle(
                             color = argb?.let { Color(it) },
                             label = label,
@@ -1999,7 +2199,7 @@ private fun PassportSheetWorkspaceCard(
 
                 AnimatedVisibility(visible = state.passportRemoveBg) {
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                        items(studioSwatches) { (argb, label) ->
+                        items(studioSwatches, key = { it.first }) { (argb, label) ->
                             ColorSwatchCircle(
                                 color = Color(argb),
                                 label = label,
@@ -2007,7 +2207,7 @@ private fun PassportSheetWorkspaceCard(
                                 onClick = { onUpdatePassport(null, argb, null, null, null) }
                             )
                         }
-                        item {
+                        item(key = "passport_custom_color") {
                             Column(
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -2038,7 +2238,7 @@ private fun PassportSheetWorkspaceCard(
 
                 Text("Passport Size Preset", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(PassportSizePreset.entries) { preset ->
+                    items(PassportSizePreset.entries, key = { it.name }) { preset ->
                         AnimatedOptionChip(
                             label = preset.label,
                             selected = state.passportSizePreset == preset,
@@ -2050,7 +2250,7 @@ private fun PassportSheetWorkspaceCard(
 
                 Text("Copies on Print Sheet", style = MaterialTheme.typography.titleSmall)
                 LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(listOf(1, 4, 6, 8, 12)) { count ->
+                    items(listOf(1, 4, 6, 8, 12), key = { it }) { count ->
                         val chipLabel = if (count == 1) "1 Photo" else "$count Photos"
                         AnimatedOptionChip(
                             label = chipLabel,

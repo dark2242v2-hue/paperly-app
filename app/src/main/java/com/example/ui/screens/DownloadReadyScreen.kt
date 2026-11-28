@@ -28,12 +28,15 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Chat
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.DriveFileRenameOutline
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CenterAlignedTopAppBar
@@ -81,11 +84,14 @@ import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
 import com.example.data.local.PdfRecordEntity
+import com.example.ui.components.ExportCompletionActionSheet
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.ShimmerFileRowCard
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.rememberPaperlyHaptics
+import com.example.ui.components.shareFileToWhatsApp
+import com.example.ui.components.shareFileViaSystemChooser
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.viewmodel.PaperlyViewModel
 import com.google.android.play.core.review.ReviewManagerFactory
@@ -109,6 +115,7 @@ fun DownloadReadyScreen(
     var thumbnail by remember { mutableStateOf<Bitmap?>(null) }
     var isLoading by remember { mutableStateOf(true) }
     var ahaBannerDismissed by rememberSaveable(recordId) { mutableStateOf(false) }
+    var showExportActionSheet by rememberSaveable(recordId) { mutableStateOf(false) }
 
     val shouldRequestInAppReview by viewModel.shouldRequestInAppReview.collectAsStateWithLifecycle()
 
@@ -496,6 +503,67 @@ fun DownloadReadyScreen(
                                     }
                                 }
 
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Button(
+                                        onClick = {
+                                            haptics.lightTap()
+                                            runCatching {
+                                                val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
+                                                shareFileToWhatsApp(
+                                                    context = context,
+                                                    shareUri = shareUri,
+                                                    mimeType = "application/pdf",
+                                                    chooserTitle = "Share PDF via WhatsApp"
+                                                )
+                                            }.onFailure {
+                                                Toast.makeText(context, "Unable to share PDF right now.", Toast.LENGTH_SHORT).show()
+                                            }
+                                        },
+                                        colors = ButtonDefaults.buttonColors(
+                                            containerColor = androidx.compose.ui.graphics.Color(0xFF16A34A),
+                                            contentColor = androidx.compose.ui.graphics.Color.White
+                                        ),
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("whatsapp_pdf_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.Chat,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        FittedSingleLineText("WhatsApp", fontWeight = FontWeight.Bold)
+                                    }
+
+                                    OutlinedButton(
+                                        onClick = {
+                                            haptics.lightTap()
+                                            showExportActionSheet = true
+                                        },
+                                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
+                                        shape = RoundedCornerShape(12.dp),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .heightIn(min = 48.dp)
+                                            .testTag("rename_share_pdf_button")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.DriveFileRenameOutline,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(17.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        FittedSingleLineText("Rename & More")
+                                    }
+                                }
+
                                 TextButton(
                                     onClick = {
                                         haptics.lightTap()
@@ -586,6 +654,61 @@ fun DownloadReadyScreen(
                         }
                     }
                 }
+
+                val savingsHeadline = when {
+                    savedPercent != null && savedPercent > 0 && current.originalSizeBytes != null ->
+                        "Saved! Reduced from ${formatFileSize(current.originalSizeBytes)} → ${formatFileSize(current.sizeBytes)} (-$savedPercent%)"
+                    else ->
+                        "${current.operationTag} Ready • ${current.pageCount} page(s) • ${formatFileSize(current.sizeBytes)}"
+                }
+                val beforeAfter = if (current.originalSizeBytes != null && current.originalSizeBytes > 0L) {
+                    "Original ${formatFileSize(current.originalSizeBytes)} → Output ${formatFileSize(current.sizeBytes)}"
+                } else null
+
+                ExportCompletionActionSheet(
+                    visible = showExportActionSheet,
+                    displayName = current.displayName,
+                    savingsHeadline = savingsHeadline,
+                    beforeAfterLine = beforeAfter,
+                    onOpen = {
+                        showExportActionSheet = false
+                        onPreviewPdf(current.id)
+                    },
+                    onShareWhatsApp = {
+                        runCatching {
+                            val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
+                            shareFileToWhatsApp(
+                                context = context,
+                                shareUri = shareUri,
+                                mimeType = "application/pdf",
+                                chooserTitle = "Share PDF via WhatsApp"
+                            )
+                        }.onFailure {
+                            Toast.makeText(context, "Unable to share PDF right now.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onShareSystem = {
+                        runCatching {
+                            val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
+                            shareFileViaSystemChooser(
+                                context = context,
+                                shareUri = shareUri,
+                                mimeType = "application/pdf",
+                                chooserTitle = "Share PDF"
+                            )
+                        }.onFailure {
+                            Toast.makeText(context, "Unable to share PDF right now.", Toast.LENGTH_SHORT).show()
+                        }
+                    },
+                    onRename = { newName ->
+                        val res = viewModel.renamePdfRecord(current, newName)
+                        if (res.isSuccess) {
+                            record = res.getOrNull()
+                        }
+                        res.isSuccess
+                    },
+                    onDismiss = { showExportActionSheet = false }
+                )
             }
         }
     }

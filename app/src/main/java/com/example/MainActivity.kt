@@ -626,6 +626,15 @@ fun PaperlyApp(
                                 navController.navigate(PaperlyRoutes.toolWorkspace(tool))
                             }
                         },
+                        onOrganizePages = { rec ->
+                            viewModel.openToolWithRecord(
+                                tool = PdfToolType.SPLIT,
+                                record = rec,
+                                initialSplitMode = com.example.data.model.SplitWorkspaceMode.ORGANIZE
+                            ) {
+                                navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.SPLIT))
+                            }
+                        },
                         onBack = { navController.popBackStack() }
                     )
                 }
@@ -638,6 +647,15 @@ fun PaperlyApp(
                         onQuickAction = { tool, rec ->
                             viewModel.openToolWithRecord(tool, rec) {
                                 navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                            }
+                        },
+                        onOrganizePages = { rec ->
+                            viewModel.openToolWithRecord(
+                                tool = PdfToolType.SPLIT,
+                                record = rec,
+                                initialSplitMode = com.example.data.model.SplitWorkspaceMode.ORGANIZE
+                            ) {
+                                navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.SPLIT))
                             }
                         },
                         onBack = {

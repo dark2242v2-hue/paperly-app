@@ -20,6 +20,9 @@ interface PdfRecordDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(record: PdfRecordEntity): Long
 
+    @Query("UPDATE pdf_records SET displayName = :newName, filePath = :newPath WHERE id = :id")
+    suspend fun updateFileMetadata(id: Long, newName: String, newPath: String)
+
     @Query("DELETE FROM pdf_records WHERE id = :id")
     suspend fun deleteById(id: Long)
 

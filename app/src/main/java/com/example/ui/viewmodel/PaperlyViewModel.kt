@@ -23,6 +23,7 @@ import com.example.data.local.UserPreferencesRepository
 import com.example.data.model.AiImageAspectRatio
 import com.example.data.model.AiImageStyle
 import com.example.data.model.AiSummaryUiState
+import com.example.data.model.BatchCompressExportMode
 import com.example.data.model.BgBrushStroke
 import com.example.data.model.CompressionLevel
 import com.example.data.model.CropAspectPreset
@@ -30,13 +31,16 @@ import com.example.data.model.HomeToolCategory
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ImageToolType
 import com.example.data.model.OcrUiState
+import com.example.data.model.OrganizedPageItem
 import com.example.data.model.PassportSizePreset
 import com.example.data.model.PdfToolType
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.PickedPdfInfo
 import com.example.data.model.ProcessedImageResult
 import com.example.data.model.RecentImageItem
+import com.example.data.model.ScanFilterMode
 import com.example.data.model.SignaturePlacement
+import com.example.data.model.SplitWorkspaceMode
 import com.example.data.model.TargetSizeUnit
 import com.example.data.model.UpscaleTarget
 import com.example.data.pdf.PdfEngine
@@ -45,6 +49,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -73,12 +80,14 @@ data class WorkspaceUiState(
     val activeTool: PdfToolType = PdfToolType.MERGE,
     val selectedPdfs: List<PickedPdfInfo> = emptyList(),
     val splitPageRange: String = "1",
+    val splitMode: SplitWorkspaceMode = SplitWorkspaceMode.RANGE,
+    val organizedPages: List<OrganizedPageItem> = emptyList(),
     val compressionLevel: CompressionLevel = CompressionLevel.BALANCED,
     val compressUseExactTarget: Boolean = false,
     val compressTargetValue: String = "200",
     val compressTargetUnit: TargetSizeUnit = TargetSizeUnit.KB,
     val scanImageUris: List<Uri> = emptyList(),
-    val scanEnhanceContrast: Boolean = true,
+    val scanFilterMode: ScanFilterMode = ScanFilterMode.ORIGINAL,
     val signTargetPage: Int = 1,
     val signPlacement: SignaturePlacement = SignaturePlacement.BOTTOM_RIGHT,
     val signCenterXNorm: Float = 0.72f,
@@ -94,6 +103,8 @@ data class WorkspaceUiState(
 data class ImageWorkspaceUiState(
     val activeTool: ImageToolType = ImageToolType.COMPRESS_IMAGE,
     val pickedImage: PickedImageInfo? = null,
+    val batchPickedImages: List<PickedImageInfo> = emptyList(),
+    val batchExportMode: BatchCompressExportMode = BatchCompressExportMode.SINGLE_PDF,
     val previewBitmap: Bitmap? = null,
     val compressTargetValue: String = "100",
     val compressTargetUnit: TargetSizeUnit = TargetSizeUnit.KB,
@@ -431,16 +442,21 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _shouldRequestInAppReview.value = false
     }
 
-    fun prepareToolWorkspace(tool: PdfToolType, preloadedRecord: PdfRecordEntity? = null) {
+    fun prepareToolWorkspace(
+        tool: PdfToolType,
+        preloadedRecord: PdfRecordEntity? = null,
+        initialSplitMode: SplitWorkspaceMode = SplitWorkspaceMode.RANGE
+    ) {
         val currentCompression = defaultCompression.value
         aiJob?.cancel()
         _aiSummaryState.value = AiSummaryUiState.Idle
         _workspace.value = WorkspaceUiState(
             activeTool = tool,
+            splitMode = initialSplitMode,
             compressionLevel = currentCompression,
             outputFileName = when (tool) {
                 PdfToolType.MERGE -> "Paperly_Merged"
-                PdfToolType.SPLIT -> "Paperly_Split"
+                PdfToolType.SPLIT -> if (initialSplitMode == SplitWorkspaceMode.ORGANIZE) "Paperly_Organized" else "Paperly_Split"
                 PdfToolType.COMPRESS -> "Paperly_Compressed"
                 PdfToolType.SCAN -> "Paperly_Scan"
                 PdfToolType.SIGN -> "Paperly_Signed"
@@ -456,6 +472,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     fun openToolWithRecord(
         tool: PdfToolType,
         record: PdfRecordEntity,
+        initialSplitMode: SplitWorkspaceMode = SplitWorkspaceMode.RANGE,
         onNavigateToWorkspace: () -> Unit
     ) {
         if (tool == PdfToolType.AI_SUMMARIZE && !isAppIntegrityTrusted) {
@@ -468,7 +485,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             else -> true
         }
         if (canProceed) {
-            prepareToolWorkspace(tool, preloadedRecord = record)
+            prepareToolWorkspace(tool, preloadedRecord = record, initialSplitMode = initialSplitMode)
             onNavigateToWorkspace()
         } else {
             adManager.preloadRewardedAd()
@@ -674,6 +691,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     state.copy(
                         selectedPdfs = updatedList,
                         splitPageRange = if (first != null && first.pageCount > 1) "1-${minOf(2, first.pageCount)}" else "1",
+                        organizedPages = buildInitialOrganizedPages(first?.pageCount ?: 0),
                         signTargetPage = 1,
                         previewThumbnail = preview,
                         processing = ProcessingState()
@@ -715,11 +733,103 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 state.copy(
                     selectedPdfs = updatedList,
                     splitPageRange = if (first != null && first.pageCount > 1) "1-${minOf(2, first.pageCount)}" else "1",
+                    organizedPages = buildInitialOrganizedPages(first?.pageCount ?: 0),
                     signTargetPage = 1,
                     previewThumbnail = preview,
                     processing = ProcessingState()
                 )
             }
+        }
+    }
+
+    private fun buildInitialOrganizedPages(pageCount: Int): List<OrganizedPageItem> {
+        if (pageCount <= 0) return emptyList()
+        return (0 until pageCount).map { idx ->
+            OrganizedPageItem(
+                id = "org_${idx}_$idx",
+                originalPageIndex = idx,
+                rotationDegrees = 0
+            )
+        }
+    }
+
+    fun setSplitMode(mode: SplitWorkspaceMode) {
+        _workspace.update { state ->
+            val pages = if (state.organizedPages.isEmpty()) {
+                buildInitialOrganizedPages(state.selectedPdfs.firstOrNull()?.pageCount ?: 0)
+            } else {
+                state.organizedPages
+            }
+            val nextName = if (mode == SplitWorkspaceMode.ORGANIZE && state.outputFileName == "Paperly_Split") {
+                "Paperly_Organized"
+            } else if (mode == SplitWorkspaceMode.RANGE && state.outputFileName == "Paperly_Organized") {
+                "Paperly_Split"
+            } else {
+                state.outputFileName
+            }
+            state.copy(
+                splitMode = mode,
+                organizedPages = pages,
+                outputFileName = nextName,
+                processing = state.processing.copy(errorMessage = null)
+            )
+        }
+    }
+
+    fun rotateOrganizedPage90(index: Int) {
+        _workspace.update { state ->
+            val list = state.organizedPages.toMutableList()
+            if (index in list.indices) {
+                val item = list[index]
+                list[index] = item.copy(rotationDegrees = (item.rotationDegrees + 90) % 360)
+            }
+            state.copy(organizedPages = list, processing = state.processing.copy(errorMessage = null))
+        }
+    }
+
+    fun deleteOrganizedPage(index: Int) {
+        _workspace.update { state ->
+            if (state.organizedPages.size <= 1) {
+                return@update state.copy(
+                    processing = state.processing.copy(errorMessage = "Keep at least 1 page in the document.")
+                )
+            }
+            val list = state.organizedPages.toMutableList()
+            if (index in list.indices) list.removeAt(index)
+            state.copy(organizedPages = list, processing = state.processing.copy(errorMessage = null))
+        }
+    }
+
+    fun moveOrganizedPageLeft(index: Int) {
+        if (index <= 0) return
+        _workspace.update { state ->
+            val list = state.organizedPages.toMutableList()
+            if (index in list.indices) {
+                val item = list.removeAt(index)
+                list.add(index - 1, item)
+            }
+            state.copy(organizedPages = list)
+        }
+    }
+
+    fun moveOrganizedPageRight(index: Int) {
+        _workspace.update { state ->
+            val list = state.organizedPages.toMutableList()
+            if (index in 0 until list.lastIndex) {
+                val item = list.removeAt(index)
+                list.add(index + 1, item)
+            }
+            state.copy(organizedPages = list)
+        }
+    }
+
+    fun resetOrganizedPages() {
+        _workspace.update { state ->
+            val pageCount = state.selectedPdfs.firstOrNull()?.pageCount ?: 0
+            state.copy(
+                organizedPages = buildInitialOrganizedPages(pageCount),
+                processing = state.processing.copy(errorMessage = null)
+            )
         }
     }
 
@@ -732,6 +842,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _workspace.update { state ->
             state.copy(
                 selectedPdfs = mutable,
+                organizedPages = buildInitialOrganizedPages(first?.pageCount ?: 0),
                 previewThumbnail = if (first == null) null else state.previewThumbnail
             )
         }
@@ -815,7 +926,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 val isFirstBatch = state.scanImageUris.isEmpty()
                 state.copy(
                     scanImageUris = state.scanImageUris + imported,
-                    scanEnhanceContrast = if (isFirstBatch) !fromSmartScan else state.scanEnhanceContrast,
+                    scanFilterMode = if (isFirstBatch) ScanFilterMode.ORIGINAL else state.scanFilterMode,
                     processing = state.processing.copy(errorMessage = null)
                 )
             }
@@ -854,11 +965,11 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun clearScanImages() {
-        _workspace.update { it.copy(scanImageUris = emptyList(), scanEnhanceContrast = true) }
+        _workspace.update { it.copy(scanImageUris = emptyList(), scanFilterMode = ScanFilterMode.ORIGINAL) }
     }
 
-    fun toggleScanEnhance(enabled: Boolean) {
-        _workspace.update { it.copy(scanEnhanceContrast = enabled) }
+    fun selectScanFilterMode(mode: ScanFilterMode) {
+        _workspace.update { it.copy(scanFilterMode = mode) }
     }
 
     fun updateSignTargetPage(page: Int) {
@@ -931,8 +1042,14 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                     PdfToolType.SPLIT -> {
                         val file = state.selectedPdfs.firstOrNull()
                             ?: throw IllegalStateException("Select a PDF file first.")
-                        pdfEngine.splitPdf(file, state.splitPageRange, state.outputFileName) { p, msg ->
-                            _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
+                        if (state.splitMode == SplitWorkspaceMode.ORGANIZE) {
+                            pdfEngine.organizePdfPages(file, state.organizedPages, state.outputFileName) { p, msg ->
+                                _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
+                            }
+                        } else {
+                            pdfEngine.splitPdf(file, state.splitPageRange, state.outputFileName) { p, msg ->
+                                _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
+                            }
                         }
                     }
                     PdfToolType.COMPRESS -> {
@@ -953,7 +1070,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                         }
                     }
                     PdfToolType.SCAN -> {
-                        pdfEngine.imagesToPdf(state.scanImageUris, state.scanEnhanceContrast, state.outputFileName) { p, msg ->
+                        pdfEngine.imagesToPdf(state.scanImageUris, state.scanFilterMode, state.outputFileName) { p, msg ->
                             _workspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
                         }
                     }
@@ -1192,6 +1309,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
                 _imageWorkspace.update { state ->
                     state.copy(
                         pickedImage = info,
+                        batchPickedImages = emptyList(),
                         previewBitmap = preview,
                         cropLeftNorm = 0.0f,
                         cropTopNorm = 0.0f,
@@ -1231,6 +1349,64 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    fun pickBatchImagesForCompress(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        if (uris.size == 1 && _imageWorkspace.value.batchPickedImages.isEmpty()) {
+            pickImageForWorkspace(uris.first())
+            return
+        }
+        imageJob?.cancel()
+        imageJob = viewModelScope.launch {
+            _imageWorkspace.update {
+                it.copy(processing = ProcessingState(true, 0.25f, "Loading ${uris.size} images..."))
+            }
+            try {
+                val imported = coroutineScope {
+                    uris.map { uri ->
+                        async(Dispatchers.IO) {
+                            runCatching { imageEngine.importPickedImage(uri) }.getOrNull()
+                        }
+                    }.awaitAll().filterNotNull()
+                }
+                if (imported.isEmpty()) {
+                    throw IllegalStateException("Could not read selected images.")
+                }
+                val combined = (_imageWorkspace.value.batchPickedImages + imported).take(25)
+                val firstPreview = imageEngine.decodePreviewBitmap(combined.first().localPath, maxEdge = 900)
+                _imageWorkspace.update { state ->
+                    state.copy(
+                        pickedImage = null,
+                        batchPickedImages = combined,
+                        previewBitmap = firstPreview,
+                        processing = ProcessingState()
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _imageWorkspace.update {
+                    it.copy(processing = ProcessingState(errorMessage = e.localizedMessage ?: "Could not load selected images."))
+                }
+            }
+        }
+    }
+
+    fun removeBatchCompressImageAt(index: Int) {
+        _imageWorkspace.update { state ->
+            val list = state.batchPickedImages.toMutableList()
+            if (index in list.indices) list.removeAt(index)
+            state.copy(batchPickedImages = list)
+        }
+    }
+
+    fun clearBatchCompressImages() {
+        _imageWorkspace.update { it.copy(batchPickedImages = emptyList()) }
+    }
+
+    fun setBatchCompressExportMode(mode: BatchCompressExportMode) {
+        _imageWorkspace.update { it.copy(batchExportMode = mode) }
+    }
+
     fun updateImageCompressionConfig(
         targetValue: String? = null,
         unit: TargetSizeUnit? = null,
@@ -1264,7 +1440,6 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
 
     fun runImageCompression(onResultReady: () -> Unit) {
         val state = _imageWorkspace.value
-        val info = state.pickedImage ?: return
         val num = state.compressTargetValue.toDoubleOrNull()
         if (num == null || num <= 0.0) {
             _imageWorkspace.update {
@@ -1273,6 +1448,39 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             return
         }
         val targetBytes = (num * state.compressTargetUnit.multiplierBytes).toLong()
+
+        if (state.batchPickedImages.isNotEmpty()) {
+            viewModelScope.launch {
+                _imageWorkspace.update {
+                    it.copy(processing = ProcessingState(true, 0.08f, "Batch compressing ${state.batchPickedImages.size} images..."))
+                }
+                try {
+                    val (res, pdfRec) = imageEngine.batchCompressImages(
+                        items = state.batchPickedImages,
+                        targetBytesPerImage = targetBytes,
+                        format = state.outputFormat,
+                        exportMode = state.batchExportMode,
+                        pdfsDir = pdfEngine.pdfsDir
+                    ) { p, msg ->
+                        _imageWorkspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
+                    }
+                    val insertedPdfId = pdfRec?.let { recordRepository.insert(it) }
+                    _processedImageResult.value = res.copy(secondaryPdfRecordId = insertedPdfId)
+                    _imageWorkspace.update { it.copy(processing = ProcessingState()) }
+                    refreshRecentImages()
+                    onResultReady()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    _imageWorkspace.update {
+                        it.copy(processing = ProcessingState(errorMessage = e.localizedMessage ?: "Batch compression failed."))
+                    }
+                }
+            }
+            return
+        }
+
+        val info = state.pickedImage ?: return
         viewModelScope.launch {
             _imageWorkspace.update {
                 it.copy(processing = ProcessingState(true, 0.08f, "Compressing image..."))
@@ -1850,6 +2058,52 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
             } catch (e: Exception) {
                 _snackbarMessage.value = e.localizedMessage ?: "Could not convert image to PDF."
             }
+        }
+    }
+
+    suspend fun renamePdfRecord(record: PdfRecordEntity, newName: String): Result<PdfRecordEntity> {
+        return runCatching {
+            val renamed = recordRepository.renameRecord(record, newName)
+            _snackbarMessage.value = "Renamed to ${renamed.displayName}"
+            renamed
+        }.onFailure { err ->
+            _snackbarMessage.value = err.localizedMessage ?: "Could not rename PDF."
+        }
+    }
+
+    suspend fun renameProcessedImageResult(newName: String): Result<ProcessedImageResult> {
+        val current = _processedImageResult.value
+            ?: return Result.failure(IllegalStateException("No processed result to rename."))
+        return runCatching {
+            val batchPath = current.batchExportFilePath
+            val updated = if (batchPath != null) {
+                val ext = File(batchPath).extension.ifBlank {
+                    if (current.batchExportMimeType == "application/pdf") "pdf" else "zip"
+                }
+                val renamedFile = imageEngine.renameOutputFile(batchPath, newName, ext)
+                val secId = current.secondaryPdfRecordId
+                if (secId != null && current.batchExportMimeType == "application/pdf") {
+                    recordRepository.getById(secId)?.let { rec ->
+                        recordRepository.insert(rec.copy(displayName = renamedFile.name, filePath = renamedFile.absolutePath))
+                    }
+                }
+                current.copy(
+                    displayName = renamedFile.name,
+                    batchExportFilePath = renamedFile.absolutePath
+                )
+            } else {
+                val renamedFile = imageEngine.renameOutputFile(current.filePath, newName, current.format.ext)
+                current.copy(
+                    displayName = renamedFile.name,
+                    filePath = renamedFile.absolutePath
+                )
+            }
+            _processedImageResult.value = updated
+            refreshRecentImages()
+            _snackbarMessage.value = "Renamed to ${updated.displayName}"
+            updated
+        }.onFailure { err ->
+            _snackbarMessage.value = err.localizedMessage ?: "Could not rename file."
         }
     }
 
