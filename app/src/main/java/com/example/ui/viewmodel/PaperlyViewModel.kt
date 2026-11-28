@@ -42,6 +42,7 @@ import com.example.data.model.ScanFilterMode
 import com.example.data.model.SignaturePlacement
 import com.example.data.model.SplitWorkspaceMode
 import com.example.data.model.TargetSizeUnit
+import com.example.data.model.UpscaleEnhanceMode
 import com.example.data.model.UpscaleTarget
 import com.example.data.pdf.PdfEngine
 import com.example.security.SecurityGuard
@@ -124,6 +125,7 @@ data class ImageWorkspaceUiState(
     val aiStyle: AiImageStyle = AiImageStyle.PHOTOREALISTIC,
     val aiAspectRatio: AiImageAspectRatio = AiImageAspectRatio.SQUARE,
     val upscaleTarget: UpscaleTarget = UpscaleTarget.HD_2X,
+    val upscaleEnhanceMode: UpscaleEnhanceMode = UpscaleEnhanceMode.AUTO_PHOTO,
     val cutoutPngPath: String? = null,
     val alignedOriginalPath: String? = null,
     val cutoutPreviewBitmap: Bitmap? = null,
@@ -187,7 +189,7 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
     private val isAppIntegrityTrusted: Boolean
         get() = _isAppIntegrityTrusted.value
 
-    private val _homeCategory = MutableStateFlow(HomeToolCategory.PDF)
+    private val _homeCategory = MutableStateFlow(HomeToolCategory.ALL)
     val homeCategory: StateFlow<HomeToolCategory> = _homeCategory.asStateFlow()
 
     private val _workspace = MutableStateFlow(WorkspaceUiState())
@@ -1794,6 +1796,10 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         _imageWorkspace.update { it.copy(upscaleTarget = target) }
     }
 
+    fun updateUpscaleEnhanceMode(mode: UpscaleEnhanceMode) {
+        _imageWorkspace.update { it.copy(upscaleEnhanceMode = mode) }
+    }
+
     fun runImageUpscale(onResultReady: () -> Unit, skipCreditCheck: Boolean = false) {
         val state = _imageWorkspace.value
         val needsProOrCredit = state.upscaleTarget != UpscaleTarget.HD_2X
@@ -1805,10 +1811,21 @@ class PaperlyViewModel(application: Application) : AndroidViewModel(application)
         imageJob?.cancel()
         imageJob = viewModelScope.launch {
             _imageWorkspace.update {
-                it.copy(processing = ProcessingState(true, 0.10f, "Preparing HD upscaler..."))
+                it.copy(
+                    processing = ProcessingState(
+                        true,
+                        0.08f,
+                        "AI restoring (${state.upscaleEnhanceMode.label})..."
+                    )
+                )
             }
             try {
-                val result = imageEngine.upscaleImage(info, state.upscaleTarget, state.outputFormat) { p, msg ->
+                val result = imageEngine.upscaleImage(
+                    info = info,
+                    target = state.upscaleTarget,
+                    enhanceMode = state.upscaleEnhanceMode,
+                    format = state.outputFormat
+                ) { p, msg ->
                     _imageWorkspace.update { it.copy(processing = ProcessingState(true, p, msg)) }
                 }
                 if (needsProOrCredit && !isPro.value) {

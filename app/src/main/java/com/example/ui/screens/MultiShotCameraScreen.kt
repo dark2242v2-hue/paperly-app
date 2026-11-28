@@ -110,8 +110,6 @@ fun MultiShotCameraScreen(
     onDone: () -> Unit,
     onClose: () -> Unit
 ) {
-    BackHandler(onBack = onClose)
-
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val haptic = LocalHapticFeedback.current
@@ -357,7 +355,10 @@ fun MultiShotCameraScreen(
                 color = Color.Black.copy(alpha = 0.45f)
             ) {
                 IconButton(
-                    onClick = onClose,
+                    onClick = {
+                        paperlyHaptics.lightTap()
+                        onClose()
+                    },
                     modifier = Modifier
                         .minimumInteractiveComponentSize()
                         .testTag("camera_close_button")

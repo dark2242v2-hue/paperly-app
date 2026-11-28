@@ -317,7 +317,10 @@ fun ToolWorkspaceScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = onBack,
+                        onClick = {
+                            haptics.lightTap()
+                            onBack()
+                        },
                         modifier = Modifier.testTag("workspace_back_button")
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")

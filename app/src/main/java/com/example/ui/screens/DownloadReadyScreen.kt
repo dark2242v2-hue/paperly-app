@@ -75,6 +75,7 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.ui.text.font.FontWeight
 import android.widget.Toast
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -84,11 +85,13 @@ import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
 import com.example.data.local.PdfRecordEntity
+import com.example.ui.components.AnimatedSuccessBadge
 import com.example.ui.components.ExportCompletionActionSheet
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.ShimmerFileRowCard
 import com.example.ui.components.SponsoredNativeAdCard
+import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.components.shareFileToWhatsApp
 import com.example.ui.components.shareFileViaSystemChooser
@@ -168,7 +171,10 @@ fun DownloadReadyScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = onDone,
+                        onClick = {
+                            haptics.lightTap()
+                            onDone()
+                        },
                         modifier = Modifier.testTag("download_ready_back_button")
                     ) {
                         Icon(
@@ -240,30 +246,21 @@ fun DownloadReadyScreen(
                         contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
-                        // Success header
+                        // Success header with spring checkmark badge
                         item {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(56.dp)
-                                        .clip(CircleShape)
-                                        .background(PaperlyEmerald.copy(alpha = 0.14f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.CheckCircle,
-                                        contentDescription = "Ready",
-                                        tint = PaperlyEmerald,
-                                        modifier = Modifier.size(32.dp)
-                                    )
-                                }
+                                AnimatedSuccessBadge(
+                                    badgeSize = 58.dp,
+                                    iconSize = 32.dp
+                                )
                                 Text(
                                     text = stringResource(R.string.download_ready_title),
                                     style = MaterialTheme.typography.headlineSmall,
+                                    fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.onBackground
                                 )
                                 Text(
@@ -361,27 +358,49 @@ fun DownloadReadyScreen(
                                             overflow = TextOverflow.Ellipsis
                                         )
 
-                                        Text(
-                                            text = formatSavedSummary(
-                                                originalBytes = current.originalSizeBytes,
-                                                newBytes = current.sizeBytes,
-                                                pageCount = current.pageCount
-                                            ),
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.SemiBold,
-                                            color = if (savedPercent != null && savedPercent > 0) {
-                                                PaperlyEmerald
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                        val originalBytes = current.originalSizeBytes
+                                        if (originalBytes != null && originalBytes > 0L && originalBytes != current.sizeBytes) {
+                                            Surface(
+                                                shape = RoundedCornerShape(10.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
+                                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
+                                            ) {
+                                                Text(
+                                                    text = "${formatFileSize(originalBytes)} → ${formatFileSize(current.sizeBytes)} • ${current.pageCount}p",
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = if (savedPercent != null && savedPercent > 0) {
+                                                        PaperlyEmerald
+                                                    } else {
+                                                        MaterialTheme.colorScheme.onSurface
+                                                    },
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                                )
                                             }
-                                        )
+                                        } else {
+                                            Text(
+                                                text = formatSavedSummary(
+                                                    originalBytes = current.originalSizeBytes,
+                                                    newBytes = current.sizeBytes,
+                                                    pageCount = current.pageCount
+                                                ),
+                                                style = MaterialTheme.typography.labelMedium,
+                                                fontWeight = FontWeight.SemiBold,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
 
-                        // Primary Save to Device & Share buttons
+                        // Primary Open, Share, Save & Open With buttons
                         item {
+                            val saveInteraction = remember { MutableInteractionSource() }
+                            val shareInteraction = remember { MutableInteractionSource() }
+                            val openInteraction = remember { MutableInteractionSource() }
+                            val openWithInteraction = remember { MutableInteractionSource() }
+
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -389,31 +408,34 @@ fun DownloadReadyScreen(
                                 ) {
                                     Button(
                                         onClick = {
-                                            haptics.lightTap()
-                                            createDocumentLauncher.launch(current.displayName)
+                                            haptics.selectionClick()
+                                            onPreviewPdf(current.id)
                                         },
+                                        interactionSource = openInteraction,
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                                         modifier = Modifier
-                                            .weight(1.3f)
+                                            .weight(1.1f)
                                             .heightIn(min = 52.dp)
-                                            .testTag("download_pdf_button"),
+                                            .pressScaleEffect(openInteraction)
+                                            .testTag("preview_pdf_button"),
                                         shape = RoundedCornerShape(14.dp)
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.Download,
+                                            imageVector = Icons.Filled.Visibility,
                                             contentDescription = null,
-                                            modifier = Modifier.size(20.dp)
+                                            modifier = Modifier.size(19.dp)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         FittedSingleLineText(
-                                            text = "Save to Device",
-                                            style = MaterialTheme.typography.labelLarge
+                                            text = "Open",
+                                            style = MaterialTheme.typography.labelLarge,
+                                            fontWeight = FontWeight.Bold
                                         )
                                     }
 
                                     OutlinedButton(
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             runCatching {
                                                 val shareUri = viewModel.pdfEngine.getShareUri(current.filePath)
                                                 val intent = Intent(Intent.ACTION_SEND).apply {
@@ -426,10 +448,12 @@ fun DownloadReadyScreen(
                                                 Toast.makeText(context, "Unable to share PDF right now.", Toast.LENGTH_SHORT).show()
                                             }
                                         },
+                                        interactionSource = shareInteraction,
                                         contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp),
                                         modifier = Modifier
                                             .weight(1f)
                                             .heightIn(min = 52.dp)
+                                            .pressScaleEffect(shareInteraction)
                                             .testTag("share_pdf_button"),
                                         shape = RoundedCornerShape(14.dp),
                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -453,28 +477,30 @@ fun DownloadReadyScreen(
                                 ) {
                                     OutlinedButton(
                                         onClick = {
-                                            haptics.lightTap()
-                                            onPreviewPdf(current.id)
+                                            haptics.selectionClick()
+                                            createDocumentLauncher.launch(current.displayName)
                                         },
+                                        interactionSource = saveInteraction,
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier
-                                            .weight(1f)
+                                            .weight(1.1f)
                                             .heightIn(min = 48.dp)
-                                            .testTag("preview_pdf_button")
+                                            .pressScaleEffect(saveInteraction)
+                                            .testTag("download_pdf_button")
                                     ) {
                                         Icon(
-                                            imageVector = Icons.Filled.Visibility,
+                                            imageVector = Icons.Filled.Download,
                                             contentDescription = null,
                                             modifier = Modifier.size(17.dp)
                                         )
                                         Spacer(modifier = Modifier.width(6.dp))
-                                        FittedSingleLineText(stringResource(R.string.open_viewer))
+                                        FittedSingleLineText("Save to Device")
                                     }
 
                                     OutlinedButton(
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             val viewUri = viewModel.pdfEngine.getShareUri(current.filePath)
                                             val viewIntent = Intent(Intent.ACTION_VIEW).apply {
                                                 setDataAndType(viewUri, "application/pdf")
@@ -486,11 +512,13 @@ fun DownloadReadyScreen(
                                                 Toast.makeText(context, "No external PDF app found.", Toast.LENGTH_SHORT).show()
                                             }
                                         },
+                                        interactionSource = openWithInteraction,
                                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 10.dp),
                                         shape = RoundedCornerShape(12.dp),
                                         modifier = Modifier
                                             .weight(1f)
                                             .heightIn(min = 48.dp)
+                                            .pressScaleEffect(openWithInteraction)
                                             .testTag("open_with_pdf_button")
                                     ) {
                                         Icon(

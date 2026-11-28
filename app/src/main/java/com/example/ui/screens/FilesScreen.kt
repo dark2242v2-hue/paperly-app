@@ -21,8 +21,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -45,6 +47,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -60,8 +63,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
 import com.example.core.formatFileSize
@@ -81,6 +87,8 @@ fun FilesScreen(
     records: List<PdfRecordEntity>,
     viewModel: PaperlyViewModel,
     onOpenViewer: (Long) -> Unit,
+    listState: LazyListState = rememberLazyListState(),
+    bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -102,11 +110,14 @@ fun FilesScreen(
     }
 
     val filters = listOf("All", "Merged", "Split", "Compressed", "Scanned", "Signed", "Locked", "Summary", "Opened")
-    val filtered = remember(records, query, selectedFilter) {
-        records.filter { rec ->
-            val matchesTag = selectedFilter == "All" || rec.operationTag.equals(selectedFilter, ignoreCase = true)
-            val matchesQuery = query.isBlank() || rec.displayName.contains(query.trim(), ignoreCase = true)
-            matchesTag && matchesQuery
+    val filtered by remember(records) {
+        derivedStateOf {
+            val trimmedQuery = query.trim()
+            records.filter { rec ->
+                val matchesTag = selectedFilter == "All" || rec.operationTag.equals(selectedFilter, ignoreCase = true)
+                val matchesQuery = trimmedQuery.isEmpty() || rec.displayName.contains(trimmedQuery, ignoreCase = true)
+                matchesTag && matchesQuery
+            }
         }
     }
 
@@ -182,7 +193,7 @@ fun FilesScreen(
             if (filtered.isEmpty() && (isInitialFilesLoading || isRefreshing) && query.isBlank() && selectedFilter == "All") {
                 LazyColumn(
                     modifier = Modifier.testTag("files_shimmer_list"),
-                    contentPadding = PaddingValues(bottom = 24.dp),
+                    contentPadding = PaddingValues(bottom = bottomContentPadding + 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(5, key = { it }) {
@@ -191,7 +202,9 @@ fun FilesScreen(
                 }
             } else if (filtered.isEmpty()) {
                 Card(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = bottomContentPadding + 16.dp),
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
@@ -214,11 +227,11 @@ fun FilesScreen(
                         )
                         Text(
                             text = if (records.isEmpty()) "No saved PDFs yet" else "No matching PDFs",
-                            style = MaterialTheme.typography.titleMedium
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
                             text = "Processed PDFs from Merge, Split, Compress, Scan, and Sign appear here automatically.",
-                            style = MaterialTheme.typography.bodySmall,
+                            style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -226,8 +239,9 @@ fun FilesScreen(
             } else {
                 val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.graphicsLayer {},
-                    contentPadding = PaddingValues(bottom = if (imeVisible) 140.dp else 24.dp),
+                    contentPadding = PaddingValues(bottom = if (imeVisible) 140.dp else bottomContentPadding + 16.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items(filtered, key = { it.id }) { record ->
@@ -253,7 +267,7 @@ fun FilesScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("file_item_card_${record.id}"),
-                            shape = RoundedCornerShape(16.dp),
+                            shape = RoundedCornerShape(18.dp),
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                             elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)

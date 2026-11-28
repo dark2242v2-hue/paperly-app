@@ -60,9 +60,12 @@ import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Flip
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LinkOff
@@ -136,6 +139,7 @@ import com.example.data.model.PassportSizePreset
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.ProcessedImageResult
 import com.example.data.model.TargetSizeUnit
+import com.example.data.model.UpscaleEnhanceMode
 import com.example.data.model.UpscaleTarget
 import com.example.ui.components.AnimatedOptionChip
 import com.example.ui.components.AnimatedSelectableCard
@@ -248,6 +252,7 @@ fun ImageWorkspaceScreen(
 
     val badgeLabel = when (tool) {
         ImageToolType.TEXT_TO_IMAGE -> "Cloud AI"
+        ImageToolType.UPSCALER -> "Neural AI HD"
         ImageToolType.IMAGE_TO_TEXT, ImageToolType.BG_REMOVER -> "ML Kit Offline"
         else -> "100% Local"
     }
@@ -264,11 +269,7 @@ fun ImageWorkspaceScreen(
         ImageToolType.CROP_RESIZE -> "Save Cropped & Resized"
         ImageToolType.IMAGE_TO_TEXT -> ""
         ImageToolType.TEXT_TO_IMAGE -> "Generate AI Image"
-        ImageToolType.UPSCALER -> if (state.upscaleTarget == UpscaleTarget.HD_2X) {
-            "Upscale 2x HD (Free)"
-        } else {
-            "Upscale to ${state.upscaleTarget.label}"
-        }
+        ImageToolType.UPSCALER -> "Upscale & Enhance"
         ImageToolType.BG_REMOVER -> "Export Cutout"
         ImageToolType.PASSPORT_SHEET -> if (state.passportCopyCount <= 1) {
             "Create Single Passport Photo"
@@ -372,7 +373,10 @@ fun ImageWorkspaceScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = onBack,
+                        onClick = {
+                            haptics.lightTap()
+                            onBack()
+                        },
                         modifier = Modifier.testTag("image_workspace_back_button")
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -622,6 +626,7 @@ fun ImageWorkspaceScreen(
                                     state = state,
                                     isPro = isPro,
                                     credits = upscaleCredits,
+                                    onEnhanceModeSelected = viewModel::updateUpscaleEnhanceMode,
                                     onTargetSelected = viewModel::updateUpscaleTarget,
                                     onFormatSelected = { viewModel.updateImageCompressionConfig(format = it) },
                                     onUpgradeClick = onUpgradeProClick
@@ -1687,6 +1692,7 @@ private fun UpscalerWorkspaceCard(
     state: ImageWorkspaceUiState,
     isPro: Boolean,
     credits: Int,
+    onEnhanceModeSelected: (UpscaleEnhanceMode) -> Unit,
     onTargetSelected: (UpscaleTarget) -> Unit,
     onFormatSelected: (ImageOutputFormat) -> Unit,
     onUpgradeClick: () -> Unit
@@ -1709,7 +1715,7 @@ private fun UpscalerWorkspaceCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "2x HD is free • Ultra/16K credits left: $credits",
+                        text = "2× Crisp HD is free • 4K/8× Pro credits left: $credits",
                         style = MaterialTheme.typography.labelLarge,
                         color = PaperlyIndigo,
                         fontWeight = FontWeight.SemiBold,
@@ -1763,6 +1769,103 @@ private fun UpscalerWorkspaceCard(
                 modifier = Modifier.padding(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "AI Enhancement Mode",
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = PaperlyIndigo.copy(alpha = 0.10f)
+                    ) {
+                        Text(
+                            text = "Neural AI",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = PaperlyIndigo,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    UpscaleEnhanceMode.entries.forEach { mode ->
+                        val isModeSelected = state.upscaleEnhanceMode == mode
+                        val modeIcon = when (mode) {
+                            UpscaleEnhanceMode.AUTO_PHOTO -> Icons.Filled.Face
+                            UpscaleEnhanceMode.TEXT_DOCUMENT -> Icons.Filled.Description
+                            UpscaleEnhanceMode.OLD_PHOTO -> Icons.Filled.History
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (isModeSelected) {
+                                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.72f)
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                            },
+                            border = BorderStroke(
+                                width = if (isModeSelected) 1.5.dp else 1.dp,
+                                color = if (isModeSelected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outline
+                                }
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .heightIn(min = 66.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .clickable { onEnhanceModeSelected(mode) }
+                                .testTag("upscale_mode_${mode.name.lowercase()}")
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 8.dp, vertical = 10.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(5.dp)
+                            ) {
+                                Icon(
+                                    imageVector = modeIcon,
+                                    contentDescription = mode.label,
+                                    tint = if (isModeSelected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Text(
+                                    text = mode.label,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = if (isModeSelected) FontWeight.Bold else FontWeight.Medium,
+                                    color = if (isModeSelected) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    },
+                                    maxLines = 2
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = state.upscaleEnhanceMode.subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.6f))
+
                 Text(
                     text = "Select Super-Resolution Target",
                     style = MaterialTheme.typography.titleSmall
@@ -1771,12 +1874,10 @@ private fun UpscalerWorkspaceCard(
                 UpscaleTarget.entries.forEach { target ->
                     val selected = state.upscaleTarget == target
                     val isFreeTarget = target == UpscaleTarget.HD_2X
-                    val desiredEdge = when (target) {
-                        UpscaleTarget.HD_2X -> min(target.maxEdgePx, (srcMax * 2))
-                        UpscaleTarget.ULTRA_4X -> min(target.maxEdgePx, (srcMax * 4))
-                        UpscaleTarget.RES_8K -> 7680
-                        UpscaleTarget.MAX_16K -> 15360
-                    }.coerceAtLeast(srcMax)
+                    val desiredEdge = min(
+                        target.maxEdgePx,
+                        (srcMax * target.multiplier).roundToInt()
+                    ).coerceAtLeast(srcMax)
                     val outW = if (info.width >= info.height) desiredEdge else (desiredEdge * aspect).roundToInt()
                     val outH = if (info.height >= info.width) desiredEdge else (desiredEdge / aspect).roundToInt()
 
@@ -1815,7 +1916,7 @@ private fun UpscalerWorkspaceCard(
                                 }
                             }
                             Text(
-                                text = "Up to ${outW}×${outH} px (memory-safe multi-pass HD)",
+                                text = "Output ${outW}×${outH} px (max ${target.maxEdgePx}px • AI + multi-pass HD)",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

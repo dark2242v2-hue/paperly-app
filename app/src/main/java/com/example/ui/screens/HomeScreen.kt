@@ -3,6 +3,8 @@ package com.example.ui.screens
 import android.graphics.Bitmap
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
@@ -23,19 +25,23 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.CallSplit
 import androidx.compose.material.icons.automirrored.filled.MergeType
+import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.AutoFixHigh
 import androidx.compose.material.icons.filled.Badge
@@ -51,6 +57,8 @@ import androidx.compose.material.icons.filled.PhotoSizeSelectLarge
 import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VerifiedUser
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -78,6 +86,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.R
@@ -136,6 +145,8 @@ fun HomeScreen(
     loadImageThumbnail: suspend (String, Int) -> Bitmap? = { _, _ -> null },
     getCachedPdfThumbnail: (String, Int) -> Bitmap? = { _, _ -> null },
     loadPdfThumbnail: suspend (String, Int) -> Bitmap? = { _, _ -> null },
+    listState: LazyListState = rememberLazyListState(),
+    bottomContentPadding: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     val haptics = rememberPaperlyHaptics()
@@ -256,7 +267,7 @@ fun HomeScreen(
                 icon = Icons.Filled.HighQuality,
                 accent = PaperlyAmber,
                 softBg = PaperlyAmberSoft,
-                badge = "16K",
+                badge = "8×",
                 onClick = { onImageToolSelected(ImageToolType.UPSCALER) }
             ),
             HomeToolItem(
@@ -291,11 +302,12 @@ fun HomeScreen(
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .widthIn(max = 880.dp)
                 .graphicsLayer {},
-            contentPadding = PaddingValues(bottom = 24.dp),
+            contentPadding = PaddingValues(top = 6.dp, bottom = bottomContentPadding + 16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
@@ -303,7 +315,7 @@ fun HomeScreen(
                 val heroGradient = if (isDark) {
                     Brush.linearGradient(
                         colors = listOf(
-                            Color(0xFF1E1B4B).copy(alpha = 0.78f),
+                            Color(0xFF1E1B4B).copy(alpha = 0.85f),
                             MaterialTheme.colorScheme.surfaceVariant,
                             MaterialTheme.colorScheme.surface
                         )
@@ -312,11 +324,12 @@ fun HomeScreen(
                     Brush.linearGradient(
                         colors = listOf(
                             PaperlyIndigoTint,
-                            Color(0xFFF1F3F6),
+                            Color(0xFFF1F3F9),
                             MaterialTheme.colorScheme.surface
                         )
                     )
                 }
+                val quickScanInteraction = remember { MutableInteractionSource() }
 
                 Card(
                     modifier = Modifier
@@ -324,14 +337,14 @@ fun HomeScreen(
                         .padding(horizontal = 20.dp)
                         .padding(top = 4.dp)
                         .testTag("home_hero_banner_card"),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color.Transparent),
                     border = BorderStroke(
                         width = 1.dp,
                         color = if (isDark) {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.28f)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.30f)
                         } else {
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
                         }
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -340,30 +353,69 @@ fun HomeScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .background(heroGradient)
-                            .padding(horizontal = 18.dp, vertical = 14.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Surface(
-                            shape = CircleShape,
-                            color = PaperlyEmerald.copy(alpha = if (isDark) 0.18f else 0.12f),
-                            border = BorderStroke(1.dp, PaperlyEmerald.copy(alpha = 0.28f))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
+                            Surface(
+                                shape = CircleShape,
+                                color = PaperlyEmerald.copy(alpha = if (isDark) 0.18f else 0.12f),
+                                border = BorderStroke(1.dp, PaperlyEmerald.copy(alpha = 0.28f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.VerifiedUser,
+                                        contentDescription = null,
+                                        tint = PaperlyEmerald,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    FittedSingleLineText(
+                                        text = "100% Offline & Private",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = PaperlyEmerald
+                                    )
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.width(8.dp))
+
+                            Button(
+                                onClick = {
+                                    haptics.selectionClick()
+                                    onToolSelected(PdfToolType.SCAN)
+                                },
+                                interactionSource = quickScanInteraction,
+                                shape = CircleShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
+                                elevation = ButtonDefaults.buttonElevation(defaultElevation = 2.dp),
+                                modifier = Modifier
+                                    .defaultMinSize(minHeight = 40.dp)
+                                    .pressScaleEffect(quickScanInteraction)
+                                    .testTag("home_quick_scan_button")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Filled.VerifiedUser,
+                                    imageVector = Icons.Filled.DocumentScanner,
                                     contentDescription = null,
-                                    tint = PaperlyEmerald,
-                                    modifier = Modifier.size(13.dp)
+                                    modifier = Modifier.size(16.dp)
                                 )
-                                Text(
-                                    text = "100% Offline & Private",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = PaperlyEmerald
+                                Spacer(modifier = Modifier.width(6.dp))
+                                FittedSingleLineText(
+                                    text = "Quick Scan",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
                         }
@@ -371,13 +423,12 @@ fun HomeScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(
                                 text = stringResource(R.string.home_headline),
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Text(
                                 text = stringResource(R.string.home_subheadline),
-                                style = MaterialTheme.typography.bodyMedium,
+                                style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -399,73 +450,27 @@ fun HomeScreen(
 
             // Adaptive Tool Grid (2 cols on phone, 3/4 cols on tablet)
             item {
-                val activeList = if (selectedCategory == HomeToolCategory.PDF) {
-                    pdfToolItems
-                } else {
-                    imageToolItems
-                }
-                val sectionTitle = if (selectedCategory == HomeToolCategory.PDF) {
-                    stringResource(R.string.tools_section_title)
-                } else {
-                    stringResource(R.string.image_tools_section_title)
-                }
-
-                // Put first 6 in balanced grid + compact full-width banner card for 7th item on 2-col phones
-                val useCompactSeventhRow = gridColumns == 2 && activeList.size == 7
-                val gridItems = if (useCompactSeventhRow) activeList.dropLast(1) else activeList
-                val seventhItem = if (useCompactSeventhRow) activeList.last() else null
-
-                Column(
-                    modifier = Modifier.padding(horizontal = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(14.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = sectionTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onBackground
-                        )
-                        Text(
-                            text = "${activeList.size} tools",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                    if (selectedCategory == HomeToolCategory.ALL || selectedCategory == HomeToolCategory.PDF) {
+                        ToolSectionGrid(
+                            sectionTitle = stringResource(R.string.tools_section_title),
+                            tools = pdfToolItems,
+                            gridColumns = gridColumns
                         )
                     }
-
-                    gridItems.chunked(gridColumns).forEach { rowItems ->
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(IntrinsicSize.Max),
-                            horizontalArrangement = Arrangement.spacedBy(14.dp)
-                        ) {
-                            rowItems.forEach { spec ->
-                                ToolActionCard(
-                                    spec = spec,
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                )
-                            }
-                            repeat(gridColumns - rowItems.size) {
-                                Spacer(modifier = Modifier.weight(1f))
-                            }
-                        }
-                    }
-
-                    if (seventhItem != null) {
-                        FeaturedFullWidthToolCard(spec = seventhItem)
+                    if (selectedCategory == HomeToolCategory.ALL || selectedCategory == HomeToolCategory.IMAGE) {
+                        ToolSectionGrid(
+                            sectionTitle = stringResource(R.string.image_tools_section_title),
+                            tools = imageToolItems,
+                            gridColumns = gridColumns
+                        )
                     }
                 }
             }
 
-            // Context-aware Recent Files Carousel (Recent PDFs on PDF tab, Recent Images on Image tab)
+            // Context-aware Recent Files Carousel
             item {
-                if (selectedCategory == HomeToolCategory.PDF) {
+                if (selectedCategory == HomeToolCategory.PDF || selectedCategory == HomeToolCategory.ALL) {
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Row(
                             modifier = Modifier
@@ -555,7 +560,7 @@ fun HomeScreen(
                                         cachedThumbnail = getCachedPdfThumbnail(record.filePath, 180),
                                         loadThumbnail = { loadPdfThumbnail(record.filePath, 180) },
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             onRecentSelected(record)
                                         }
                                     )
@@ -563,8 +568,17 @@ fun HomeScreen(
                             }
                         }
                     }
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                }
+
+                if (selectedCategory == HomeToolCategory.IMAGE ||
+                    (selectedCategory == HomeToolCategory.ALL && (recentImages.isNotEmpty() || isInitialImagesLoading))
+                ) {
+                    Column(
+                        verticalArrangement = Arrangement.spacedBy(10.dp),
+                        modifier = Modifier.padding(
+                            top = if (selectedCategory == HomeToolCategory.ALL) 16.dp else 0.dp
+                        )
+                    ) {
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -645,7 +659,7 @@ fun HomeScreen(
                                         cachedThumbnail = getCachedImageThumbnail(img.filePath, 200),
                                         loadThumbnail = { loadImageThumbnail(img.filePath, 200) },
                                         onClick = {
-                                            haptics.lightTap()
+                                            haptics.selectionClick()
                                             onRecentImageSelected(img)
                                         }
                                     )
@@ -660,11 +674,72 @@ fun HomeScreen(
 }
 
 @Composable
+private fun ToolSectionGrid(
+    sectionTitle: String,
+    tools: List<HomeToolItem>,
+    gridColumns: Int
+) {
+    val useCompactSeventhRow = gridColumns == 2 && tools.size == 7
+    val gridItems = if (useCompactSeventhRow) tools.dropLast(1) else tools
+    val seventhItem = if (useCompactSeventhRow) tools.last() else null
+
+    Column(
+        modifier = Modifier.padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = sectionTitle,
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onBackground
+            )
+            Text(
+                text = "${tools.size} tools",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+
+        gridItems.chunked(gridColumns).forEach { rowItems ->
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(IntrinsicSize.Max),
+                horizontalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                rowItems.forEach { spec ->
+                    ToolActionCard(
+                        spec = spec,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                    )
+                }
+                repeat(gridColumns - rowItems.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+        }
+
+        if (seventhItem != null) {
+            FeaturedFullWidthToolCard(spec = seventhItem)
+        }
+    }
+}
+
+@Composable
 private fun ToolCategorySwitcher(
     selectedCategory: HomeToolCategory,
     onCategorySelected: (HomeToolCategory) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val categories = HomeToolCategory.entries
+    val selectedIndex = categories.indexOf(selectedCategory).coerceAtLeast(0)
+
     Surface(
         modifier = modifier
             .fillMaxWidth()
@@ -673,70 +748,83 @@ private fun ToolCategorySwitcher(
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.7f))
     ) {
-        Row(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                .padding(4.dp)
         ) {
-            HomeToolCategory.entries.forEach { category ->
-                val selected = category == selectedCategory
-                val icon = if (category == HomeToolCategory.PDF) {
-                    Icons.Filled.PictureAsPdf
-                } else {
-                    Icons.Filled.Image
-                }
-                val tabBg by animateColorAsState(
-                    targetValue = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                    label = "cat_bg_${category.name}"
-                )
-                val tabContentColor by animateColorAsState(
-                    targetValue = if (selected) {
-                        MaterialTheme.colorScheme.onPrimary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                    animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
-                    label = "cat_fg_${category.name}"
-                )
-                val interactionSource = remember { MutableInteractionSource() }
+            val tabWidth = maxWidth / categories.size
+            val indicatorOffsetX by animateDpAsState(
+                targetValue = tabWidth * selectedIndex,
+                animationSpec = spring(dampingRatio = 0.78f, stiffness = 420f),
+                label = "category_pill_offset"
+            )
 
-                Surface(
-                    shape = CircleShape,
-                    color = tabBg,
-                    shadowElevation = if (selected) 2.dp else 0.dp,
-                    modifier = Modifier
-                        .weight(1f)
-                        .minimumInteractiveComponentSize()
-                        .pressScaleEffect(interactionSource)
-                        .clip(CircleShape)
-                        .clickable(
-                            interactionSource = interactionSource,
-                            indication = androidx.compose.material3.ripple()
-                        ) { onCategorySelected(category) }
-                        .testTag("category_tab_${category.name.lowercase()}")
-                ) {
-                    Row(
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                shadowElevation = 2.dp,
+                modifier = Modifier
+                    .offset(x = indicatorOffsetX)
+                    .width(tabWidth)
+                    .height(42.dp)
+            ) {}
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                categories.forEach { category ->
+                    val selected = category == selectedCategory
+                    val icon = when (category) {
+                        HomeToolCategory.ALL -> Icons.Filled.Apps
+                        HomeToolCategory.PDF -> Icons.Filled.PictureAsPdf
+                        HomeToolCategory.IMAGE -> Icons.Filled.Image
+                    }
+                    val tabContentColor by animateColorAsState(
+                        targetValue = if (selected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                        label = "cat_fg_${category.name}"
+                    )
+                    val interactionSource = remember { MutableInteractionSource() }
+
+                    Box(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 10.dp, horizontal = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                            .weight(1f)
+                            .height(42.dp)
+                            .minimumInteractiveComponentSize()
+                            .pressScaleEffect(interactionSource)
+                            .clip(CircleShape)
+                            .clickable(
+                                interactionSource = interactionSource,
+                                indication = androidx.compose.material3.ripple()
+                            ) { onCategorySelected(category) }
+                            .testTag("category_tab_${category.name.lowercase()}"),
+                        contentAlignment = Alignment.Center
                     ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = tabContentColor,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(7.dp))
-                        FittedSingleLineText(
-                            text = category.label,
-                            style = MaterialTheme.typography.labelLarge,
-                            fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
-                            color = tabContentColor
-                        )
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center
+                        ) {
+                            Icon(
+                                imageVector = icon,
+                                contentDescription = null,
+                                tint = tabContentColor,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(5.dp))
+                            FittedSingleLineText(
+                                text = category.label,
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
+                                color = tabContentColor
+                            )
+                        }
                     }
                 }
             }
@@ -835,12 +923,15 @@ private fun RecentPdfCard(
         }
     }
 
+    val interactionSource = remember { MutableInteractionSource() }
     Card(
         onClick = onClick,
+        interactionSource = interactionSource,
         modifier = Modifier
             .width(184.dp)
+            .pressScaleEffect(interactionSource)
             .testTag("recent_pdf_card_${record.id}"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -932,12 +1023,15 @@ private fun RecentImageCard(
         }
     }
 
+    val interactionSource = remember { MutableInteractionSource() }
     Card(
         onClick = onClick,
+        interactionSource = interactionSource,
         modifier = Modifier
             .width(184.dp)
+            .pressScaleEffect(interactionSource)
             .testTag("recent_image_card"),
-        shape = RoundedCornerShape(16.dp),
+        shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)

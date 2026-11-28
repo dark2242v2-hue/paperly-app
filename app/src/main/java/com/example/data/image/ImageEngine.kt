@@ -23,6 +23,7 @@ import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.util.LruCache
 import androidx.core.content.FileProvider
+import com.example.data.ai.AiUpscalerRepository
 import com.example.data.local.PdfRecordEntity
 import com.example.data.model.BatchCompressExportMode
 import com.example.data.model.BgBrushStroke
@@ -32,6 +33,7 @@ import com.example.data.model.PassportSizePreset
 import com.example.data.model.PickedImageInfo
 import com.example.data.model.ProcessedImageResult
 import com.example.data.model.RecentImageItem
+import com.example.data.model.UpscaleEnhanceMode
 import com.example.data.model.UpscaleTarget
 import com.google.android.gms.tasks.Task
 import com.google.mlkit.vision.common.InputImage
@@ -70,11 +72,15 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlin.math.abs
+import kotlin.math.exp
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 class ImageEngine(private val context: Context) {
+
+    private val aiUpscalerRepository = AiUpscalerRepository()
 
     val imagesDir: File by lazy {
         File(context.filesDir, "images").apply { mkdirs() }
@@ -739,75 +745,115 @@ class ImageEngine(private val context: Context) {
     suspend fun upscaleImage(
         info: PickedImageInfo,
         target: UpscaleTarget,
+        enhanceMode: UpscaleEnhanceMode = UpscaleEnhanceMode.AUTO_PHOTO,
         format: ImageOutputFormat,
         onProgress: (Float, String) -> Unit
     ): ProcessedImageResult = withContext(Dispatchers.IO) {
         val srcFile = File(info.localPath)
         require(srcFile.exists()) { "Source image not found." }
 
-        onProgress(0.12f, "Analyzing source resolution...")
-        val source = decodeSampledFileBitmap(srcFile, 4096)
+        onProgress(0.10f, "Analyzing source resolution...")
+        val source = decodeSampledFileBitmap(srcFile, 2048)
             ?: throw IllegalStateException("Could not decode image.")
 
-        val srcW = source.width
-        val srcH = source.height
+        val srcW = max(source.width, info.width)
+        val srcH = max(source.height, info.height)
         val aspect = srcW.toFloat() / max(1, srcH).toFloat()
 
-        var desiredLongEdge = when (target) {
-            UpscaleTarget.HD_2X -> (max(srcW, srcH) * 2f).roundToInt().coerceAtMost(target.maxEdgePx)
-            UpscaleTarget.ULTRA_4X -> (max(srcW, srcH) * 4f).roundToInt().coerceAtMost(target.maxEdgePx)
-            UpscaleTarget.RES_8K -> 7680
-            UpscaleTarget.MAX_16K -> 15360
-        }.coerceAtLeast(max(srcW, srcH))
+        val desiredLongEdge = (max(srcW, srcH) * target.multiplier)
+            .roundToInt()
+            .coerceAtMost(target.maxEdgePx)
+            .coerceAtLeast(max(srcW, srcH))
 
         // Clamp safely against available JVM/heap memory (avoid OOM on lower-RAM devices)
         val maxHeapBytes = Runtime.getRuntime().maxMemory()
-        val safePixelBudget = ((maxHeapBytes * 0.24) / 4.0).toLong().coerceIn(8_000_000L, 140_000_000L)
+        val safePixelBudget = ((maxHeapBytes * 0.24) / 4.0).toLong().coerceIn(8_000_000L, 64_000_000L)
         var targetW = if (srcW >= srcH) desiredLongEdge else (desiredLongEdge * aspect).roundToInt()
         var targetH = if (srcH >= srcW) desiredLongEdge else (desiredLongEdge / aspect).roundToInt()
         val desiredPixels = targetW.toLong() * targetH.toLong()
         if (desiredPixels > safePixelBudget) {
             val scaleDown = kotlin.math.sqrt(safePixelBudget.toDouble() / desiredPixels.toDouble())
-            targetW = (targetW * scaleDown).roundToInt().coerceAtLeast(srcW)
-            targetH = (targetH * scaleDown).roundToInt().coerceAtLeast(srcH)
+            targetW = (targetW * scaleDown).roundToInt().coerceAtLeast(source.width)
+            targetH = (targetH * scaleDown).roundToInt().coerceAtLeast(source.height)
         }
-        targetW = targetW.coerceIn(srcW, 15360)
-        targetH = targetH.coerceIn(srcH, 15360)
+        targetW = targetW.coerceIn(source.width, target.maxEdgePx)
+        targetH = targetH.coerceIn(source.height, target.maxEdgePx)
 
-        // Progressive multi-pass 2x scaling for crisp gradients & minimal ringing
-        var current = source
-        var pass = 1
+        var workingBitmap: Bitmap? = null
+        var usedOfflineFallback = false
         try {
+            // Primary Engine: Neural AI Super-Resolution (gemini-2.5-flash-image)
+            onProgress(0.22f, "AI neural restoration (${enhanceMode.label})...")
+            val aiRestored = try {
+                val rawAi = aiUpscalerRepository.restoreImage(source, enhanceMode)
+                alignBitmapAspectRatio(rawAi, aspect)
+            } catch (ce: CancellationException) {
+                throw ce
+            } catch (_: Exception) {
+                usedOfflineFallback = true
+                null
+            }
+
+            if (aiRestored != null) {
+                if (!source.isRecycled) source.recycle()
+                workingBitmap = aiRestored
+                onProgress(0.55f, "Scaling neural output to ${targetW}×${targetH}...")
+            } else {
+                // Automatic Offline / Free-Quota Fallback: Bilateral Denoise -> Progressive Bicubic -> Unsharp Mask (1.8)
+                onProgress(0.28f, "Offline Sharpen Mode: denoising...")
+                val denoised = withContext(Dispatchers.Default) {
+                    applyBilateralDenoiseBanded(source)
+                }
+                if (denoised !== source && !source.isRecycled) {
+                    source.recycle()
+                }
+                workingBitmap = denoised
+            }
+
+            var current = checkNotNull(workingBitmap)
+            var pass = 1
             while (current.width < targetW || current.height < targetH) {
                 currentCoroutineContext().ensureActive()
                 val nextW = min(targetW, current.width * 2)
                 val nextH = min(targetH, current.height * 2)
                 onProgress(
-                    (0.20f + pass * 0.18f).coerceAtMost(0.75f),
-                    "Upscale pass $pass (${nextW}×${nextH})..."
+                    (0.56f + pass * 0.08f).coerceAtMost(0.80f),
+                    "Upscaling pass $pass (${nextW}×${nextH})..."
                 )
                 val scaled = Bitmap.createScaledBitmap(current, nextW, nextH, true)
-                if (current !== scaled) current.recycle()
+                if (scaled !== current && !current.isRecycled) {
+                    current.recycle()
+                }
                 current = scaled
+                workingBitmap = current
                 pass++
                 if (pass > 5) break
             }
 
-            onProgress(0.80f, "Enhancing clarity & edge detail...")
-            val enhanced = withContext(Dispatchers.Default) {
-                applyMultiRadiusClarityEnhance(current)
+            onProgress(
+                0.84f,
+                if (usedOfflineFallback) "Applying offline unsharp detail boost..."
+                else "Refining micro-details & edge crispness..."
+            )
+            val sharpened = withContext(Dispatchers.Default) {
+                applyLuminanceUnsharpMaskBanded(
+                    src = current,
+                    amount = if (usedOfflineFallback) 1.8f else 0.55f
+                )
             }
-            if (enhanced !== current) {
+            if (sharpened !== current && !current.isRecycled) {
                 current.recycle()
-                current = enhanced
             }
+            current = sharpened
+            workingBitmap = current
 
-            onProgress(0.92f, "Encoding ${format.label}...")
+            onProgress(0.93f, "Encoding ${format.label}...")
             val baseTitle = info.displayName.substringBeforeLast('.')
-            val outFile = uniqueImageOutputFile("${sanitizeFileName(baseTitle)}_${target.name.lowercase()}.${format.ext}")
+            val suffix = if (usedOfflineFallback) "${target.name.lowercase()}_offline" else "${target.name.lowercase()}_ai"
+            val outFile = uniqueImageOutputFile("${sanitizeFileName(baseTitle)}_$suffix.${format.ext}")
             writeBitmapToFile(current, outFile, format, quality = 96)
 
-            onProgress(1f, "Upscale complete")
+            onProgress(1f, if (usedOfflineFallback) "Offline sharpen complete" else "AI upscale complete")
             ProcessedImageResult(
                 displayName = outFile.name,
                 filePath = outFile.absolutePath,
@@ -819,11 +865,42 @@ class ImageEngine(private val context: Context) {
                 originalWidth = info.width,
                 originalHeight = info.height,
                 operationLabel = "Upscaled ${target.label}",
-                originalFilePath = info.localPath
+                originalFilePath = info.localPath,
+                isOfflineFallback = usedOfflineFallback,
+                enhanceModeLabel = enhanceMode.label
             )
         } finally {
-            if (!current.isRecycled) current.recycle()
+            if (!source.isRecycled) source.recycle()
+            val lingering = workingBitmap
+            if (lingering != null && !lingering.isRecycled) {
+                lingering.recycle()
+            }
         }
+    }
+
+    private fun alignBitmapAspectRatio(aiBitmap: Bitmap, targetAspect: Float): Bitmap {
+        val aiW = aiBitmap.width
+        val aiH = aiBitmap.height
+        if (aiW <= 1 || aiH <= 1 || targetAspect <= 0f) return aiBitmap
+        val aiAspect = aiW.toFloat() / aiH.toFloat()
+        if (abs(aiAspect - targetAspect) / targetAspect <= 0.02f) return aiBitmap
+
+        val cropW: Int
+        val cropH: Int
+        if (aiAspect > targetAspect) {
+            cropH = aiH
+            cropW = (aiH * targetAspect).roundToInt().coerceIn(1, aiW)
+        } else {
+            cropW = aiW
+            cropH = (aiW / targetAspect).roundToInt().coerceIn(1, aiH)
+        }
+        val offsetX = ((aiW - cropW) / 2).coerceAtLeast(0)
+        val offsetY = ((aiH - cropH) / 2).coerceAtLeast(0)
+        return runCatching {
+            val cropped = Bitmap.createBitmap(aiBitmap, offsetX, offsetY, cropW, cropH)
+            if (cropped !== aiBitmap && !aiBitmap.isRecycled) aiBitmap.recycle()
+            cropped
+        }.getOrElse { aiBitmap }
     }
 
     suspend fun removeBackground(
@@ -1419,6 +1496,221 @@ class ImageEngine(private val context: Context) {
                                     val rNew = (rC + rDelta.coerceIn(-48, 48)).coerceIn(0, 255)
                                     val gNew = (gC + gDelta.coerceIn(-48, 48)).coerceIn(0, 255)
                                     val bNew = (bC + bDelta.coerceIn(-48, 48)).coerceIn(0, 255)
+                                    outBand[outOff + x] = (a shl 24) or (rNew shl 16) or (gNew shl 8) or bNew
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+                out.setPixels(outBand, 0, w, 0, yStart, w, outRows)
+                yStart = yEnd
+            }
+            out
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            src
+        }
+    }
+
+    private suspend fun applyBilateralDenoiseBanded(src: Bitmap): Bitmap {
+        val w = src.width
+        val h = src.height
+        val totalPixels = w.toLong() * h.toLong()
+        if (w < 6 || h < 6 || totalPixels > 24_000_000L) return src
+
+        // Precompute spatial (radius 2) & range intensity LUTs for fast edge-preserving denoising
+        val spatialLut = FloatArray(25)
+        val sigmaSpatialSq2 = 2f * 2.0f * 2.0f
+        for (dy in -2..2) {
+            for (dx in -2..2) {
+                spatialLut[(dy + 2) * 5 + (dx + 2)] = exp(-(dx * dx + dy * dy) / sigmaSpatialSq2)
+            }
+        }
+        val rangeLut = FloatArray(768)
+        val sigmaRangeSq2 = 2f * 30f * 30f
+        for (d in 0 until 768) {
+            rangeLut[d] = exp(-(d * d) / sigmaRangeSq2)
+        }
+
+        return try {
+            val out = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
+            val edgeRow = IntArray(w)
+            for (yEdge in listOf(0, 1, h - 2, h - 1)) {
+                src.getPixels(edgeRow, 0, w, 0, yEdge, w, 1)
+                out.setPixels(edgeRow, 0, w, 0, yEdge, w, 1)
+            }
+
+            val workerCount = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+            val bandHeight = 192
+            var yStart = 2
+            val interiorEnd = h - 2
+            while (yStart < interiorEnd) {
+                currentCoroutineContext().ensureActive()
+                val yEnd = min(interiorEnd, yStart + bandHeight)
+                val outRows = yEnd - yStart
+                val inStart = yStart - 2
+                val inRows = outRows + 4
+                val inBand = IntArray(inRows * w)
+                val outBand = IntArray(outRows * w)
+                src.getPixels(inBand, 0, w, 0, inStart, w, inRows)
+
+                coroutineScope {
+                    val effectiveWorkers = if (outRows >= 16) min(workerCount, outRows) else 1
+                    val rowsPerWorker = (outRows + effectiveWorkers - 1) / effectiveWorkers
+                    (0 until effectiveWorkers).map { workerIdx ->
+                        async(Dispatchers.Default) {
+                            val localStart = workerIdx * rowsPerWorker
+                            val localEnd = min(outRows, localStart + rowsPerWorker)
+                            for (localOutY in localStart until localEnd) {
+                                ensureActive()
+                                val inY = localOutY + 2
+                                val rowOff = inY * w
+                                val outOff = localOutY * w
+
+                                outBand[outOff] = inBand[rowOff]
+                                outBand[outOff + 1] = inBand[rowOff + 1]
+                                outBand[outOff + w - 2] = inBand[rowOff + w - 2]
+                                outBand[outOff + w - 1] = inBand[rowOff + w - 1]
+
+                                for (x in 2 until w - 2) {
+                                    val c = inBand[rowOff + x]
+                                    val a = c ushr 24
+                                    val rC = (c ushr 16) and 0xFF
+                                    val gC = (c ushr 8) and 0xFF
+                                    val bC = c and 0xFF
+
+                                    var sumW = 0f
+                                    var sumR = 0f
+                                    var sumG = 0f
+                                    var sumB = 0f
+                                    var kIdx = 0
+                                    for (dy in -2..2) {
+                                        val nRow = (inY + dy) * w
+                                        for (dx in -2..2) {
+                                            val n = inBand[nRow + x + dx]
+                                            val rN = (n ushr 16) and 0xFF
+                                            val gN = (n ushr 8) and 0xFF
+                                            val bN = n and 0xFF
+                                            val colorDist = (abs(rN - rC) + abs(gN - gC) + abs(bN - bC)).coerceIn(0, 767)
+                                            val weight = spatialLut[kIdx++] * rangeLut[colorDist]
+                                            sumW += weight
+                                            sumR += rN * weight
+                                            sumG += gN * weight
+                                            sumB += bN * weight
+                                        }
+                                    }
+                                    val invW = if (sumW > 0f) 1f / sumW else 1f
+                                    val rOut = (sumR * invW).roundToInt().coerceIn(0, 255)
+                                    val gOut = (sumG * invW).roundToInt().coerceIn(0, 255)
+                                    val bOut = (sumB * invW).roundToInt().coerceIn(0, 255)
+                                    outBand[outOff + x] = (a shl 24) or (rOut shl 16) or (gOut shl 8) or bOut
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                }
+                out.setPixels(outBand, 0, w, 0, yStart, w, outRows)
+                yStart = yEnd
+            }
+            out
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Throwable) {
+            src
+        }
+    }
+
+    private suspend fun applyLuminanceUnsharpMaskBanded(src: Bitmap, amount: Float): Bitmap {
+        val w = src.width
+        val h = src.height
+        val totalPixels = w.toLong() * h.toLong()
+        if (w < 6 || h < 6 || totalPixels > 72_000_000L) return src
+
+        return try {
+            val out = Bitmap.createBitmap(w, h, src.config ?: Bitmap.Config.ARGB_8888)
+            val edgeRow = IntArray(w)
+            for (yEdge in listOf(0, 1, h - 2, h - 1)) {
+                src.getPixels(edgeRow, 0, w, 0, yEdge, w, 1)
+                out.setPixels(edgeRow, 0, w, 0, yEdge, w, 1)
+            }
+
+            val workerCount = Runtime.getRuntime().availableProcessors().coerceIn(1, 4)
+            val bandHeight = 256
+            var yStart = 2
+            val interiorEnd = h - 2
+            while (yStart < interiorEnd) {
+                currentCoroutineContext().ensureActive()
+                val yEnd = min(interiorEnd, yStart + bandHeight)
+                val outRows = yEnd - yStart
+                val inStart = yStart - 2
+                val inRows = outRows + 4
+                val inBand = IntArray(inRows * w)
+                val outBand = IntArray(outRows * w)
+                src.getPixels(inBand, 0, w, 0, inStart, w, inRows)
+
+                coroutineScope {
+                    val effectiveWorkers = if (outRows >= 16) min(workerCount, outRows) else 1
+                    val rowsPerWorker = (outRows + effectiveWorkers - 1) / effectiveWorkers
+                    (0 until effectiveWorkers).map { workerIdx ->
+                        async(Dispatchers.Default) {
+                            val localStart = workerIdx * rowsPerWorker
+                            val localEnd = min(outRows, localStart + rowsPerWorker)
+                            for (localOutY in localStart until localEnd) {
+                                ensureActive()
+                                val inY = localOutY + 2
+                                val rowP1 = (inY - 1) * w
+                                val rowC = inY * w
+                                val rowN1 = (inY + 1) * w
+                                val outOff = localOutY * w
+
+                                outBand[outOff] = inBand[rowC]
+                                outBand[outOff + 1] = inBand[rowC + 1]
+                                outBand[outOff + w - 2] = inBand[rowC + w - 2]
+                                outBand[outOff + w - 1] = inBand[rowC + w - 1]
+
+                                for (x in 2 until w - 2) {
+                                    val c = inBand[rowC + x]
+                                    val a = c ushr 24
+                                    val rC = (c ushr 16) and 0xFF
+                                    val gC = (c ushr 8) and 0xFF
+                                    val bC = c and 0xFF
+
+                                    val top = inBand[rowP1 + x]
+                                    val bot = inBand[rowN1 + x]
+                                    val lft = inBand[rowC + x - 1]
+                                    val rgt = inBand[rowC + x + 1]
+                                    val tl = inBand[rowP1 + x - 1]
+                                    val tr = inBand[rowP1 + x + 1]
+                                    val bl = inBand[rowN1 + x - 1]
+                                    val br = inBand[rowN1 + x + 1]
+
+                                    val rBlur = (((top ushr 16) and 0xFF) * 2 + ((bot ushr 16) and 0xFF) * 2 +
+                                        ((lft ushr 16) and 0xFF) * 2 + ((rgt ushr 16) and 0xFF) * 2 +
+                                        ((tl ushr 16) and 0xFF) + ((tr ushr 16) and 0xFF) +
+                                        ((bl ushr 16) and 0xFF) + ((br ushr 16) and 0xFF) + rC * 4) shr 4
+                                    val gBlur = (((top ushr 8) and 0xFF) * 2 + ((bot ushr 8) and 0xFF) * 2 +
+                                        ((lft ushr 8) and 0xFF) * 2 + ((rgt ushr 8) and 0xFF) * 2 +
+                                        ((tl ushr 8) and 0xFF) + ((tr ushr 8) and 0xFF) +
+                                        ((bl ushr 8) and 0xFF) + ((br ushr 8) and 0xFF) + gC * 4) shr 4
+                                    val bBlur = ((top and 0xFF) * 2 + (bot and 0xFF) * 2 +
+                                        (lft and 0xFF) * 2 + (rgt and 0xFF) * 2 +
+                                        (tl and 0xFF) + (tr and 0xFF) +
+                                        (bl and 0xFF) + (br and 0xFF) + bC * 4) shr 4
+
+                                    // Compute luminance delta so chroma noise isn't over-boosted
+                                    val lumC = (rC * 77 + gC * 150 + bC * 29) shr 8
+                                    val lumBlur = (rBlur * 77 + gBlur * 150 + bBlur * 29) shr 8
+                                    val lumDiff = lumC - lumBlur
+                                    val boost = if (abs(lumDiff) < 3) {
+                                        0
+                                    } else {
+                                        (lumDiff * amount).roundToInt().coerceIn(-56, 56)
+                                    }
+
+                                    val rNew = (rC + boost).coerceIn(0, 255)
+                                    val gNew = (gC + boost).coerceIn(0, 255)
+                                    val bNew = (bC + boost).coerceIn(0, 255)
                                     outBand[outOff + x] = (a shl 24) or (rNew shl 16) or (gNew shl 8) or bNew
                                 }
                             }

@@ -19,17 +19,26 @@ import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
@@ -40,6 +49,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,9 +57,12 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.relocation.BringIntoViewRequester
 import androidx.compose.foundation.relocation.bringIntoViewRequester
@@ -91,9 +104,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -125,14 +135,21 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -142,12 +159,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.isSpecified
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -314,95 +333,121 @@ fun PaperlyTopBar(
     isPro: Boolean,
     onToggleDarkMode: () -> Unit,
     onProClick: () -> Unit,
+    isScrolled: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val haptics = rememberPaperlyHaptics()
-    Row(
-        modifier = modifier
+    val glassBg by animateColorAsState(
+        targetValue = if (isScrolled) {
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
+        } else {
+            MaterialTheme.colorScheme.background.copy(alpha = 0.86f)
+        },
+        animationSpec = tween(durationMillis = 180, easing = EaseOutCubic),
+        label = "top_bar_glass_bg"
+    )
+    val hairlineAlpha by animateFloatAsState(
+        targetValue = if (isScrolled) 0.95f else 0.45f,
+        animationSpec = tween(durationMillis = 180, easing = EaseOutCubic),
+        label = "top_bar_hairline_alpha"
+    )
+
+    Column(
+        modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 20.dp, vertical = 14.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+            .background(glassBg)
     ) {
         Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            modifier = modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            PaperlyBrandBadge(
-                isDarkMode = isDarkMode,
-                modifier = Modifier.testTag("top_bar_app_icon")
-            )
-            Column {
-                Text(
-                    text = stringResource(R.string.app_name),
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Text(
-                    text = "PDF Studio",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            IconButton(
-                onClick = {
-                    haptics.selectionClick()
-                    onToggleDarkMode()
-                },
-                modifier = Modifier
-                    .minimumInteractiveComponentSize()
-                    .testTag("dark_mode_toggle")
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Icon(
-                    imageVector = if (isDarkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
-                    contentDescription = stringResource(R.string.toggle_dark_mode),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                PaperlyBrandBadge(
+                    isDarkMode = isDarkMode,
+                    modifier = Modifier.testTag("top_bar_app_icon")
                 )
-            }
-
-            val proInteraction = remember { MutableInteractionSource() }
-            Surface(
-                onClick = {
-                    haptics.selectionClick()
-                    onProClick()
-                },
-                interactionSource = proInteraction,
-                shape = CircleShape,
-                color = if (isPro) PaperlyEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primaryContainer,
-                border = BorderStroke(
-                    width = 1.dp,
-                    color = if (isPro) PaperlyEmerald.copy(alpha = 0.45f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
-                ),
-                modifier = Modifier
-                    .heightIn(min = 48.dp)
-                    .pressScaleEffect(proInteraction)
-                    .testTag("pro_badge_button")
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.WorkspacePremium,
-                        contentDescription = stringResource(R.string.pro_badge),
-                        tint = if (isPro) PaperlyEmerald else MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
+                Column {
+                    Text(
+                        text = stringResource(R.string.app_name),
+                        style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.onBackground
                     )
                     Text(
-                        text = if (isPro) stringResource(R.string.pro_active_badge) else stringResource(R.string.pro_badge),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = if (isPro) PaperlyEmerald else MaterialTheme.colorScheme.primary
+                        text = "PDF & Image Studio",
+                        style = MaterialTheme.typography.bodySmall.copy(fontSize = 12.sp),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                IconButton(
+                    onClick = {
+                        haptics.selectionClick()
+                        onToggleDarkMode()
+                    },
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("dark_mode_toggle")
+                ) {
+                    Icon(
+                        imageVector = if (isDarkMode) Icons.Filled.LightMode else Icons.Filled.DarkMode,
+                        contentDescription = stringResource(R.string.toggle_dark_mode),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                val proInteraction = remember { MutableInteractionSource() }
+                Surface(
+                    onClick = {
+                        haptics.selectionClick()
+                        onProClick()
+                    },
+                    interactionSource = proInteraction,
+                    shape = CircleShape,
+                    color = if (isPro) PaperlyEmerald.copy(alpha = 0.14f) else MaterialTheme.colorScheme.primaryContainer,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isPro) PaperlyEmerald.copy(alpha = 0.45f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.25f)
+                    ),
+                    modifier = Modifier
+                        .heightIn(min = 48.dp)
+                        .pressScaleEffect(proInteraction)
+                        .testTag("pro_badge_button")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.WorkspacePremium,
+                            contentDescription = stringResource(R.string.pro_badge),
+                            tint = if (isPro) PaperlyEmerald else MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = if (isPro) stringResource(R.string.pro_active_badge) else stringResource(R.string.pro_badge),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (isPro) PaperlyEmerald else MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
         }
+        HorizontalDivider(
+            thickness = 1.dp,
+            color = MaterialTheme.colorScheme.outline.copy(alpha = hairlineAlpha)
+        )
     }
 }
 
@@ -509,10 +554,10 @@ fun PaperlyBottomBarWithBanner(
     isPro: Boolean,
     showHomeBanner: Boolean,
     isAdsSdkInitialized: Boolean = true,
+    visible: Boolean = true,
     onNavigate: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val haptics = rememberPaperlyHaptics()
     var bannerMountAllowed by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
@@ -520,76 +565,330 @@ fun PaperlyBottomBarWithBanner(
         bannerMountAllowed = true
     }
 
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .graphicsLayer {}
-            .background(MaterialTheme.colorScheme.surface)
+    AnimatedVisibility(
+        visible = visible,
+        enter = slideInVertically(
+            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing),
+            initialOffsetY = { it }
+        ) + fadeIn(animationSpec = tween(durationMillis = 180)),
+        exit = slideOutVertically(
+            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+            targetOffsetY = { it }
+        ) + fadeOut(animationSpec = tween(durationMillis = 150)),
+        modifier = modifier.fillMaxWidth()
     ) {
-        // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
-        if (!isPro) {
-            if (isAdsSdkInitialized && bannerMountAllowed) {
-                AnchoredAdaptiveBannerSlot(
-                    isVisible = showHomeBanner,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("home_adaptive_banner_ad")
-                )
-            } else if (showHomeBanner) {
-                Column {
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-                    Box(
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .graphicsLayer { clip = false },
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            CurvedNotchFloatingBottomBar(
+                currentRoute = currentRoute,
+                onNavigate = onNavigate,
+                modifier = Modifier
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = if (!isPro && showHomeBanner) 8.dp else 10.dp)
+            )
+
+            // Anchored Adaptive AdMob Banner slot on Home (hidden when Paperly Pro is active)
+            if (!isPro) {
+                if (isAdsSdkInitialized && bannerMountAllowed) {
+                    AnchoredAdaptiveBannerSlot(
+                        isVisible = showHomeBanner,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp)
-                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                            .background(MaterialTheme.colorScheme.surface)
+                            .testTag("home_adaptive_banner_ad")
+                    )
+                } else if (showHomeBanner) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surface)
+                    ) {
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(54.dp)
+                                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CurvedNotchFloatingBottomBar(
+    currentRoute: String?,
+    onNavigate: (String) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val hapticFeedback = LocalHapticFeedback.current
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val barBgColor = if (isDark) Color(0xFF1A1D24) else Color(0xFFFFFFFF)
+    val barBorderColor = if (isDark) Color(0xFF2B313E) else Color(0xFFE5E7EB)
+    val activeAccent = Color(0xFF5B46F6)
+    val activeLabelColor = if (isDark) Color(0xFF9387FF) else Color(0xFF5B46F6)
+    val inactiveColor = if (isDark) Color(0xFF94A3B8) else Color(0xFF64748B)
+
+    val items = listOf(
+        Triple(PaperlyRoutes.HOME, stringResource(R.string.nav_home), Icons.Filled.Home to Icons.Outlined.Home),
+        Triple(PaperlyRoutes.FILES, stringResource(R.string.nav_files), Icons.Filled.Folder to Icons.Outlined.Folder),
+        Triple(PaperlyRoutes.SETTINGS, stringResource(R.string.nav_settings), Icons.Filled.Settings to Icons.Outlined.Settings)
+    )
+    val selectedIndex = when (currentRoute) {
+        PaperlyRoutes.HOME -> 0
+        PaperlyRoutes.FILES -> 1
+        PaperlyRoutes.SETTINGS -> 2
+        else -> 0
+    }
+
+    val animatedFractionState = animateFloatAsState(
+        targetValue = selectedIndex.toFloat(),
+        animationSpec = spring(dampingRatio = 0.72f, stiffness = 380f),
+        label = "curved_notch_center_fraction"
+    )
+
+    val density = LocalDensity.current
+    val barTopOffsetDp = 26.dp
+    val horizontalInsetDp = 16.dp
+    val cornerRadiusDp = 24.dp
+    val notchHalfWidthDp = 36.dp
+    val notchDepthDp = 26.dp
+    val badgeSizeDp = 48.dp
+
+    val shadowColorInt = remember(isDark) {
+        if (isDark) Color.Black.copy(alpha = 0.50f).toArgb()
+        else Color(0xFF0F172A).copy(alpha = 0.14f).toArgb()
+    }
+    val shadowPaint = remember(barBgColor, shadowColorInt, density) {
+        AndroidPaint(AndroidPaint.ANTI_ALIAS_FLAG).apply {
+            style = AndroidPaint.Style.FILL
+            color = barBgColor.toArgb()
+            with(density) {
+                setShadowLayer(16.dp.toPx(), 0f, 5.dp.toPx(), shadowColorInt)
+            }
+        }
+    }
+    val barPath = remember { Path() }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .widthIn(max = 520.dp)
+            .fillMaxWidth()
+            .height(92.dp)
+            .graphicsLayer { clip = false }
+    ) {
+        val totalWidthPx = with(density) { maxWidth.toPx() }
+        val hInsetPx = with(density) { horizontalInsetDp.toPx() }
+        val badgeSizePx = with(density) { badgeSizeDp.toPx() }
+
+        // Smooth moving curved wave cutout Canvas (zero recompositions during spring animation)
+        Canvas(
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer { clip = false }
+        ) {
+            val w = size.width
+            val h = size.height
+            val barTopY = barTopOffsetDp.toPx()
+            val cornerR = cornerRadiusDp.toPx().coerceAtMost((h - barTopY) * 0.45f)
+            val notchHalfW = notchHalfWidthDp.toPx()
+            val notchDepth = notchDepthDp.toPx()
+
+            val tabZoneW = (w - 2f * hInsetPx).coerceAtLeast(1f)
+            val tabStep = tabZoneW / items.size
+            val centerX = hInsetPx + (animatedFractionState.value + 0.5f) * tabStep
+
+            val notchLeft = (centerX - notchHalfW).coerceAtLeast(cornerR)
+            val notchRight = (centerX + notchHalfW).coerceAtMost(w - cornerR)
+            val leftShoulder = (centerX - notchLeft).coerceAtLeast(1f)
+            val rightShoulder = (notchRight - centerX).coerceAtLeast(1f)
+
+            barPath.reset()
+            barPath.moveTo(cornerR, barTopY)
+            barPath.lineTo(notchLeft, barTopY)
+            barPath.cubicTo(
+                x1 = notchLeft + leftShoulder * 0.46f,
+                y1 = barTopY,
+                x2 = centerX - leftShoulder * 0.48f,
+                y2 = barTopY + notchDepth,
+                x3 = centerX,
+                y3 = barTopY + notchDepth
+            )
+            barPath.cubicTo(
+                x1 = centerX + rightShoulder * 0.48f,
+                y1 = barTopY + notchDepth,
+                x2 = notchRight - rightShoulder * 0.46f,
+                y2 = barTopY,
+                x3 = notchRight,
+                y3 = barTopY
+            )
+            barPath.lineTo(w - cornerR, barTopY)
+            barPath.arcTo(
+                rect = Rect(w - 2f * cornerR, barTopY, w, barTopY + 2f * cornerR),
+                startAngleDegrees = -90f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            barPath.lineTo(w, h - cornerR)
+            barPath.arcTo(
+                rect = Rect(w - 2f * cornerR, h - 2f * cornerR, w, h),
+                startAngleDegrees = 0f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            barPath.lineTo(cornerR, h)
+            barPath.arcTo(
+                rect = Rect(0f, h - 2f * cornerR, 2f * cornerR, h),
+                startAngleDegrees = 90f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            barPath.lineTo(0f, barTopY + cornerR)
+            barPath.arcTo(
+                rect = Rect(0f, barTopY, 2f * cornerR, barTopY + 2f * cornerR),
+                startAngleDegrees = 180f,
+                sweepAngleDegrees = 90f,
+                forceMoveTo = false
+            )
+            barPath.close()
+
+            drawIntoCanvas { canvas ->
+                canvas.nativeCanvas.drawPath(barPath.asAndroidPath(), shadowPaint)
+            }
+            drawPath(path = barPath, color = barBgColor)
+            drawPath(
+                path = barPath,
+                color = barBorderColor,
+                style = Stroke(width = 1.dp.toPx())
+            )
+        }
+
+        // Elevated Circular Icon Badge gliding smoothly inside the moving notch
+        val activeSpec = items[selectedIndex]
+        Surface(
+            shape = CircleShape,
+            color = activeAccent,
+            shadowElevation = 6.dp,
+            border = BorderStroke(
+                width = 2.dp,
+                color = if (isDark) Color(0xFF7D6CFF) else Color.White
+            ),
+            modifier = Modifier
+                .offset {
+                    val tabZoneW = (totalWidthPx - 2f * hInsetPx).coerceAtLeast(1f)
+                    val tabStep = tabZoneW / items.size
+                    val centerX = hInsetPx + (animatedFractionState.value + 0.5f) * tabStep
+                    IntOffset(
+                        x = (centerX - badgeSizePx * 0.5f).roundToInt(),
+                        y = 0
+                    )
+                }
+                .size(badgeSizeDp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(
+                        brush = Brush.linearGradient(
+                            colors = listOf(Color(0xFF6B57FF), activeAccent)
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Crossfade(
+                    targetState = activeSpec,
+                    animationSpec = tween(durationMillis = 150, easing = FastOutSlowInEasing),
+                    label = "floating_badge_icon"
+                ) { spec ->
+                    Icon(
+                        imageVector = spec.third.first,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(23.dp)
                     )
                 }
             }
         }
 
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-
-        NavigationBar(
-            containerColor = MaterialTheme.colorScheme.surface,
-            tonalElevation = 0.dp,
-            windowInsets = WindowInsets.navigationBars
+        // Interactive Tabs Row aligned directly with the moving notch centers
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(top = barTopOffsetDp, start = horizontalInsetDp, end = horizontalInsetDp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            val items = listOf(
-                Triple(PaperlyRoutes.HOME, stringResource(R.string.nav_home), Icons.Filled.Home to Icons.Outlined.Home),
-                Triple(PaperlyRoutes.FILES, stringResource(R.string.nav_files), Icons.Filled.Folder to Icons.Outlined.Folder),
-                Triple(PaperlyRoutes.SETTINGS, stringResource(R.string.nav_settings), Icons.Filled.Settings to Icons.Outlined.Settings)
-            )
             items.forEach { (route, label, icons) ->
                 val selected = currentRoute == route
-                NavigationBarItem(
-                    selected = selected,
-                    onClick = {
-                        haptics.selectionClick()
-                        onNavigate(route)
-                    },
-                    icon = {
-                        Icon(
-                            imageVector = if (selected) icons.first else icons.second,
-                            contentDescription = label
+                val itemInteraction = remember { MutableInteractionSource() }
+                val labelColor by animateColorAsState(
+                    targetValue = if (selected) activeLabelColor else inactiveColor,
+                    animationSpec = tween(durationMillis = 160, easing = EaseOutCubic),
+                    label = "nav_label_color_$label"
+                )
+
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight()
+                        .minimumInteractiveComponentSize()
+                        .pressScaleEffect(itemInteraction)
+                        .clip(RoundedCornerShape(18.dp))
+                        .clickable(
+                            interactionSource = itemInteraction,
+                            indication = null,
+                            onClick = {
+                                hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onNavigate(route)
+                            }
                         )
-                    },
-                    label = {
+                        .testTag("nav_${label.lowercase()}"),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selected) {
                         Text(
                             text = label,
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = labelColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 10.dp)
                         )
-                    },
-                    colors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        selectedTextColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                        unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    modifier = Modifier.testTag("nav_${label.lowercase()}")
-                )
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Icon(
+                                imageVector = icons.second,
+                                contentDescription = label,
+                                tint = inactiveColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Text(
+                                text = label,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium
+                                ),
+                                color = inactiveColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -823,7 +1122,7 @@ fun PaperlyProSheet(
         state.triggeredByTool == PdfToolType.AI_SUMMARIZE -> "Unlock AI Summarize"
         state.triggeredByTool == PdfToolType.SIGN -> "Unlock E-Sign PDF"
         state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE -> "Unlock AI Text to Image"
-        state.triggeredByImageTool == ImageToolType.UPSCALER -> "Unlock Ultra 4x–16K Upscaler"
+        state.triggeredByImageTool == ImageToolType.UPSCALER -> "Unlock Ultra 4×–8× Upscaler"
         else -> null
     }
 
@@ -904,7 +1203,7 @@ fun PaperlyProSheet(
 
             listOf(
                 "Zero banner, native, or rewarded video ads",
-                "Unlimited AI Summarize, Text-to-Image, Ultra 4x–16K Upscaler & E-Sign",
+                "Unlimited AI Summarize, Text-to-Image, Ultra 4×–8× Upscaler & E-Sign",
                 "100% private on-device PDF & image processing"
             ).forEach { perk ->
                 Row(
@@ -1170,7 +1469,7 @@ fun PaperlyProSheet(
                                 state.triggeredByImageTool == ImageToolType.TEXT_TO_IMAGE ->
                                     "Watch a short video to unlock 1 AI image free"
                                 state.triggeredByImageTool == ImageToolType.UPSCALER ->
-                                    "Watch a short video to unlock 1 Ultra/16K upscale"
+                                    "Watch a short video to unlock 1 Ultra 4×/8× upscale"
                                 else ->
                                     "Watch a short video to unlock this session free"
                             }

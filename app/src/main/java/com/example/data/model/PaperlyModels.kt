@@ -99,8 +99,9 @@ sealed interface AiSummaryUiState {
 }
 
 enum class HomeToolCategory(val label: String) {
-    PDF("PDF Tools"),
-    IMAGE("Image Tools")
+    ALL("All Tools"),
+    PDF("PDF Studio"),
+    IMAGE("Image Lab")
 }
 
 enum class ImageToolType(val routeArg: String) {
@@ -168,11 +169,32 @@ enum class AiImageAspectRatio(val label: String, val apiValue: String, val previ
     CLASSIC_PORTRAIT("3:4", "3:4", 3f / 4f)
 }
 
+enum class UpscaleEnhanceMode(
+    val label: String,
+    val subtitle: String,
+    val promptAddon: String
+) {
+    AUTO_PHOTO(
+        label = "Auto Photo & Face",
+        subtitle = "Portraits, eyes, hair & natural texture",
+        promptAddon = "Prioritize realistic skin pores, natural iris clarity, crisp eyelashes, fine hair strands, and authentic natural lighting."
+    ),
+    TEXT_DOCUMENT(
+        label = "Text & Document",
+        subtitle = "Razor-sharp letters, IDs & scans",
+        promptAddon = "Prioritize ultra-crisp readable typography, sharp ink contours, clean document background contrast, and zero smudging on small text or numbers."
+    ),
+    OLD_PHOTO(
+        label = "Old Photo Restore",
+        subtitle = "Repair grain, scratches & blur",
+        promptAddon = "Repair vintage scratches, heavy grain, motion blur, and faded tonal contrast while faithfully preserving original facial identity and composition."
+    )
+}
+
 enum class UpscaleTarget(val label: String, val multiplier: Float, val maxEdgePx: Int) {
-    HD_2X("2x HD", 2f, 4096),
-    ULTRA_4X("4x Ultra", 4f, 7680),
-    RES_8K("8K", 1f, 7680),
-    MAX_16K("16K Max", 1f, 15360)
+    HD_2X("2× Crisp HD", 2f, 2560),
+    ULTRA_4X("4× Ultra 4K", 4f, 4096),
+    PRINT_8X("8× Print Pro", 8f, 6144)
 }
 
 data class PickedImageInfo(
@@ -199,7 +221,9 @@ data class ProcessedImageResult(
     val originalFilePath: String? = null,
     val batchExportFilePath: String? = null,
     val batchExportMimeType: String? = null,
-    val batchFileCount: Int = 1
+    val batchFileCount: Int = 1,
+    val isOfflineFallback: Boolean = false,
+    val enhanceModeLabel: String? = null
 )
 
 enum class SplitWorkspaceMode(val label: String) {

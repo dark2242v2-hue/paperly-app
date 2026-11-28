@@ -20,6 +20,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -82,6 +86,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -711,10 +716,31 @@ fun PassportFramingPreview(
 fun SplitBeforeAfterComparisonPreview(
     originalBitmap: Bitmap?,
     enhancedBitmap: Bitmap?,
+    isOfflineFallback: Boolean = false,
+    resolutionSummary: String? = null,
     modifier: Modifier = Modifier
 ) {
+    val density = LocalDensity.current
+    val handleHitSlopPx = remember(density) { with(density) { 34.dp.toPx() } }
+    val originalImageBitmap = remember(originalBitmap) { originalBitmap?.asImageBitmap() }
+    val enhancedImageBitmap = remember(enhancedBitmap) { enhancedBitmap?.asImageBitmap() }
+
     var splitFraction by remember { mutableFloatStateOf(0.5f) }
-    var zoom2x by remember { mutableStateOf(false) }
+    var zoomScale by remember { mutableFloatStateOf(1f) }
+    var panOffset by remember { mutableStateOf(Offset.Zero) }
+
+    fun clampPan(rawPan: Offset, canvasW: Float, canvasH: Float, scale: Float): Offset {
+        if (scale <= 1.01f) return Offset.Zero
+        val refW = (enhancedImageBitmap?.width ?: originalImageBitmap?.width ?: 1).toFloat().coerceAtLeast(1f)
+        val refH = (enhancedImageBitmap?.height ?: originalImageBitmap?.height ?: 1).toFloat().coerceAtLeast(1f)
+        val fitScale = min(canvasW / refW, canvasH / refH) * scale
+        val maxPanX = max(0f, (refW * fitScale - canvasW) * 0.5f)
+        val maxPanY = max(0f, (refH * fitScale - canvasH) * 0.5f)
+        return Offset(
+            x = rawPan.x.coerceIn(-maxPanX, maxPanX),
+            y = rawPan.y.coerceIn(-maxPanY, maxPanY)
+        )
+    }
 
     Column(
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -726,7 +752,7 @@ fun SplitBeforeAfterComparisonPreview(
             color = Color(0xFF121318),
             modifier = Modifier
                 .fillMaxWidth()
-                .height(160.dp)
+                .height(256.dp)
                 .graphicsLayer {}
                 .testTag("upscaler_split_preview")
         ) {
@@ -734,28 +760,138 @@ fun SplitBeforeAfterComparisonPreview(
                 modifier = Modifier
                     .fillMaxSize()
                     .clipToBounds()
-                    .pointerInput(Unit) {
-                        detectDragGestures { change, _ ->
-                            change.consume()
-                            val w = size.width.toFloat().coerceAtLeast(1f)
-                            splitFraction = (change.position.x / w).coerceIn(0.08f, 0.92f)
+                    .pointerInput(enhancedImageBitmap, originalImageBitmap) {
+                        awaitEachGesture {
+                            val firstDown = awaitFirstDown(requireUnconsumed = false)
+                            val canvasW = size.width.toFloat().coerceAtLeast(1f)
+                            val canvasH = size.height.toFloat().coerceAtLeast(1f)
+                            val currentSplitX = canvasW * splitFraction
+                            val startedNearHandle = abs(firstDown.position.x - currentSplitX) <= handleHitSlopPx
+                            var draggingDivider = startedNearHandle || zoomScale <= 1.02f
+
+                            do {
+                                val event = awaitPointerEvent()
+                                val pressedChanges = event.changes.filter { it.pressed }
+                                if (pressedChanges.size >= 2) {
+                                    draggingDivider = false
+                                    val zoomDelta = event.calculateZoom()
+                                    val panDelta = event.calculatePan()
+                                    val nextZoom = (zoomScale * zoomDelta).coerceIn(1f, 5f)
+                                    zoomScale = nextZoom
+                                    panOffset = clampPan(panOffset + panDelta, canvasW, canvasH, nextZoom)
+                                    pressedChanges.forEach { if (it.positionChanged()) it.consume() }
+                                } else if (pressedChanges.size == 1) {
+                                    val change = pressedChanges.first()
+                                    if (change.positionChanged()) {
+                                        if (draggingDivider) {
+                                            splitFraction = (change.position.x / canvasW).coerceIn(0.06f, 0.94f)
+                                        } else {
+                                            val delta = change.position - change.previousPosition
+                                            panOffset = clampPan(panOffset + delta, canvasW, canvasH, zoomScale)
+                                        }
+                                        change.consume()
+                                    }
+                                }
+                            } while (pressedChanges.isNotEmpty())
                         }
                     }
             ) {
-                // Full Enhanced on Right
-                if (enhancedBitmap != null) {
-                    Image(
-                        bitmap = enhancedBitmap.asImageBitmap(),
-                        contentDescription = "Enhanced upscaled image",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .graphicsLayer {
-                                val s = if (zoom2x) 2.2f else 1f
-                                scaleX = s
-                                scaleY = s
+                if (enhancedImageBitmap != null || originalImageBitmap != null) {
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val refW = (enhancedImageBitmap?.width ?: originalImageBitmap?.width ?: 1)
+                            .toFloat()
+                            .coerceAtLeast(1f)
+                        val refH = (enhancedImageBitmap?.height ?: originalImageBitmap?.height ?: 1)
+                            .toFloat()
+                            .coerceAtLeast(1f)
+                        val fitScale = min(size.width / refW, size.height / refH) * zoomScale
+                        val drawW = refW * fitScale
+                        val drawH = refH * fitScale
+                        val left = (size.width - drawW) * 0.5f + panOffset.x
+                        val top = (size.height - drawH) * 0.5f + panOffset.y
+                        val dstOffset = IntOffset(left.roundToInt(), top.roundToInt())
+                        val dstSize = IntSize(
+                            drawW.roundToInt().coerceAtLeast(1),
+                            drawH.roundToInt().coerceAtLeast(1)
+                        )
+                        val splitX = size.width * splitFraction
+
+                        // Right side: AI-Restored / Enhanced output
+                        if (enhancedImageBitmap != null) {
+                            clipRect(left = splitX, top = 0f, right = size.width, bottom = size.height) {
+                                drawImage(
+                                    image = enhancedImageBitmap,
+                                    dstOffset = dstOffset,
+                                    dstSize = dstSize
+                                )
                             }
-                    )
+                        }
+
+                        // Left side: Original input locked to exact same rect
+                        if (originalImageBitmap != null) {
+                            clipRect(left = 0f, top = 0f, right = splitX, bottom = size.height) {
+                                drawImage(
+                                    image = originalImageBitmap,
+                                    dstOffset = dstOffset,
+                                    dstSize = dstSize
+                                )
+                            }
+                        }
+
+                        // Crisp center comparison divider + draggable handle
+                        val strokePx = 2.dp.toPx()
+                        drawLine(
+                            color = Color.Black.copy(alpha = 0.35f),
+                            start = Offset(splitX, 0f),
+                            end = Offset(splitX, size.height),
+                            strokeWidth = strokePx * 2f
+                        )
+                        drawLine(
+                            color = Color.White,
+                            start = Offset(splitX, 0f),
+                            end = Offset(splitX, size.height),
+                            strokeWidth = strokePx
+                        )
+
+                        val centerY = size.height * 0.5f
+                        drawCircle(
+                            color = Color.Black.copy(alpha = 0.28f),
+                            radius = 17.dp.toPx(),
+                            center = Offset(splitX, centerY)
+                        )
+                        drawCircle(
+                            color = Color(0xFF4F46E5),
+                            radius = 15.dp.toPx(),
+                            center = Offset(splitX, centerY)
+                        )
+                        drawCircle(
+                            color = Color.White,
+                            radius = 12.dp.toPx(),
+                            center = Offset(splitX, centerY)
+                        )
+
+                        val chevronHalfW = 2.6.dp.toPx()
+                        val chevronHalfH = 3.2.dp.toPx()
+                        val leftChevX = splitX - 4.2.dp.toPx()
+                        val rightChevX = splitX + 4.2.dp.toPx()
+                        val chevPath = Path().apply {
+                            moveTo(leftChevX + chevronHalfW, centerY - chevronHalfH)
+                            lineTo(leftChevX - chevronHalfW * 0.4f, centerY)
+                            lineTo(leftChevX + chevronHalfW, centerY + chevronHalfH)
+                            moveTo(rightChevX - chevronHalfW, centerY - chevronHalfH)
+                            lineTo(rightChevX + chevronHalfW * 0.4f, centerY)
+                            lineTo(rightChevX - chevronHalfW, centerY + chevronHalfH)
+                        }
+                        drawPath(
+                            path = chevPath,
+                            color = Color(0xFF4F46E5),
+                            style = Stroke(
+                                width = 1.8.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
+                    }
                 } else {
                     ShimmerBox(
                         modifier = Modifier.fillMaxSize(),
@@ -763,77 +899,87 @@ fun SplitBeforeAfterComparisonPreview(
                     )
                 }
 
-                // Original clipped to Left of splitFraction
-                if (originalBitmap != null) {
-                    Canvas(modifier = Modifier.fillMaxSize()) {
-                        val splitX = size.width * splitFraction
-                        clipRect(left = 0f, top = 0f, right = splitX, bottom = size.height) {
-                            val imgW = originalBitmap.width.toFloat().coerceAtLeast(1f)
-                            val imgH = originalBitmap.height.toFloat().coerceAtLeast(1f)
-                            val fitScale = min(size.width / imgW, size.height / imgH) * (if (zoom2x) 2.2f else 1f)
-                            val drawW = imgW * fitScale
-                            val drawH = imgH * fitScale
-                            val left = (size.width - drawW) / 2f
-                            val top = (size.height - drawH) / 2f
-                            drawImage(
-                                image = originalBitmap.asImageBitmap(),
-                                dstOffset = IntOffset(left.roundToInt(), top.roundToInt()),
-                                dstSize = IntSize(drawW.roundToInt().coerceAtLeast(1), drawH.roundToInt().coerceAtLeast(1))
-                            )
-                        }
-                    }
-                }
-
-                // Divider line + handle
-                Canvas(modifier = Modifier.fillMaxSize()) {
-                    val splitX = size.width * splitFraction
-                    drawLine(
-                        color = Color.White,
-                        start = Offset(splitX, 0f),
-                        end = Offset(splitX, size.height),
-                        strokeWidth = 2.dp.toPx()
-                    )
-                    drawCircle(
-                        color = Color(0xFF4F46E5),
-                        radius = 13.dp.toPx(),
-                        center = Offset(splitX, size.height / 2f)
-                    )
-                    drawCircle(
-                        color = Color.White,
-                        radius = 10.dp.toPx(),
-                        center = Offset(splitX, size.height / 2f)
-                    )
-                }
-
-                // Labels
+                // Top-left Before label
                 Surface(
                     shape = CircleShape,
-                    color = Color.Black.copy(alpha = 0.65f),
+                    color = Color.Black.copy(alpha = 0.68f),
                     modifier = Modifier
                         .align(Alignment.TopStart)
                         .padding(8.dp)
                 ) {
                     Text(
-                        text = "Original",
+                        text = "Before",
                         style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
                         color = Color.White,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
                     )
                 }
-                Surface(
-                    shape = CircleShape,
-                    color = Color(0xFF4F46E5).copy(alpha = 0.90f),
+
+                // Top-right After badge (+ Offline Sharpen Mode indicator when fallback triggered)
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(8.dp)
                 ) {
-                    Text(
-                        text = "Enhanced",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                    )
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isOfflineFallback) {
+                            Color(0xFFD97706).copy(alpha = 0.92f)
+                        } else {
+                            Color(0xFF4F46E5).copy(alpha = 0.92f)
+                        }
+                    ) {
+                        Text(
+                            text = if (isOfflineFallback) "After Offline HD" else "After AI HD",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                        )
+                    }
+                    if (isOfflineFallback) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.72f)
+                        ) {
+                            Text(
+                                text = "Offline Sharpen Mode",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFFFDE68A),
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Bottom resolution jump & zoom badge
+                if (resolutionSummary != null || zoomScale > 1.02f) {
+                    Surface(
+                        shape = CircleShape,
+                        color = Color.Black.copy(alpha = 0.68f),
+                        modifier = Modifier
+                            .align(Alignment.BottomStart)
+                            .padding(8.dp)
+                    ) {
+                        val badgeText = buildString {
+                            if (resolutionSummary != null) append(resolutionSummary)
+                            if (zoomScale > 1.02f) {
+                                if (isNotEmpty()) append(" • ")
+                                append(String.format("%.1f×", zoomScale))
+                            }
+                        }
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp)
+                        )
+                    }
                 }
             }
         }
@@ -845,7 +991,8 @@ fun SplitBeforeAfterComparisonPreview(
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                modifier = Modifier.weight(1f)
             ) {
                 Icon(
                     imageVector = Icons.Filled.CompareArrows,
@@ -854,15 +1001,34 @@ fun SplitBeforeAfterComparisonPreview(
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
-                    text = "Drag slider to compare clarity",
+                    text = if (zoomScale > 1.02f) {
+                        "Drag handle to compare • 1-finger pan"
+                    } else {
+                        "Drag slider or pinch to zoom (up to 5×)"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
+            Spacer(modifier = Modifier.width(8.dp))
             Surface(
                 shape = CircleShape,
-                color = if (zoom2x) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                modifier = Modifier.clickable { zoom2x = !zoom2x }
+                color = if (zoomScale > 1.02f) {
+                    MaterialTheme.colorScheme.primaryContainer
+                } else {
+                    MaterialTheme.colorScheme.surfaceVariant
+                },
+                modifier = Modifier.clickable {
+                    val next = when {
+                        zoomScale < 1.8f -> 2.5f
+                        zoomScale < 3.8f -> 4.5f
+                        else -> 1f
+                    }
+                    zoomScale = next
+                    if (next <= 1.02f) {
+                        panOffset = Offset.Zero
+                    }
+                }
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
@@ -870,13 +1036,17 @@ fun SplitBeforeAfterComparisonPreview(
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
                     Icon(
-                        imageVector = if (zoom2x) Icons.Filled.ZoomOut else Icons.Filled.ZoomIn,
+                        imageVector = if (zoomScale > 3.8f) Icons.Filled.ZoomOut else Icons.Filled.ZoomIn,
                         contentDescription = null,
                         modifier = Modifier.size(15.dp),
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Text(
-                        text = if (zoom2x) "1x Fit" else "2x Detail Zoom",
+                        text = when {
+                            zoomScale < 1.8f -> "2.5× Zoom"
+                            zoomScale < 3.8f -> "4.5× Zoom"
+                            else -> "1× Reset"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.primary

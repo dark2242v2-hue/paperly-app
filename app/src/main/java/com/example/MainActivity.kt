@@ -4,27 +4,37 @@ import android.content.Intent
 import android.graphics.drawable.ColorDrawable
 import android.net.Uri
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.content.IntentCompat
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.EaseOutCubic
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -32,25 +42,26 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.zIndex
+import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -89,7 +100,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         val initialDarkMode = UserPreferencesRepository.readBootDarkModeSync(this)
         window.setBackgroundDrawable(
-            ColorDrawable(if (initialDarkMode) 0xFF0B1120.toInt() else 0xFFF8FAFC.toInt())
+            ColorDrawable(if (initialDarkMode) 0xFF111318.toInt() else 0xFFF8F9FB.toInt())
         )
         enableEdgeToEdge(
             statusBarStyle = if (initialDarkMode) {
@@ -123,7 +134,7 @@ class MainActivity : ComponentActivity() {
                 if (appliedDarkMode != isDarkMode) {
                     appliedDarkMode = isDarkMode
                     window.setBackgroundDrawable(
-                        ColorDrawable(if (isDarkMode) 0xFF0B1120.toInt() else 0xFFF8FAFC.toInt())
+                        ColorDrawable(if (isDarkMode) 0xFF111318.toInt() else 0xFFF8F9FB.toInt())
                     )
                     enableEdgeToEdge(
                         statusBarStyle = if (isDarkMode) {
@@ -327,164 +338,163 @@ fun PaperlyApp(
         label = "rootEntranceScale"
     )
 
+    var lastBackActionMs by remember { mutableLongStateOf(0L) }
+
+    fun safePopBackStack(allowFallbackToMainTabs: Boolean = false) {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastBackActionMs < 350L) return
+        val canPopCurrent = navController.currentBackStackEntry
+            ?.lifecycle
+            ?.currentState
+            ?.isAtLeast(Lifecycle.State.RESUMED) == true
+        if (!canPopCurrent) return
+
+        if (navController.previousBackStackEntry != null) {
+            lastBackActionMs = now
+            navController.popBackStack()
+        } else if (allowFallbackToMainTabs) {
+            lastBackActionMs = now
+            navController.navigate(PaperlyRoutes.MAIN_TABS) {
+                popUpTo(PaperlyRoutes.EXTERNAL_PDF_VIEWER) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    fun safePopToMainTabs() {
+        val now = SystemClock.elapsedRealtime()
+        if (now - lastBackActionMs < 350L) return
+        val canPopCurrent = navController.currentBackStackEntry
+            ?.lifecycle
+            ?.currentState
+            ?.isAtLeast(Lifecycle.State.RESUMED) == true
+        if (!canPopCurrent) return
+
+        lastBackActionMs = now
+        if (!navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)) {
+            navController.navigate(PaperlyRoutes.MAIN_TABS) {
+                popUpTo(0) { inclusive = true }
+                launchSingleTop = true
+            }
+        }
+    }
+
+    val screenEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        slideInHorizontally(
+            animationSpec = tween(durationMillis = 260, easing = FastOutSlowInEasing)
+        ) { it / 4 } + fadeIn(animationSpec = tween(durationMillis = 220))
+    }
+    val screenExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        scaleOut(
+            targetScale = 0.96f,
+            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing)
+        ) + fadeOut(animationSpec = tween(durationMillis = 200))
+    }
+    val screenPopEnterTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> EnterTransition = {
+        scaleIn(
+            initialScale = 0.96f,
+            animationSpec = tween(durationMillis = 220, easing = FastOutSlowInEasing)
+        ) + fadeIn(animationSpec = tween(durationMillis = 220))
+    }
+    val screenPopExitTransition: AnimatedContentTransitionScope<NavBackStackEntry>.() -> ExitTransition = {
+        slideOutHorizontally(
+            animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing)
+        ) { it / 4 } + fadeOut(animationSpec = tween(durationMillis = 200))
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-    Scaffold(
-        modifier = Modifier.graphicsLayer {
-            alpha = rootAlpha
-            scaleX = rootScale
-            scaleY = rootScale
-        },
-        contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
-        topBar = {
-            if (isMainTab) {
-                PaperlyTopBar(
-                    isDarkMode = isDarkMode,
-                    isPro = isPro,
-                    onToggleDarkMode = viewModel::toggleDarkMode,
-                    onProClick = viewModel::openProSheet,
-                    modifier = Modifier.statusBarsPadding()
-                )
-            }
-        },
-        bottomBar = {
-            if (isMainTab) {
-                PaperlyBottomBarWithBanner(
-                    currentRoute = activeMainTab,
-                    isPro = isPro,
-                    showHomeBanner = activeMainTab == PaperlyRoutes.HOME,
-                    isAdsSdkInitialized = isAdsSdkInitialized,
-                    onNavigate = { targetRoute ->
-                        activeMainTab = targetRoute
-                    }
-                )
-            }
-        }
-    ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(if (isMainTab) innerPadding else PaddingValues())
+                .graphicsLayer {
+                    alpha = rootAlpha
+                    scaleX = rootScale
+                    scaleY = rootScale
+                }
         ) {
             NavHost(
                 navController = navController,
                 startDestination = startDestination,
-                enterTransition = {
-                    slideInHorizontally(tween(durationMillis = 220, easing = EaseOutCubic)) { (it * 0.20f).toInt() } +
-                        fadeIn(tween(durationMillis = 220, easing = EaseOutCubic))
-                },
-                exitTransition = {
-                    slideOutHorizontally(tween(durationMillis = 220, easing = EaseOutCubic)) { -(it * 0.12f).toInt() } +
-                        fadeOut(tween(durationMillis = 180, easing = EaseOutCubic))
-                },
-                popEnterTransition = {
-                    slideInHorizontally(tween(durationMillis = 220, easing = EaseOutCubic)) { -(it * 0.12f).toInt() } +
-                        fadeIn(tween(durationMillis = 220, easing = EaseOutCubic))
-                },
-                popExitTransition = {
-                    slideOutHorizontally(tween(durationMillis = 220, easing = EaseOutCubic)) { (it * 0.20f).toInt() } +
-                        fadeOut(tween(durationMillis = 200, easing = EaseOutCubic))
-                }
+                enterTransition = screenEnterTransition,
+                exitTransition = screenExitTransition,
+                popEnterTransition = screenPopEnterTransition,
+                popExitTransition = screenPopExitTransition
             ) {
-                composable(route = PaperlyRoutes.MAIN_TABS) {
+                composable(
+                    route = PaperlyRoutes.MAIN_TABS,
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
+                ) {
                     val tempCacheSizeBytes by viewModel.tempCacheSizeBytes.collectAsStateWithLifecycle()
-                    val homeSelected = activeMainTab == PaperlyRoutes.HOME
-                    val filesSelected = activeMainTab == PaperlyRoutes.FILES
-                    val settingsSelected = activeMainTab == PaperlyRoutes.SETTINGS
+                    val homeListState = rememberLazyListState()
+                    val filesListState = rememberLazyListState()
+                    val settingsListState = rememberLazyListState()
 
-                    var hasVisitedFiles by rememberSaveable { mutableStateOf(false) }
-                    var hasVisitedSettings by rememberSaveable { mutableStateOf(false) }
-
-                    LaunchedEffect(activeMainTab) {
-                        if (activeMainTab == PaperlyRoutes.FILES) hasVisitedFiles = true
-                        if (activeMainTab == PaperlyRoutes.SETTINGS) hasVisitedSettings = true
+                    val isActiveTabScrolled by remember(activeMainTab) {
+                        derivedStateOf {
+                            val activeState = when (activeMainTab) {
+                                PaperlyRoutes.FILES -> filesListState
+                                PaperlyRoutes.SETTINGS -> settingsListState
+                                else -> homeListState
+                            }
+                            activeState.firstVisibleItemIndex > 0 ||
+                                activeState.firstVisibleItemScrollOffset > 12
+                        }
                     }
 
-                    val homeAlpha by animateFloatAsState(
-                        targetValue = if (homeSelected) 1f else 0f,
-                        animationSpec = tween(durationMillis = 150, easing = EaseOutCubic),
-                        label = "homeTabAlpha"
-                    )
-                    val filesAlpha by animateFloatAsState(
-                        targetValue = if (filesSelected) 1f else 0f,
-                        animationSpec = tween(durationMillis = 150, easing = EaseOutCubic),
-                        label = "filesTabAlpha"
-                    )
-                    val settingsAlpha by animateFloatAsState(
-                        targetValue = if (settingsSelected) 1f else 0f,
-                        animationSpec = tween(durationMillis = 150, easing = EaseOutCubic),
-                        label = "settingsTabAlpha"
-                    )
-
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        Box(modifier = tabLayerModifier(selected = homeSelected, alpha = homeAlpha)) {
-                            HomeScreen(
-                                selectedCategory = homeCategory,
-                                recentRecords = recentRecords,
-                                recentImages = recentImages,
-                                isInitialFilesLoading = isInitialFilesLoading,
-                                isInitialImagesLoading = isInitialImagesLoading,
-                                onCategorySelected = viewModel::setHomeCategory,
-                                onToolSelected = { tool ->
-                                    if (tool == PdfToolType.AI_SUMMARIZE ||
-                                        tool == PdfToolType.SIGN
-                                    ) {
-                                        viewModel.openRewardedGateOrProceed(tool) {
-                                            navController.navigate(PaperlyRoutes.toolWorkspace(tool))
-                                        }
-                                    } else {
-                                        viewModel.prepareToolWorkspace(tool)
-                                        navController.navigate(PaperlyRoutes.toolWorkspace(tool))
-                                    }
-                                },
-                                onImageToolSelected = { imgTool ->
-                                    viewModel.openImageToolOrGate(imgTool) {
-                                        navController.navigate(PaperlyRoutes.imageWorkspace(imgTool))
-                                    }
-                                },
-                                onRecentSelected = { rec ->
-                                    navController.navigate(PaperlyRoutes.pdfViewer(rec.id))
-                                },
-                                onRecentImageSelected = { item ->
-                                    viewModel.openRecentImage(item)
-                                    navController.navigate(PaperlyRoutes.IMAGE_RESULT)
-                                },
-                                onSeeAllFiles = {
-                                    hasVisitedFiles = true
-                                    activeMainTab = PaperlyRoutes.FILES
-                                },
-                                getCachedImageThumbnail = viewModel.imageEngine::getCachedPreview,
-                                loadImageThumbnail = { path, maxEdge ->
-                                    viewModel.imageEngine.decodePreviewBitmap(path, maxEdge)
-                                },
-                                getCachedPdfThumbnail = { path, maxW ->
-                                    viewModel.pdfEngine.getCachedPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
-                                },
-                                loadPdfThumbnail = { path, maxW ->
-                                    viewModel.pdfEngine.renderPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
+                    Scaffold(
+                        containerColor = MaterialTheme.colorScheme.background,
+                        contentWindowInsets = WindowInsets.safeDrawing,
+                        topBar = {
+                            PaperlyTopBar(
+                                isDarkMode = isDarkMode,
+                                isPro = isPro,
+                                onToggleDarkMode = viewModel::toggleDarkMode,
+                                onProClick = viewModel::openProSheet,
+                                isScrolled = isActiveTabScrolled,
+                                modifier = Modifier.statusBarsPadding()
+                            )
+                        },
+                        bottomBar = {
+                            PaperlyBottomBarWithBanner(
+                                currentRoute = activeMainTab,
+                                isPro = isPro,
+                                showHomeBanner = activeMainTab == PaperlyRoutes.HOME,
+                                isAdsSdkInitialized = isAdsSdkInitialized,
+                                visible = isMainTab,
+                                onNavigate = { targetRoute ->
+                                    activeMainTab = targetRoute
                                 }
                             )
                         }
-
-                        if (filesSelected || hasVisitedFiles) {
-                            Box(modifier = tabLayerModifier(selected = filesSelected, alpha = filesAlpha)) {
-                                FilesScreen(
+                    ) { innerPadding ->
+                        val bottomBarClearance = innerPadding.calculateBottomPadding()
+                        Crossfade(
+                            targetState = activeMainTab,
+                            animationSpec = tween(durationMillis = 180, easing = FastOutSlowInEasing),
+                            label = "main_tab_crossfade",
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(top = innerPadding.calculateTopPadding())
+                        ) { tab ->
+                            when (tab) {
+                                PaperlyRoutes.FILES -> FilesScreen(
                                     records = recentRecords,
                                     viewModel = viewModel,
                                     onOpenViewer = { id ->
                                         navController.navigate(PaperlyRoutes.pdfViewer(id))
-                                    }
+                                    },
+                                    listState = filesListState,
+                                    bottomContentPadding = bottomBarClearance
                                 )
-                            }
-                        }
 
-                        if (settingsSelected || hasVisitedSettings) {
-                            Box(modifier = tabLayerModifier(selected = settingsSelected, alpha = settingsAlpha)) {
-                                SettingsScreen(
+                                PaperlyRoutes.SETTINGS -> SettingsScreen(
                                     isDarkMode = isDarkMode,
                                     isPro = isPro,
                                     activePlanProductId = activePlanProductId,
@@ -500,7 +510,57 @@ fun PaperlyApp(
                                     onSelectCompression = viewModel::setDefaultCompression,
                                     onRefreshCacheSize = viewModel::refreshTempCacheSize,
                                     onClearTempCache = viewModel::clearTempCache,
-                                    onClearAllFiles = viewModel::clearAllLocalFiles
+                                    onClearAllFiles = viewModel::clearAllLocalFiles,
+                                    listState = settingsListState,
+                                    bottomContentPadding = bottomBarClearance
+                                )
+
+                                else -> HomeScreen(
+                                    selectedCategory = homeCategory,
+                                    recentRecords = recentRecords,
+                                    recentImages = recentImages,
+                                    isInitialFilesLoading = isInitialFilesLoading,
+                                    isInitialImagesLoading = isInitialImagesLoading,
+                                    onCategorySelected = viewModel::setHomeCategory,
+                                    onToolSelected = { tool ->
+                                        if (tool == PdfToolType.AI_SUMMARIZE ||
+                                            tool == PdfToolType.SIGN
+                                        ) {
+                                            viewModel.openRewardedGateOrProceed(tool) {
+                                                navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                                            }
+                                        } else {
+                                            viewModel.prepareToolWorkspace(tool)
+                                            navController.navigate(PaperlyRoutes.toolWorkspace(tool))
+                                        }
+                                    },
+                                    onImageToolSelected = { imgTool ->
+                                        viewModel.openImageToolOrGate(imgTool) {
+                                            navController.navigate(PaperlyRoutes.imageWorkspace(imgTool))
+                                        }
+                                    },
+                                    onRecentSelected = { rec ->
+                                        navController.navigate(PaperlyRoutes.pdfViewer(rec.id))
+                                    },
+                                    onRecentImageSelected = { item ->
+                                        viewModel.openRecentImage(item)
+                                        navController.navigate(PaperlyRoutes.IMAGE_RESULT)
+                                    },
+                                    onSeeAllFiles = {
+                                        activeMainTab = PaperlyRoutes.FILES
+                                    },
+                                    getCachedImageThumbnail = viewModel.imageEngine::getCachedPreview,
+                                    loadImageThumbnail = { path, maxEdge ->
+                                        viewModel.imageEngine.decodePreviewBitmap(path, maxEdge)
+                                    },
+                                    getCachedPdfThumbnail = { path, maxW ->
+                                        viewModel.pdfEngine.getCachedPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
+                                    },
+                                    loadPdfThumbnail = { path, maxW ->
+                                        viewModel.pdfEngine.renderPageThumbnail(path, pageIndex = 0, maxWidth = maxW)
+                                    },
+                                    listState = homeListState,
+                                    bottomContentPadding = bottomBarClearance
                                 )
                             }
                         }
@@ -509,7 +569,11 @@ fun PaperlyApp(
 
                 composable(
                     route = PaperlyRoutes.TOOL_WORKSPACE,
-                    arguments = listOf(navArgument("toolType") { type = NavType.StringType })
+                    arguments = listOf(navArgument("toolType") { type = NavType.StringType }),
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
                 ) {
                     ToolWorkspaceScreen(
                         workspace = workspace,
@@ -522,7 +586,7 @@ fun PaperlyApp(
                             navController.navigate(PaperlyRoutes.MULTI_SHOT_CAMERA)
                         },
                         viewModel = viewModel,
-                        onBack = { navController.popBackStack() },
+                        onBack = { safePopBackStack() },
                         onProcessingComplete = { recordId ->
                             navController.navigate(PaperlyRoutes.downloadReady(recordId)) {
                                 popUpTo(startDestination)
@@ -531,7 +595,13 @@ fun PaperlyApp(
                     )
                 }
 
-                composable(PaperlyRoutes.MULTI_SHOT_CAMERA) {
+                composable(
+                    route = PaperlyRoutes.MULTI_SHOT_CAMERA,
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
+                ) {
                     MultiShotCameraScreen(
                         capturedUris = workspace.scanImageUris,
                         createOutputFile = viewModel.pdfEngine::createScanTempFile,
@@ -539,14 +609,18 @@ fun PaperlyApp(
                         onImageCaptured = { uri -> viewModel.addScanImageUris(listOf(uri)) },
                         onGalleryImagesPicked = { uris -> viewModel.importScanImageUris(uris, fromSmartScan = false) },
                         onRemoveCapturedAt = viewModel::removeScanImageAt,
-                        onDone = { navController.popBackStack() },
-                        onClose = { navController.popBackStack() }
+                        onDone = { safePopBackStack() },
+                        onClose = { safePopBackStack() }
                     )
                 }
 
                 composable(
                     route = PaperlyRoutes.DOWNLOAD_READY,
-                    arguments = listOf(navArgument("recordId") { type = NavType.LongType })
+                    arguments = listOf(navArgument("recordId") { type = NavType.LongType }),
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
                 ) { backStackEntry ->
                     val recordId = backStackEntry.arguments?.getLong("recordId") ?: 0L
                     DownloadReadyScreen(
@@ -559,20 +633,17 @@ fun PaperlyApp(
                         onPreviewPdf = { id ->
                             navController.navigate(PaperlyRoutes.pdfViewer(id))
                         },
-                        onDone = {
-                            if (!navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)) {
-                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
-                                    popUpTo(0) { inclusive = true }
-                                    launchSingleTop = true
-                                }
-                            }
-                        }
+                        onDone = { safePopToMainTabs() }
                     )
                 }
 
                 composable(
                     route = PaperlyRoutes.IMAGE_WORKSPACE,
-                    arguments = listOf(navArgument("imageToolType") { type = NavType.StringType })
+                    arguments = listOf(navArgument("imageToolType") { type = NavType.StringType }),
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
                 ) {
                     ImageWorkspaceScreen(
                         state = imageWorkspace,
@@ -583,7 +654,7 @@ fun PaperlyApp(
                         upscaleCredits = upscaleCredits,
                         viewModel = viewModel,
                         onUpgradeProClick = viewModel::openProSheet,
-                        onBack = { navController.popBackStack() },
+                        onBack = { safePopBackStack() },
                         onImageResultReady = {
                             navController.navigate(PaperlyRoutes.IMAGE_RESULT)
                         },
@@ -593,7 +664,13 @@ fun PaperlyApp(
                     )
                 }
 
-                composable(PaperlyRoutes.IMAGE_RESULT) {
+                composable(
+                    route = PaperlyRoutes.IMAGE_RESULT,
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
+                ) {
                     ImageResultScreen(
                         result = processedImageResult,
                         isPro = isPro,
@@ -602,20 +679,17 @@ fun PaperlyApp(
                         onOpenPdfViewer = { pdfId ->
                             navController.navigate(PaperlyRoutes.pdfViewer(pdfId))
                         },
-                        onDone = {
-                            if (!navController.popBackStack(PaperlyRoutes.MAIN_TABS, inclusive = false)) {
-                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
-                                    popUpTo(0) { inclusive = true }
-                                    launchSingleTop = true
-                                }
-                            }
-                        }
+                        onDone = { safePopToMainTabs() }
                     )
                 }
 
                 composable(
                     route = PaperlyRoutes.PDF_VIEWER,
-                    arguments = listOf(navArgument("recordId") { type = NavType.LongType })
+                    arguments = listOf(navArgument("recordId") { type = NavType.LongType }),
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
                 ) { backStackEntry ->
                     val recordId = backStackEntry.arguments?.getLong("recordId") ?: 0L
                     PdfViewerScreen(
@@ -635,11 +709,17 @@ fun PaperlyApp(
                                 navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.SPLIT))
                             }
                         },
-                        onBack = { navController.popBackStack() }
+                        onBack = { safePopBackStack() }
                     )
                 }
 
-                composable(route = PaperlyRoutes.EXTERNAL_PDF_VIEWER) {
+                composable(
+                    route = PaperlyRoutes.EXTERNAL_PDF_VIEWER,
+                    enterTransition = screenEnterTransition,
+                    exitTransition = screenExitTransition,
+                    popEnterTransition = screenPopEnterTransition,
+                    popExitTransition = screenPopExitTransition
+                ) {
                     PdfViewerScreen(
                         recordId = -1L,
                         viewModel = viewModel,
@@ -658,19 +738,20 @@ fun PaperlyApp(
                                 navController.navigate(PaperlyRoutes.toolWorkspace(PdfToolType.SPLIT))
                             }
                         },
-                        onBack = {
-                            if (!navController.popBackStack()) {
-                                navController.navigate(PaperlyRoutes.MAIN_TABS) {
-                                    popUpTo(PaperlyRoutes.EXTERNAL_PDF_VIEWER) { inclusive = true }
-                                    launchSingleTop = true
-                                }
-                            }
-                        }
+                        onBack = { safePopBackStack(allowFallbackToMainTabs = true) }
                     )
                 }
             }
         }
-    }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = if (isMainTab) 104.dp else 0.dp)
+                .imePadding()
+        )
     }
 
     PaperlyProSheet(
@@ -709,27 +790,4 @@ fun PaperlyApp(
         onRestorePurchases = viewModel::restorePurchases,
         onDismiss = viewModel::dismissProSheet
     )
-}
-
-private fun tabLayerModifier(selected: Boolean, alpha: Float): Modifier {
-    return Modifier
-        .fillMaxSize()
-        .zIndex(if (selected) 1f else 0f)
-        .graphicsLayer { this.alpha = alpha }
-        .then(
-            if (selected) {
-                Modifier
-            } else {
-                Modifier
-                    .clearAndSetSemantics {}
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) {
-                                val event = awaitPointerEvent(PointerEventPass.Initial)
-                                event.changes.forEach { it.consume() }
-                            }
-                        }
-                    }
-            }
-        )
 }

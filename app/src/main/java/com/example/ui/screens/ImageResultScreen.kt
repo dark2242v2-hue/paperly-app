@@ -67,18 +67,21 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.saveable.rememberSaveable
 import com.example.core.formatFileSize
 import com.example.core.formatReductionPercent
 import com.example.core.formatSavedSummary
 import com.example.data.model.ImageOutputFormat
 import com.example.data.model.ProcessedImageResult
+import com.example.ui.components.AnimatedSuccessBadge
 import com.example.ui.components.ExportCompletionActionSheet
 import com.example.ui.components.FittedSingleLineText
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.SplitBeforeAfterComparisonPreview
 import com.example.ui.components.SponsoredNativeAdCard
 import com.example.ui.components.TransparencyCheckerboardCanvas
+import com.example.ui.components.pressScaleEffect
 import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.components.shareFileToWhatsApp
 import com.example.ui.components.shareFileViaSystemChooser
@@ -146,7 +149,10 @@ fun ImageResultScreen(
                 },
                 navigationIcon = {
                     IconButton(
-                        onClick = onDone,
+                        onClick = {
+                            haptics.lightTap()
+                            onDone()
+                        },
                         modifier = Modifier.testTag("image_result_back_button")
                     ) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -210,11 +216,9 @@ fun ImageResultScreen(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = "Ready",
-                                tint = PaperlyEmerald,
-                                modifier = Modifier.size(22.dp)
+                            AnimatedSuccessBadge(
+                                badgeSize = 40.dp,
+                                iconSize = 22.dp
                             )
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
@@ -225,14 +229,20 @@ fun ImageResultScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 val batchCount = result.batchFileCount
-                                val subtitleStats = if (batchCount > 1) {
-                                    "$batchCount files • ${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)}"
-                                } else {
-                                    "${formatSavedSummary(result.originalSizeBytes, result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}"
+                                val originalBytes = result.originalSizeBytes
+                                val isUpscale = result.operationLabel.startsWith("Upscaled")
+                                val subtitleStats = when {
+                                    batchCount > 1 -> "$batchCount files • ${formatSavedSummary(originalBytes, result.sizeBytes)}"
+                                    isUpscale && result.originalWidth != null && result.originalHeight != null ->
+                                        "${result.originalWidth}×${result.originalHeight} → ${result.width}×${result.height} • ${result.format.label}"
+                                    originalBytes != null && originalBytes > 0L ->
+                                        "${formatFileSize(originalBytes)} → ${formatFileSize(result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}"
+                                    else -> "${formatFileSize(result.sizeBytes)} • ${result.width}×${result.height} ${result.format.label}"
                                 }
                                 Text(
                                     text = subtitleStats,
                                     style = MaterialTheme.typography.bodySmall,
+                                    fontWeight = FontWeight.Medium,
                                     color = if (savedPercent != null && savedPercent > 0) {
                                         PaperlyEmerald
                                     } else {
@@ -242,14 +252,48 @@ fun ImageResultScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                             }
+                            if (result.isOfflineFallback) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = MaterialTheme.colorScheme.tertiaryContainer
+                                ) {
+                                    Text(
+                                        text = "Offline Sharpen Mode",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            } else if (savedPercent != null && savedPercent > 0) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = PaperlyEmerald.copy(alpha = 0.16f)
+                                ) {
+                                    Text(
+                                        text = "-$savedPercent%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = PaperlyEmerald,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
                         }
 
                         val showSplitComparison = result.operationLabel.startsWith("Upscaled") &&
                             originalBitmap != null && previewBitmap != null
                         if (showSplitComparison) {
+                            val resolutionJump = if (result.originalWidth != null && result.originalHeight != null) {
+                                "${result.originalWidth}×${result.originalHeight} → ${result.width}×${result.height}"
+                            } else {
+                                "${result.width}×${result.height}"
+                            }
                             SplitBeforeAfterComparisonPreview(
                                 originalBitmap = originalBitmap,
-                                enhancedBitmap = previewBitmap
+                                enhancedBitmap = previewBitmap,
+                                isOfflineFallback = result.isOfflineFallback,
+                                resolutionSummary = resolutionJump
                             )
                         } else {
                             Surface(
@@ -344,21 +388,28 @@ fun ImageResultScreen(
                     }
                 }
 
+                val primarySaveInteraction = remember { MutableInteractionSource() }
+                val shareInteraction = remember { MutableInteractionSource() }
+                val openFileInteraction = remember { MutableInteractionSource() }
+                val pdfExportInteraction = remember { MutableInteractionSource() }
+
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Button(
                         onClick = {
-                            haptics.lightTap()
+                            haptics.selectionClick()
                             when {
                                 batchPdfId != null -> onOpenPdfViewer(batchPdfId)
                                 isBatchZip -> saveZipOrPdfLauncher.launch(result.displayName)
                                 else -> viewModel.saveResultImageToGallery()
                             }
                         },
+                        interactionSource = primarySaveInteraction,
                         shape = RoundedCornerShape(13.dp),
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 48.dp)
+                            .pressScaleEffect(primarySaveInteraction)
                             .testTag("save_image_gallery_button")
                     ) {
                         Icon(
@@ -384,7 +435,7 @@ fun ImageResultScreen(
                     ) {
                         OutlinedButton(
                             onClick = {
-                                haptics.lightTap()
+                                haptics.selectionClick()
                                 runCatching {
                                     val shareUri = viewModel.imageEngine.getShareUri(effectiveFilePath)
                                     shareFileViaSystemChooser(
@@ -397,11 +448,13 @@ fun ImageResultScreen(
                                     Toast.makeText(context, "Unable to share file right now.", Toast.LENGTH_SHORT).show()
                                 }
                             },
+                            interactionSource = shareInteraction,
                             shape = RoundedCornerShape(13.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .heightIn(min = 48.dp)
+                                .pressScaleEffect(shareInteraction)
                                 .testTag("share_image_button")
                         ) {
                             Icon(Icons.Filled.Share, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -411,7 +464,7 @@ fun ImageResultScreen(
 
                         OutlinedButton(
                             onClick = {
-                                haptics.lightTap()
+                                haptics.selectionClick()
                                 if (batchPdfId != null) {
                                     onOpenPdfViewer(batchPdfId)
                                 } else {
@@ -427,31 +480,35 @@ fun ImageResultScreen(
                                     }
                                 }
                             },
+                            interactionSource = openFileInteraction,
                             shape = RoundedCornerShape(13.dp),
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .heightIn(min = 48.dp)
+                                .pressScaleEffect(openFileInteraction)
                                 .testTag("open_image_file_button")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.OpenInNew, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(5.dp))
-                            FittedSingleLineText("Open File")
+                            FittedSingleLineText("Open")
                         }
 
                         if (!isBatchZip && !isBatchPdf) {
                             OutlinedButton(
                                 onClick = {
-                                    haptics.lightTap()
+                                    haptics.selectionClick()
                                     viewModel.exportResultImageToPdf { pdfId ->
                                         onOpenPdfViewer(pdfId)
                                     }
                                 },
+                                interactionSource = pdfExportInteraction,
                                 shape = RoundedCornerShape(13.dp),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 8.dp),
                                 modifier = Modifier
                                     .weight(1f)
                                     .heightIn(min = 48.dp)
+                                    .pressScaleEffect(pdfExportInteraction)
                                     .testTag("export_image_pdf_button")
                             ) {
                                 Icon(Icons.Filled.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))

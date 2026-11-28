@@ -9,8 +9,10 @@ import com.example.data.model.OrganizedPageItem
 import com.example.data.model.ProcessedImageResult
 import com.example.data.model.ScanFilterMode
 import com.example.data.model.SplitWorkspaceMode
+import com.example.data.model.UpscaleEnhanceMode
 import com.example.data.model.UpscaleTarget
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -44,14 +46,25 @@ class ExampleUnitTest {
     }
 
     @Test
-    fun upscaleTarget_hd2xIsBaseTierAndHigherTiersHaveDistinctCaps() {
-        assertEquals("2x HD", UpscaleTarget.HD_2X.label)
+    fun upscaleTarget_andEnhanceModes_haveBalancedTiersAndPresets() {
+        assertEquals("2× Crisp HD", UpscaleTarget.HD_2X.label)
         assertEquals(2f, UpscaleTarget.HD_2X.multiplier)
-        assertEquals(4096, UpscaleTarget.HD_2X.maxEdgePx)
+        assertEquals(2560, UpscaleTarget.HD_2X.maxEdgePx)
 
         val proTargets = UpscaleTarget.entries.filter { it != UpscaleTarget.HD_2X }
-        assertEquals(listOf(UpscaleTarget.ULTRA_4X, UpscaleTarget.RES_8K, UpscaleTarget.MAX_16K), proTargets)
-        assertTrue(proTargets.all { it.maxEdgePx >= 7680 })
+        assertEquals(listOf(UpscaleTarget.ULTRA_4X, UpscaleTarget.PRINT_8X), proTargets)
+        assertEquals(4096, UpscaleTarget.ULTRA_4X.maxEdgePx)
+        assertEquals(6144, UpscaleTarget.PRINT_8X.maxEdgePx)
+
+        assertEquals(
+            listOf(
+                UpscaleEnhanceMode.AUTO_PHOTO,
+                UpscaleEnhanceMode.TEXT_DOCUMENT,
+                UpscaleEnhanceMode.OLD_PHOTO
+            ),
+            UpscaleEnhanceMode.entries
+        )
+        assertTrue(UpscaleEnhanceMode.entries.all { it.promptAddon.isNotBlank() })
     }
 
     @Test

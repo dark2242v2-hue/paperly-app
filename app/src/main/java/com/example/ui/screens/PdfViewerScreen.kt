@@ -139,6 +139,7 @@ import com.example.data.pdf.PdfRenderOutcome
 import com.example.ui.components.ShimmerBox
 import com.example.ui.components.ShimmerPreviewCard
 import com.example.ui.components.bringIntoViewAboveKeyboard
+import com.example.ui.components.rememberPaperlyHaptics
 import com.example.ui.theme.PaperlyEmerald
 import com.example.ui.theme.PaperlyViewerCanvas
 import com.example.ui.theme.PaperlyViewerChrome
@@ -163,6 +164,7 @@ fun PdfViewerScreen(
     externalOpenState: ExternalPdfOpenState? = null
 ) {
     val context = LocalContext.current
+    val haptics = rememberPaperlyHaptics()
     var record by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var unlockedRecord by remember { mutableStateOf<PdfRecordEntity?>(null) }
     var isPasswordProtected by remember { mutableStateOf(false) }
@@ -171,7 +173,7 @@ fun PdfViewerScreen(
     var overflowExpanded by remember { mutableStateOf(false) }
     var isBookMode by rememberSaveable(recordId) { mutableStateOf(false) }
 
-    BackHandler(onBack = onBack)
+    BackHandler(enabled = externalOpenState != null, onBack = onBack)
 
     if (externalOpenState != null) {
         LaunchedEffect(externalOpenState) {
@@ -257,7 +259,10 @@ fun PdfViewerScreen(
                     },
                     navigationIcon = {
                         IconButton(
-                            onClick = onBack,
+                            onClick = {
+                                haptics.lightTap()
+                                onBack()
+                            },
                             modifier = Modifier.testTag("viewer_back_button")
                         ) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -294,7 +299,10 @@ fun PdfViewerScreen(
                     },
                     navigationIcon = {
                         IconButton(
-                            onClick = onBack,
+                            onClick = {
+                                haptics.lightTap()
+                                onBack()
+                            },
                             modifier = Modifier.testTag("viewer_back_button")
                         ) {
                             Icon(
@@ -473,7 +481,10 @@ fun PdfViewerScreen(
                             textAlign = TextAlign.Center
                         )
                         Button(
-                            onClick = onBack,
+                            onClick = {
+                                haptics.lightTap()
+                                onBack()
+                            },
                             modifier = Modifier.testTag("viewer_error_back_button")
                         ) {
                             Text("Go Back")
